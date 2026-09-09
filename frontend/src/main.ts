@@ -133,6 +133,41 @@ const cameras = [free.camera, follow.camera, firstPerson.camera, side.camera] as
 // around them. Follow view remains available with key 2.
 let cameraIndex = 0
 let activeCamera = cameras[cameraIndex]
+type CameraTarget = 'a' | 'b' | 'both'
+let cameraTarget: CameraTarget = 'a'
+const cameraFocus = new Vector3()
+
+const cameraTargetPanel = document.createElement('div')
+cameraTargetPanel.className = 'camera-target-panel'
+cameraTargetPanel.innerHTML = '<span>CAMERA TARGET</span>'
+const cameraTargetButtons: Array<[CameraTarget, HTMLButtonElement]> = []
+for (const [target, label] of [['a', 'FLY A'], ['b', 'FLY B'], ['both', 'BOTH']] as const) {
+  const button = document.createElement('button')
+  button.textContent = label
+  button.setAttribute('aria-pressed', String(target === cameraTarget))
+  button.addEventListener('click', () => {
+    cameraTarget = target
+    cameraTargetButtons.forEach(([candidate, candidateButton]) => candidateButton.setAttribute('aria-pressed', String(candidate === target)))
+    free.focusOn(cameraTargetPosition())
+  })
+  cameraTargetButtons.push([target, button])
+  cameraTargetPanel.append(button)
+}
+app.append(cameraTargetPanel)
+
+function cameraTargetPosition() {
+  if (cameraTarget === 'b') return cameraFocus.copy(agentB.body.position)
+  if (cameraTarget === 'both') return cameraFocus.copy(agentA.body.position).add(agentB.body.position).multiplyScalar(0.5)
+  return cameraFocus.copy(agentA.body.position)
+}
+
+function cameraTargetAgent() {
+  // Follow/first-person views require one physical body. BOTH focuses their
+  // orbit on the midpoint but follows Fly A when a single-body camera is
+  // selected, which is explicit in the panel's BOTH label.
+  return cameraTarget === 'b' ? agentB : agentA
+}
+
 let debugVectorsVisible = false
 debugA.setVectorsVisible(debugVectorsVisible)
 debugB.setVectorsVisible(debugVectorsVisible)
@@ -193,9 +228,10 @@ function animate(now: number) {
 
   activeCamera = cameras[cameraIndex] ?? cameras[0]
   if (cameraIndex === 0) free.update()
-  if (cameraIndex === 1) follow.update(agentA)
-  if (cameraIndex === 2) firstPerson.update(agentA)
-  if (cameraIndex === 3) side.update(agentA)
+  const followedAgent = cameraTargetAgent()
+  if (cameraIndex === 1) follow.update(followedAgent)
+  if (cameraIndex === 2) firstPerson.update(followedAgent)
+  if (cameraIndex === 3) side.update(followedAgent)
   renderer.render(scene, activeCamera)
   requestAnimationFrame(animate)
 }

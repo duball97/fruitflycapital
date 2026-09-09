@@ -20,6 +20,10 @@ kbd { display: inline-block; min-width: 17px; margin-right: 3px; padding: 2px 5p
 .log-button:hover { border-color: #62d8ff; background: #10263a; }
 .mode-button { position: fixed; right: 25px; top: 101px; z-index: 2; padding: 7px 10px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #8fdcff; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; cursor: pointer; }
 .body-status { position: fixed; right: 25px; top: 139px; z-index: 2; padding: 6px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #9fb8ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+.camera-target-panel { position: fixed; right: 25px; top: 177px; z-index: 3; display: flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid #2c455d; border-radius: 8px; background: #091725dd; color: #9eb6ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; box-shadow: 0 8px 30px #0005; }
+.camera-target-panel button { padding: 4px 6px; border: 1px solid #34506a; border-radius: 5px; background: #102337; color: #b9d7eb; font: inherit; cursor: pointer; }
+.camera-target-panel button[aria-pressed="true"] { border-color: #62d8ff; background: #173b56; color: #fff; }
+.camera-target-panel button:hover { border-color: #62d8ff; color: #fff; }
 .architecture-status { position: fixed; left: 25px; top: 171px; z-index: 2; max-width: min(760px, calc(100vw - 50px)); padding: 6px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #8fa9bd; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; }
 .mode-button:hover { border-color: #62d8ff; background: #10263a; }
 .scenario-panel { position: fixed; left: 25px; top: 124px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725dd; color: #9eb6ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; box-shadow: 0 8px 30px #0005; }

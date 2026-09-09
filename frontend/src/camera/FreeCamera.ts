@@ -4,6 +4,7 @@ import { PerspectiveCamera, Vector3 } from 'three'
 export class FreeCamera {
   readonly camera = new PerspectiveCamera(54, 1, 0.001, 100)
   readonly controls: OrbitControls
+  private readonly focusOffset = new Vector3()
 
   constructor(domElement: HTMLElement) {
     // Frame the two flies closely enough to be identifiable while retaining
@@ -17,6 +18,19 @@ export class FreeCamera {
     this.controls.zoomToCursor = true
     this.controls.minDistance = 0.005
     this.controls.maxDistance = 5
+  }
+
+  focusOn(position: Vector3) {
+    // Preserve the current orbit direction and distance while moving the
+    // orbit pivot. This makes a target-button click feel like a camera focus,
+    // rather than teleporting the viewer to a fixed preset.
+    this.focusOffset.copy(this.camera.position).sub(this.controls.target)
+    if (this.focusOffset.lengthSq() < this.controls.minDistance ** 2) {
+      this.focusOffset.set(0.12, 0.06, 0.12)
+    }
+    this.controls.target.copy(position)
+    this.camera.position.copy(position).add(this.focusOffset)
+    this.controls.update()
   }
 
   update() {
