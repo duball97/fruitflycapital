@@ -1,6 +1,8 @@
-# MaleCNS Fly World frontend
+# Fruit Fly Capital / NeuroSwarm frontend
 
-This is a small Three.js/Vite client for the embodied fly-world prototype.
+This is a small Three.js/Vite client for the Fruit Fly Capital embodied market
+ecology prototype. The product surface is NeuroSwarm; the technical stack is
+MaleCNS v1.0, Flybody, Three.js, and The Graph.
 Physical positions are in metres and the world is 2 m x 1 m x 2 m. The visible
 fly body is loaded from the canonical TuragaLab/Flybody XML and referenced OBJ
 meshes; see `../docs/FLYBODY_INTEGRATION.md` for provenance and scale
@@ -48,58 +50,66 @@ Feather files in the repository root:
   --output-dir data/runtime/malecns-realtime-3hop
 ```
 
-The adapter then encodes the embodied sensor frame into exact MaleCNS sensory
-IDs, advances one persistent Brian2 runtime for each connected CNS fly, and
-decodes that window's `spikeRates`/`spikeCounts` into the normalized
-`FlightCommand` through `FlightMotorDecoder`. Fly A is the active candidate at
-startup; Fly B is rendered as an OFF/stationary comparison body. Manual flight
-is fully local and does not require the adapter. If the cache is absent,
-MaleCNS mode returns zero decoded flight drive and reports the missing source
-instead of fabricating spikes. See `../docs/LIVE_CNS_LOOP.md`.
+The adapter encodes each embodied sensor frame into exact MaleCNS sensory IDs,
+advances one persistent Brian2 runtime per connected fly ID, and decodes that
+window's `spikeRates`/`spikeCounts` into the normalized `FlightCommand` through
+`FlightMotorDecoder`. The browser starts eight independent agents named
+`fly-001` through `fly-008`; there is no special A/B pair. Manual flight is
+fully local and applies only to the selected fly for debugging. If the cache is
+absent, MaleCNS mode returns zero decoded flight drive and reports the missing
+source instead of fabricating spikes. See `../docs/SWARM_ARCHITECTURE.md` and
+`../docs/LIVE_CNS_LOOP.md`.
 
-The browser sends Fly A brain frames at 10 Hz by default. Set
+The browser sends each numbered fly's compact brain frame at 2 Hz by default.
+Set
 `VITE_BRAIN_UPDATE_HZ` when testing a different cadence; this is a transport
 cadence choice, not a neural-parameter change.
 
 ## Controls
 
 `W/S` pitch, `A/D` yaw, `Q/E` roll, `Shift` increases thrust, and `Ctrl`
-decreases thrust/descends. `M` toggles Fly A between manual/MaleCNS mode; Fly B
-remains OFF. Camera keys are
-`1` free orbit, `2` follow, `3` first-person, and `4` side/debug. In free orbit,
-left-drag rotates, right-drag pans, and the mouse wheel zooms toward the cursor.
-The top-right `CAMERA TARGET` buttons select Fly A, Fly B, or BOTH. Selecting a
-target also focuses the free camera at inspection distance; follow and
-first-person views use the selected fly (BOTH uses Fly A for those
-single-body views). Press `V` to show or hide the large debug direction
-vectors, and `I` to show or hide the detailed sensory/CNS panels.
+decreases thrust/descends. `M` toggles the selected numbered fly between
+manual/MaleCNS mode. Camera keys are `1` free orbit, `2` follow, `3`
+first-person, `4` side/debug, `5` token cinematic, and `6` auto director. In
+free orbit, left-drag rotates, right-drag pans, and the mouse wheel zooms toward
+the cursor. The top-right `INSPECT FLY` selector chooses any of the eight
+agents; `FOCUS` centers the free camera on it. Follow and first-person views
+use that same selected fly. Press `` ` `` to switch between the compact demo
+surface and detailed debug surface, and `P` to toggle the performance/demo
+post-processing preset. Press `V` to show or hide direction vectors, and `I`
+to show or hide the selected fly's detailed sensory/CNS causal panel.
 
 The renderer reconstructs Flybody's articulated abdomen, thorax, head, eyes,
 antennae, halteres, legs, and wing assemblies while retaining `FlyBody`,
 `FlySensors`, and `FlyActuators`. The current browser physics adapter is still
 the existing rigid-body path until an optional MuJoCo pose server is attached.
 
-The arena is intentionally minimal: an invisible bounded flight volume, a
-floor, and three differentiated coin piles. The visual swarm members use the
-same canonical Flybody asset as the foreground flies.
+The arena is intentionally restrained: an invisible bounded flight volume, a
+readable floor, three differentiated coin piles, and two locally bundled CC0
+context props. All eight visible agents use the same canonical Flybody XML/OBJ
+source; no decorative fallback swarm is created. Habitat particles and fly
+trails use pooled GPU buffers.
 
-The fly is rendered at an explicit 8x inspection magnification because its
+The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,
 sensors, or telemetry.
 
-At startup, the nine visual swarm bodies begin in a distant launch zone. Their
-approach to the three coin piles is controlled by each pile's synthetic
-attraction, activity, and danger parameters. This is separate from the active
-foreground CNS candidate; the nine display members do not claim unimplemented
-brains.
+At startup, all eight agents begin in a deterministic distant launch formation.
+Their movement is not a hidden path to a selected coin. Each body samples its
+own local vision, odor, motion, and contact state, sends compact sensor
+summaries to its own `fly-NNN` brain stream, receives that fly's latest Brian2
+command, and integrates the command through its own `FlyBody`. If the selected
+MaleCNS DN populations are quiet, the correct result is a neutral command and
+no autonomous token-directed movement. The selected causal panel exposes the
+left/right eye summaries, odor, contact state, exact encoded `R8d`/`ORN_DA1`
+counts, and the returned DN/command stage.
 
-The scene contains one live CNS brain (Fly A), one OFF/stationary comparison
-body (Fly B), and three synthetic `TokenHabitat` objects, each with three
-canonical Flybody swarm members. Use `A · OFF`, `B · DIFFERENT`, and `C · SWAPPED` to
-change only the habitat's physical sensory fields. These are mock habitats,
-not live token data. The debug panel exposes the left/right eye summaries,
-optic flow, attractive/aversive odor at the body and antennae, contact state,
-and the exact encoded `R8d`/`ORN_DA1` body-ID counts.
+Use `NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` to change only the
+habitat sensory fields. These are mock habitats, not live token data. `LIVE
+GRAPH` uses the optional provider-neutral market adapter. The Graph
+configuration requires both a pool ID and the represented token address so
+buy/sell direction is resolved relative to that token. See
+`../docs/MARKET_SIGNAL_ARCHITECTURE.md`.
 It also shows the SENSORY -> CNS -> descending activity -> FLIGHT COMMAND
 pipeline and a downloadable JSON flight log. The sensor contract
 intentionally excludes food, target, and obstacle coordinates. Sensor details

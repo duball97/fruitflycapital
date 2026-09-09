@@ -16,7 +16,7 @@ export class DebugRenderer {
   private lastPanelUpdate = Number.NEGATIVE_INFINITY
   private panelVisible = true
 
-  constructor(uiRoot: HTMLElement, readonly label = 'FLY A', panelSide: 'left' | 'right' = 'right') {
+  constructor(uiRoot: HTMLElement, private label = 'FLY #001', panelSide: 'left' | 'right' = 'right') {
     this.group.name = 'DebugVectors'
     this.forwardArrow = new ArrowHelper(new Vector3(0, 0, -1), new Vector3(), 0.12, 0x50b7ff, 0.025, 0.012)
     this.upArrow = new ArrowHelper(new Vector3(0, 1, 0), new Vector3(), 0.08, 0x5eff93, 0.02, 0.01)
@@ -27,6 +27,10 @@ export class DebugRenderer {
     this.panel.className = 'debug-panel'
     this.panel.style[panelSide] = '25px'
     uiRoot.append(this.panel)
+  }
+
+  setLabel(label: string) {
+    this.label = label
   }
 
   setVectorsVisible(visible: boolean) {
@@ -74,14 +78,17 @@ export class DebugRenderer {
       : 'waiting for encoded MaleCNS input'
     const hasSpikes = activity ? Object.values(activity.spikeCounts).some((count) => count > 0) : false
     const hasDescendingSpikes = activity ? Object.values(activity.descendingRates).some((rate) => rate > 0) : false
+    const hasLiveBrian2 = activity?.source === 'brian2-malecns-v1-realtime-3hop'
     const controllerSummary = agent.mode === 'off'
       ? 'OFF: stationary actuator command'
       : agent.mode === 'manual'
         ? 'MANUAL: keyboard actuator drive'
-        : activity
+        : hasLiveBrian2
           ? hasSpikes
             ? `MALECNS: live Brian2${hasDescendingSpikes ? ' · DN activity' : ' · no selected-DN spikes'}`
             : 'MALECNS: live window · no spikes'
+          : activity
+            ? 'MALECNS: decoder-only · no live provider'
           : 'MALECNS: waiting for live spike-rate provider'
     const descendingSummary = activity
       ? hasDescendingSpikes

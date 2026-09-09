@@ -1,4 +1,4 @@
-"""Persistent Brian2 runtime for the browser's one-fly milestone.
+"""Persistent Brian2 runtime for the browser's numbered fly swarm.
 
 The runtime consumes only encoded sensory population rates. It runs a cached
 three-hop subgraph copied from the official MaleCNS v1.0 weighted graph so a

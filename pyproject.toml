@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "malecns-bootstrap"
+name = "fruit-fly-capital"
 version = "0.1.0"
-description = "MaleCNS v1.0 data access and normalization for a biologically grounded fly simulation"
+description = "Fruit Fly Capital: MaleCNS v1.0 data access and biological fly simulation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

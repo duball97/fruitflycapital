@@ -1,4 +1,5 @@
-# Experiments (deferred)
+# Experiments
 
-Single-fly and two-fly experiments will be added after the data layer has been
-validated with the complete official MaleCNS weighted graph.
+The browser experiment currently uses eight numbered independent agents as a
+population pilot. The existing scripts under `experiments/` remain reproducible
+single-stimulus audits of the MaleCNS graph and do not claim social behavior.

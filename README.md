@@ -1,4 +1,4 @@
-# fly-social-cns
+# Fruit Fly Capital / NeuroSwarm
 
 The canonical rendered Drosophila body is TuragaLab/Flybody's MuJoCo model,
 loaded from `flybody/fruitfly/assets/fruitfly.xml` and its referenced OBJ
@@ -26,13 +26,15 @@ returns its pose. A FlightCommand-to-native-joint mapping is intentionally not
 invented; the browser remains on the existing actuator-compatible adapter
 until that mapping is scientifically specified.
 
-Bootstrap for a biologically grounded two-male-*Drosophila* CNS project.
+Bootstrap for a biologically grounded MaleCNS *Drosophila* swarm project. The
+product is Fruit Fly Capital / NeuroSwarm: biological agents in an onchain
+market ecology.
 
 It loads and queries the official Janelia/Google MaleCNS v1.0 dataset
 (`male-cns:v1.0`) through either neuPrint or local Apache Feather files and
 provides a CPU Brian2 reference LIF model plus conservative sensory/motor
 population registries. It does not implement learning, reinforcement
-learning, or any direct Fly A → Fly B neural edge.
+learning, or any direct fly-to-fly neural edge.
 
 ## Setup
 
@@ -52,7 +54,7 @@ Start the optional brain adapter from the repository root with:
 ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
-For the live one-fly MaleCNS loop, build the small, reproducible runtime cache
+For the live MaleCNS loop, build the small, reproducible runtime cache
 from the official local Feather files before starting the adapter:
 
 ```bash
@@ -200,26 +202,43 @@ manual keyboard flight, and a WebSocket actuator boundary for the Python
 MaleCNS process. See [frontend/README.md](frontend/README.md) for launch
 commands. `FlightMotorDecoder` provides the documented, rate-only
 MaleCNS-to-actuator boundary for exact annotated flight populations. With the
-realtime cache present, the adapter owns one persistent Brian2 runtime for
-Fly A and returns live spike counts/rates; without it, the adapter stays
-neutral and reports that source explicitly. Manual flight remains fully live.
+realtime cache present, the adapter owns one persistent Brian2 runtime per
+connected `fly-NNN` ID and returns live spike counts/rates; without it, the
+adapter stays neutral and reports that source explicitly. Manual flight remains
+fully live.
 See [docs/LIVE_CNS_LOOP.md](docs/LIVE_CNS_LOOP.md) and
 [docs/FLIGHT_MOTOR_MAPPING.md](docs/FLIGHT_MOTOR_MAPPING.md) for evidence and
 limitations.
 The embodied sensor contract is documented in
 [docs/SENSORY_WORLD.md](docs/SENSORY_WORLD.md).
 
-## NeuroSwarm synthetic habitats
+## Onchain habitat data
 
-The current next milestone is implemented in the frontend as one active
-MaleCNS candidate (Fly A), one stationary/off comparison body (Fly B), and
-three synthetic `TokenHabitat` instances.
-Each habitat displays two small canonical Flybody swarm members; the two
-foreground bodies remain separate from the active CNS candidate. The habitats expose
-only physical proxies—visual brightness/motion, swarm activity, attractive
-odor, and aversive danger. They do not call APIs or
-represent real tokens. Switch among `A · OFF`, `B · DIFFERENT`, and `C ·
-SWAPPED` in the scene to inspect the sensory changes.
+The optional `LIVE GRAPH` feed is deliberately layered:
+
+```text
+GraphProvider -> RawTokenObservation -> TokenSignalEngine -> Signal[]
+              -> HabitatEncoder -> physical habitat fields -> fly sensors
+```
+
+`TokenState` keeps market, flow, liquidity, holders, security, social, and
+lore as separate domains. Each derived signal carries its value, normalized
+value, importance, valence, confidence, freshness, source, and observation
+time. The current Graph provider supplies market/flow/liquidity only; missing
+holder, security, social, and lore data remains explicitly unavailable. See
+[docs/MARKET_SIGNAL_ARCHITECTURE.md](docs/MARKET_SIGNAL_ARCHITECTURE.md) for
+metric definitions, provenance, and the planned provider boundaries.
+
+## NeuroSwarm population pilot
+
+The current milestone is an eight-agent population pilot. All eight are real
+canonical Flybody agents and each has its own body, sensor frame, actuator
+state, unique `fly-NNN` brain ID, and server-side RNG stream. There are zero
+decorative habitat flies. The three synthetic `TokenHabitat` instances expose
+only physical proxies—visual brightness/motion, attractive odor, and aversive
+danger. They do not call APIs or represent real tokens. Switch among
+`NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` in the scene to inspect
+the sensory changes.
 
 Run the deterministic headless sensory audit with:
 
@@ -229,7 +248,8 @@ MPLBACKEND=Agg PYTHONPATH=src python experiments/token_habitat_experiments.py \
 ```
 
 It writes `summary.json`, `telemetry.parquet`, `trajectory.csv`, a sensory
-exposure plot, and a report. The visual habitat members are not CNS agents.
-The live browser experiment is evidence of the embodied input-to-Brian2-to-
-decoder path when the cache and adapter are running, but it is not evidence
-that the MaleCNS has learned or chosen token-directed behavior.
+exposure plot, and a report. The live browser experiment is evidence of the
+embodied input-to-Brian2-to-decoder path when the cache and adapter are
+running, but it is not evidence that the MaleCNS has learned or chosen
+token-directed behavior. See [docs/SWARM_ARCHITECTURE.md](docs/SWARM_ARCHITECTURE.md)
+for the per-fly causal chain and runtime-capacity interpretation.

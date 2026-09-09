@@ -1,12 +1,14 @@
-# Live one-fly MaleCNS loop
+# Live MaleCNS swarm loop
 
-This is the first embodied integration milestone. It makes the data path real
-for one browser fly without claiming that a desired behavior has emerged.
+This is the embodied integration path for the eight-fly browser population
+pilot. It makes
+the data path real for each numbered fly without claiming that a desired
+behavior has emerged.
 
 ```text
-Three.js FlySensors
-  -> R8d / ORN_DA1 stimulation entries
-  -> persistent Brian2 MaleCNS runtime
+Three.js FlySensors (fly-001 ... fly-008)
+  -> that fly's R8d / ORN_DA1 stimulation entries
+  -> that fly's persistent Brian2 MaleCNS runtime
   -> actual cached-window spike counts and rates
   -> FlightMotorDecoder selected DN rates
   -> FlyActuators
@@ -14,10 +16,10 @@ Three.js FlySensors
   -> changed pose and new sensor frame
 ```
 
-Fly A is the active candidate. Fly B remains rendered with the same canonical
-Flybody body but uses an `OFF` stationary controller and sends no brain input.
-The nine small flies at the coin piles are visual swarm members only; they do
-not each have a MaleCNS copy.
+There is no A/B comparison body. The frontend owns eight independent
+`FlyAgent`s, each with its own body state, sensors, actuator state, brain ID,
+and deterministic server-side RNG stream. The camera and causal panel inspect
+one selected ID at a time; selection does not alter the simulation.
 
 ## Starting it
 
@@ -58,13 +60,29 @@ Published methodology retained:
 Our explicit boundary assumptions:
 
 - only the source-reachable three-hop path from mapped sensory IDs to
-  annotated flight outputs is stepped interactively;
+  annotated flight outputs is stepped interactively for each connected ID;
 - visual mean luminance and center odor concentration are converted to
   `150 Hz * bounded signal` input rates;
 - optic flow, aversive odor, wind, gravity, and contact remain observed but
   unencoded until a defensible MaleCNS mapping is established;
 - decoder normalization and the yaw sign remain project-level actuator
-  conventions.
+  conventions;
+- the default browser brain cadence is 2 Hz and initial requests are staggered
+  across the eight IDs to avoid a startup burst;
+- the browser permits only one in-flight sensor frame per fly, preventing
+  stale brain-input backlog when Brian2 is slower than the requested cadence.
+
+## Runtime capacity is part of the result
+
+One full cached Brian2 runtime is approximately 6,641 neurons and 65,110
+retained weighted edges before transmitter-sign filtering. One runtime is
+created per distinct `fly-NNN` ID by the Python adapter. Therefore each pilot
+brain is an independent state and runtime identity, but the population is
+still a substantial CPU/RAM workload on a laptop. The UI reports live
+brain outputs received as `N/8`; it must not be read as proof that all eight
+Brian2 runtimes have already completed their first window. If the machine
+cannot sustain the full fleet, the next engineering step is a fleet scheduler
+or a compiled/vectorized backend—not a scripted movement replacement.
 
 The cache is not a replacement for the full official graph. The local source
 contains 211,577 annotated neurons and 151,856,684 weighted edges. The cache

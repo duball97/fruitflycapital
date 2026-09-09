@@ -30,7 +30,6 @@ export class World {
     // frame stalls rendering, do not run an unbounded backlog of physics steps
     // that makes the next frame even slower.
     while (this.accumulator >= this.fixedDt && steps < 6) {
-      this.environment.update(this.elapsedSeconds)
       for (const agent of this.agents) {
         agent.updateFixed(this.fixedDt, this.environment.bounds, this.environment.group, (position, timeSeconds) => this.environment.sampleOdorAt(position, timeSeconds), this.elapsedSeconds)
       }

@@ -8,7 +8,10 @@ export class FlyAgent {
   readonly body = new FlyBody()
   readonly sensors = new FlySensors()
   readonly actuators = new FlyActuators()
-  private readonly sensorInterval = 1 / 20
+  // One hundred agents at 20 Hz would perform 40,000 eye raycasts per
+  // second. Ten Hz is still faster than the default brain transport cadence
+  // and keeps the fixed 120 Hz body integration independent of perception.
+  private readonly sensorInterval = 1 / 10
   private sensorAccumulator = this.sensorInterval
 
   constructor(

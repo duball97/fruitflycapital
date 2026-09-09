@@ -15,8 +15,8 @@ export class FollowCamera {
   update(agent: FlyAgent) {
     const forward = this.forward.set(0, 0, -1).applyQuaternion(agent.body.quaternion).normalize()
     const up = this.up.set(0, 1, 0).applyQuaternion(agent.body.quaternion).normalize()
-    this.desired.copy(agent.body.position).addScaledVector(forward, -0.055).addScaledVector(up, 0.022)
-    this.target.copy(agent.body.position).addScaledVector(forward, 0.006)
+    this.desired.copy(agent.body.position).addScaledVector(forward, -0.14).addScaledVector(up, 0.05)
+    this.target.copy(agent.body.position).addScaledVector(forward, 0.018)
     this.camera.position.lerp(this.desired, 0.12)
     this.camera.lookAt(this.target)
   }

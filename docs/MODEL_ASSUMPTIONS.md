@@ -91,6 +91,20 @@ Body motion, contact, and environmental coupling are now implemented at the
 world/sensor boundary. Full sensory transduction, receptor-level modeling,
 validated mechanosensory mappings, and two-fly experiments remain deferred.
 
+## Market habitat signal provenance
+
+The market layer is environmental scaffolding for the browser world, not a
+replacement for MaleCNS data and not a direct actuator path.
+
+| Element | Provenance | Current treatment |
+|---|---|---|
+| Pool token identities, swap timestamps, pool amount deltas, amount USD, and TVL returned by the configured Graph subgraph | observed provider data, not `MALECNS_DATA` | Preserved as `RawTokenObservation`/`RawSwapObservation` with `the-graph` provenance; not biological data |
+| 5m/15m/1h windows, token-relative buy/sell classification, flow imbalance, transaction velocity/acceleration, liquidity delta, and volume/liquidity ratio | `OUR_ASSUMPTION` | Explicit signal-engine derivations documented in `MARKET_SIGNAL_ARCHITECTURE.md` |
+| USD volume, count, liquidity, velocity, acceleration, and ratio tanh scales | `OUR_ASSUMPTION` | Bounded normalization constants; not learned and not copied from Shiu or MaleCNS |
+| `importance`, `valence`, `confidence`, and `freshness` fields | `OUR_ASSUMPTION` | Explicit metadata; volume remains valence-neutral, flow imbalance carries direction |
+| `holders`, `security`, `social`, and `lore` unavailable status | `OUR_ASSUMPTION` | No fabricated values until a provider supplies those domains |
+| Physical brightness, motion, odor, particle activity, chaos, and danger proxy | `OUR_ASSUMPTION` | `HabitatEncoder` environmental proxies only; never a direct yaw/thrust command |
+
 ## Live Brian2 provider boundary
 
 | Element | Provenance | Current treatment |

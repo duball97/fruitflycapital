@@ -26,9 +26,12 @@ export class FlyBody {
   readonly gravityN = 0.00000981
   readonly maxTorqueNm = 0.000001
   readonly maxSpeedMps = 0.25
-  readonly maxAngularSpeedRadS = 6
+  // A 6 rad/s hard cap made a held yaw command spin the body like a
+  // turntable. This lower physical rate limit keeps heading changes visible
+  // while preserving the same actuator interface for every controller.
+  readonly maxAngularSpeedRadS = 2.4
   readonly linearDrag = 0.0032
-  readonly angularDrag = 3.8
+  readonly angularDrag = 5.2
   // Approximate adult-fly collision radius in metres; the rendered mesh uses
   // the same physical scale rather than an arbitrary room-sized avatar.
   readonly collisionRadius = 0.0025

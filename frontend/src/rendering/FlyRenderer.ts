@@ -3,10 +3,12 @@ import { FlyAgent } from '../fly/FlyAgent'
 import { WingBeatPatternGenerator } from '../fly/WingBeatPattern'
 import { FlybodyAssetLoader } from './FlybodyAsset'
 
+export type FlyLod = 'full' | 'medium' | 'low'
+
 // A real adult fly is only a few millimetres long, so it disappears at room
 // scale from the free camera. This affects rendering only; physics, sensors,
 // collisions, and logged positions remain in SI metres.
-const DISPLAY_MAGNIFICATION = 8
+const DISPLAY_MAGNIFICATION = 12
 
 export class FlyRenderer {
   readonly group = new Group()
@@ -26,6 +28,8 @@ export class FlyRenderer {
   private lastAssetError: string | null = null
   private loadedCanonical = false
   private canonicalMeshCount = 0
+  private selected = false
+  private lod: FlyLod = 'medium'
 
   constructor() {
     this.group.name = 'FlyRenderer'
@@ -52,6 +56,22 @@ export class FlyRenderer {
 
   get meshCount() {
     return this.canonicalMeshCount
+  }
+
+  get currentLod() {
+    return this.selected ? 'full' : this.lod
+  }
+
+  setSelected(selected: boolean) {
+    if (this.selected === selected) return
+    this.selected = selected
+    this.applyDisplayDetail()
+  }
+
+  setLod(lod: FlyLod) {
+    if (this.lod === lod) return
+    this.lod = lod
+    this.applyDisplayDetail()
   }
 
   update(agent: FlyAgent, elapsedSeconds: number) {
@@ -81,6 +101,7 @@ export class FlyRenderer {
       this.canonicalLeftWing = result.leftWing
       this.canonicalRightWing = result.rightWing
       this.canonicalMeshCount = result.meshCount
+      this.applyDisplayDetail()
       this.bodyRoot.visible = true
       if (this.canonicalLeftWing) this.canonicalLeftBase.copy(this.canonicalLeftWing.quaternion)
       if (this.canonicalRightWing) this.canonicalRightBase.copy(this.canonicalRightWing.quaternion)
@@ -94,6 +115,21 @@ export class FlyRenderer {
     }
   }
 
+  private applyDisplayDetail() {
+    if (!this.loadedCanonical && !this.bodyRoot.getObjectByName('FlybodyCanonicalAsset')) return
+    this.bodyRoot.traverse((child) => {
+      if (!(child instanceof Mesh)) return
+      // The asset remains canonical for every agent. This is a render-only
+      // LOD: unselected bodies keep the recognizable head/thorax/abdomen/
+      // wing silhouette, while the selected body exposes all XML geoms for
+      // inspection. It avoids rendering every XML geom for every population
+      // member at room scale.
+      child.visible = this.selected || this.lod === 'full'
+        || (this.lod === 'medium' && isSwarmSilhouetteGeom(child.name))
+        || (this.lod === 'low' && isLowDetailGeom(child.name))
+    })
+  }
+
   private applyWingAngles(wing: Group, yaw: number, roll: number, pitch: number) {
     // These axes and the order mirror the yaw/roll/pitch joint declarations
     // on wing_left and wing_right in the canonical XML.
@@ -104,12 +140,12 @@ export class FlyRenderer {
 
   private createFallbackBody() {
     const body = new Group()
-    const abdomen = new Mesh(new SphereGeometry(0.0018, 18, 12), new MeshStandardMaterial({ color: 0x2a2020, roughness: 0.62 }))
+    const abdomen = new Mesh(new SphereGeometry(0.0018, 18, 12), new MeshStandardMaterial({ color: 0x111216, roughness: 0.62 }))
     abdomen.scale.set(0.8, 0.8, 1.9)
     abdomen.position.z = 0.0027
     abdomen.castShadow = true
     body.add(abdomen)
-    const thorax = new Mesh(new SphereGeometry(0.0016, 16, 10), new MeshStandardMaterial({ color: 0x332a26, roughness: 0.58 }))
+    const thorax = new Mesh(new SphereGeometry(0.0016, 16, 10), new MeshStandardMaterial({ color: 0x1b1c20, roughness: 0.58 }))
     thorax.scale.set(1.15, 1, 1.05)
     thorax.castShadow = true
     body.add(thorax)
@@ -134,4 +170,12 @@ export class FlyRenderer {
     wing.castShadow = true
     return wing
   }
+}
+
+function isSwarmSilhouetteGeom(name: string) {
+  return /:geom:(thorax|thorax_black|head|head_red|head_ocelli|abdomen|abdomen_[2-8]|wing_left_(brown|membrane)|wing_right_(brown|membrane))$/.test(name)
+}
+
+function isLowDetailGeom(name: string) {
+  return /:geom:(thorax|head|abdomen|abdomen_2|wing_left_membrane|wing_right_membrane)$/.test(name)
 }

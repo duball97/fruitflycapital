@@ -58,7 +58,7 @@ class GraphClient:
             raise GraphQueryError("The Graph response did not contain an object-shaped data field")
         return data
 
-    def recent_swaps(self, pool_id: str, *, first: int = 100, since_timestamp: int = 0) -> list[dict[str, Any]]:
+    def recent_swaps(self, pool_id: str, *, first: int = 1000, since_timestamp: int = 0) -> list[dict[str, Any]]:
         document = """
         query RecentSwaps($pool: ID!, $first: Int!, $since: BigInt!) {
           swaps(first: $first, orderBy: timestamp, orderDirection: desc,

@@ -139,7 +139,7 @@ export class FlySensors {
     this.lastRaycastRefresh = timeSeconds
     this.raycastTargets.length = 0
     visualRoot.traverse((object) => {
-      if (object instanceof Mesh) this.raycastTargets.push(object)
+      if (object instanceof Mesh && object.userData.sensorVisible !== false) this.raycastTargets.push(object)
     })
   }
 

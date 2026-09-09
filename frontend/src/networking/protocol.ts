@@ -127,6 +127,18 @@ export interface EnvironmentUpdateMessage {
       chaos: number
       attractiveOdor: number
       aversiveDanger: number
+      signals?: Array<{
+        name: string
+        value: unknown
+        normalized: number
+        importance: number
+        valence: number
+        confidence: number
+        freshness: number
+        source: string
+        observedAtMs: number
+      }>
+      provenance?: Array<Record<string, unknown>>
     }>
     rawMarketFieldsForwardedToFly: false
     error?: string

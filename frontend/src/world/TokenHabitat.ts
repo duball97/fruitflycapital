@@ -1,18 +1,5 @@
-import { CylinderGeometry, Group, Mesh, MeshStandardMaterial, Vector3, Quaternion } from 'three'
-import { FlybodyAssetLoader } from '../rendering/FlybodyAsset'
-import { WingBeatPatternGenerator } from '../fly/WingBeatPattern'
-
-export interface TokenState {
-  id: string
-  label: string
-  activity: number
-  liquidityDepth: number
-  flowImbalance: number
-  volatility: number
-  socialActivity: number
-  risk: number
-  stableStructure: number
-}
+import { CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, RingGeometry, Vector3 } from 'three'
+import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
   physicalRadiusM: number
@@ -38,11 +25,6 @@ const NEUTRAL_PROPERTIES: HabitatProperties = {
   aversiveDanger: 0,
 }
 
-// Shared distant launch area for the visual swarm. It is a world-space
-// initial condition; the swarm still responds to each habitat's synthetic
-// sensory parameters after launch.
-const SWARM_START_WORLD = new Vector3(0, 0.64, 0.94)
-
 export class TokenHabitat {
   readonly group = new Group()
   readonly state: TokenState
@@ -50,13 +32,10 @@ export class TokenHabitat {
   properties: HabitatProperties = { ...NEUTRAL_PROPERTIES }
   private readonly pile: Mesh
   private readonly coin: Mesh
-  private readonly swarm: SwarmFlyVisual[] = []
-  readonly swarmReady: Promise<void>
+  private readonly pressureRing: Mesh
+  private readonly signalColumn: Mesh
+  private readonly signalCap: Mesh
   private enabled = true
-  private readonly wingAxisX = new Vector3(1, 0, 0)
-  private readonly wingAxisY = new Vector3(0, 1, 0)
-  private readonly wingAxisZ = new Vector3(0, 0, 1)
-  private readonly wingRotation = new Quaternion()
 
   constructor(state: TokenState, position: Vector3, color: number) {
     this.state = state
@@ -76,12 +55,30 @@ export class TokenHabitat {
     this.coin.position.y = 0.05
     this.coin.castShadow = true
     this.group.add(this.coin)
-    this.setScenario('different')
-    this.swarmReady = this.loadCanonicalSwarm()
-  }
 
-  get swarmCount() {
-    return this.swarm.length
+    this.pressureRing = new Mesh(
+      new RingGeometry(0.078, 0.083, 32),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.26, side: 2, depthWrite: false }),
+    )
+    this.pressureRing.rotation.x = -Math.PI / 2
+    this.pressureRing.position.y = 0.056
+    this.group.add(this.pressureRing)
+
+    this.signalColumn = new Mesh(
+      new CylinderGeometry(0.009, 0.015, 0.12, 6),
+      new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, transparent: true, opacity: 0.55, roughness: 0.28 }),
+    )
+    this.signalColumn.position.y = 0.115
+    this.signalColumn.visible = false
+    this.group.add(this.signalColumn)
+    this.signalCap = new Mesh(
+      new CylinderGeometry(0.017, 0.017, 0.004, 8),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.42, depthWrite: false }),
+    )
+    this.signalCap.position.y = 0.178
+    this.signalCap.visible = false
+    this.group.add(this.signalCap)
+    this.setScenario('different')
   }
 
   setScenario(scenario: HabitatScenario) {
@@ -101,110 +98,37 @@ export class TokenHabitat {
     const intensity = visual.brightness * (0.7 + visual.visualMotionIntensity * 0.3)
     ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
     ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
-    for (const fly of this.swarm) fly.carrier.visible = this.enabled && visual.particleActivity > 0.04
+    ;(this.pressureRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.18 + visual.chaos * 0.35 : 0.07
+    this.signalColumn.visible = this.enabled && visual.visualMotionIntensity > 0.04
+    this.signalCap.visible = this.signalColumn.visible
+    const columnMaterial = this.signalColumn.material as MeshStandardMaterial
+    columnMaterial.emissiveIntensity = 0.25 + visual.brightness * 1.2
+  }
+
+  get isEnabled() {
+    return this.enabled
+  }
+
+  update(timeSeconds: number) {
+    const visual = this.enabled ? this.properties : NEUTRAL_PROPERTIES
+    const pulse = 0.82 + Math.sin(timeSeconds * (1.1 + visual.visualMotionIntensity * 4.5) + this.basePosition.x * 2.7) * 0.18
+    this.coin.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.04 * pulse)
+    this.pressureRing.scale.setScalar(0.94 + visual.chaos * 0.22 + visual.visualMotionIntensity * 0.08 * pulse)
+    this.pressureRing.rotation.z = timeSeconds * (0.03 + visual.chaos * 0.24)
+    if (this.signalColumn.visible) {
+      const columnScale = 0.5 + visual.particleActivity * 1.4 + visual.chaos * 0.4
+      this.signalColumn.scale.set(1, columnScale * pulse, 1)
+      this.signalCap.scale.setScalar(0.8 + visual.particleActivity * 0.45)
+      this.signalCap.position.y = 0.115 + 0.06 * columnScale * pulse
+    }
   }
 
   setPosition(position: Vector3) {
     this.group.position.copy(position)
-    for (const fly of this.swarm) {
-      fly.start.set(
-        SWARM_START_WORLD.x - position.x + fly.launchOffset.x,
-        SWARM_START_WORLD.y - position.y + fly.launchOffset.y,
-        SWARM_START_WORLD.z - position.z + fly.launchOffset.z,
-      )
-    }
   }
 
   resetPosition() {
     this.setPosition(this.basePosition)
-  }
-
-  update(elapsedSeconds: number) {
-    const activity = this.properties.particleActivity
-    const chaos = this.properties.chaos
-    const sensoryDrive = Math.min(1, Math.max(0, 0.1 + this.properties.attractiveOdor * 0.95 - this.properties.aversiveDanger * 0.8))
-    for (const fly of this.swarm) {
-      const phase = fly.phase
-      // The visual swarm is not given a target coordinate. This is a small
-      // documented synthetic sensor demo: attraction/activity accelerate
-      // approach, while aversive danger keeps members nearer the launch zone.
-      const progress = Math.min(1, Math.max(0, (elapsedSeconds - 0.5) * (0.008 + sensoryDrive * 0.045)))
-      const eased = progress * progress * (3 - 2 * progress)
-      fly.carrier.position.lerpVectors(fly.start, fly.base, eased)
-      fly.direction.subVectors(fly.base, fly.start).normalize()
-      // The canonical asset's local -Z is its head/forward axis. Keep the
-      // body aligned with its actual launch-to-coin path; the old large
-      // wobble made the fly visibly travel sideways and looked like broken
-      // flight rather than a small bank.
-      fly.carrier.rotation.y = Math.atan2(fly.direction.x, -fly.direction.z)
-      fly.carrier.rotation.z = Math.sin(elapsedSeconds * 1.7 + phase) * 0.18 * (1 - progress)
-      const angles = fly.wingBeat.step(1 / 30, activity)
-      if (fly.leftWing) {
-        fly.leftWing.quaternion.copy(fly.leftBase)
-        this.applyWingAngles(fly.leftWing, angles.leftYaw, angles.leftRoll, angles.leftPitch)
-      }
-      if (fly.rightWing) {
-        fly.rightWing.quaternion.copy(fly.rightBase)
-        this.applyWingAngles(fly.rightWing, angles.rightYaw, angles.rightRoll, angles.rightPitch)
-      }
-    }
-    this.pile.rotation.y = Math.sin(elapsedSeconds * (0.15 + this.properties.visualMotionIntensity * 2.0)) * this.properties.chaos * 0.08
-  }
-
-  private async loadCanonicalSwarm() {
-    try {
-      const loader = new FlybodyAssetLoader()
-      // Three visible members per habitat make the swarm legible while still
-      // sharing the parsed canonical geometry/materials. They are visual
-      // swarm members, not extra CNS simulations.
-      const positions = [
-        new Vector3(-0.055, 0.11, 0.015),
-        new Vector3(0.05, 0.14, -0.02),
-        new Vector3(-0.02, 0.17, -0.045),
-      ]
-      const launchOffsets = [
-        new Vector3(-0.04, 0, 0),
-        new Vector3(0.04, 0.025, 0),
-        new Vector3(-0.015, 0.035, -0.025),
-      ]
-      const startPositions = launchOffsets.map((offset) => SWARM_START_WORLD.clone().sub(this.group.position).add(offset))
-      const results = await Promise.all(positions.map(() => loader.load()))
-      results.forEach((result, index) => {
-        const carrier = new Group()
-        carrier.name = `CanonicalFlybodySwarmMember:${this.state.id}:${index + 1}`
-        carrier.position.copy(startPositions[index]!)
-        carrier.scale.setScalar(8)
-        const phase = index * Math.PI + this.state.activity * 0.7
-        carrier.rotation.y = Math.atan2(positions[index]!.x - startPositions[index]!.x, -(positions[index]!.z - startPositions[index]!.z))
-        carrier.add(result.root)
-        this.group.add(carrier)
-        const visual: SwarmFlyVisual = {
-          carrier,
-          start: startPositions[index]!.clone(),
-          base: positions[index]!.clone(),
-          launchOffset: launchOffsets[index]!.clone(),
-          phase,
-          wingBeat: new WingBeatPatternGenerator(),
-          leftWing: result.leftWing,
-          rightWing: result.rightWing,
-          direction: new Vector3(),
-          leftBase: result.leftWing?.quaternion.clone() ?? new Quaternion(),
-          rightBase: result.rightWing?.quaternion.clone() ?? new Quaternion(),
-        }
-        this.swarm.push(visual)
-      })
-      this.applyAppearance()
-    } catch (error) {
-      // Do not replace a failed canonical swarm member with a fake fly. The
-      // habitat remains usable, but the status can report the missing body.
-      console.warn(`Canonical Flybody swarm unavailable for ${this.state.id}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
-  private applyWingAngles(wing: Group, yaw: number, roll: number, pitch: number) {
-    wing.quaternion.multiply(this.wingRotation.setFromAxisAngle(this.wingAxisZ, yaw))
-    wing.quaternion.multiply(this.wingRotation.setFromAxisAngle(this.wingAxisX, roll))
-    wing.quaternion.multiply(this.wingRotation.setFromAxisAngle(this.wingAxisY, pitch))
   }
 
   odorAt(position: Vector3, timeSeconds: number) {
@@ -219,29 +143,29 @@ export class TokenHabitat {
   }
 }
 
-interface SwarmFlyVisual {
-  carrier: Group
-  start: Vector3
-  base: Vector3
-  launchOffset: Vector3
-  phase: number
-  wingBeat: WingBeatPatternGenerator
-  leftWing: Group | null
-  rightWing: Group | null
-  leftBase: Quaternion
-  rightBase: Quaternion
-  direction: Vector3
+export function propertiesFromState(state: TokenState): HabitatProperties {
+  const activity = signal(state, 'market.volume5mUsd', 0)
+  const txVelocity = signal(state, 'flow.txVelocity5m', 0)
+  const liquidity = signal(state, 'liquidity.usd', 0)
+  const flow = signalValence(state, 'flow.imbalance', state.flow.flowImbalance)
+  const risk = Math.min(1, Math.max(0, 0.55 * (1 - liquidity) + 0.45 * Math.abs(flow)))
+  const activityLevel = Math.min(1, Math.max(0, 0.65 * activity + 0.35 * txVelocity))
+  return {
+    physicalRadiusM: 0.09 + liquidity * 0.13,
+    resourcePileRadiusM: 0.045 + activityLevel * 0.045,
+    visualMotionIntensity: Math.min(1, activityLevel * 0.8 + Math.abs(flow) * 0.2),
+    brightness: Math.min(1, 0.16 + activityLevel * 0.5),
+    particleActivity: Math.min(1, activityLevel * 0.72 + txVelocity * 0.28),
+    chaos: risk,
+    attractiveOdor: Math.min(1, activityLevel * 0.65 + liquidity * 0.2 + Math.max(0, flow) * 0.15),
+    aversiveDanger: risk,
+  }
 }
 
-export function propertiesFromState(state: TokenState): HabitatProperties {
-  return {
-    physicalRadiusM: 0.09 + state.liquidityDepth * 0.13,
-    resourcePileRadiusM: 0.045 + state.activity * 0.045,
-    visualMotionIntensity: Math.min(1, state.activity * 0.72 + Math.abs(state.flowImbalance) * 0.18 + state.socialActivity * 0.1),
-    brightness: Math.min(1, 0.16 + state.activity * 0.42 + state.socialActivity * 0.18),
-    particleActivity: Math.min(1, state.activity * 0.7 + state.socialActivity * 0.2 + state.volatility * 0.1),
-    chaos: Math.min(1, state.volatility * 0.6 + state.risk * 0.3 + (1 - state.stableStructure) * 0.1),
-    attractiveOdor: Math.min(1, state.activity * 0.55 + state.liquidityDepth * 0.25 + Math.max(0, state.flowImbalance) * 0.2),
-    aversiveDanger: Math.min(1, state.risk * 0.75 + state.volatility * 0.15 + (1 - state.stableStructure) * 0.1),
-  }
+function signal(state: TokenState, name: string, fallback: number) {
+  return state.signals.find((candidate) => candidate.name === name)?.normalized ?? fallback
+}
+
+function signalValence(state: TokenState, name: string, fallback: number) {
+  return state.signals.find((candidate) => candidate.name === name)?.valence ?? fallback
 }

@@ -7,7 +7,7 @@ software encodings used to send observations to the MaleCNS adapter.
 
 | Channel | Implementation | What reaches the brain | Status |
 |---|---|---|---|
-| Left/right vision | 5 azimuth x 2 elevation rays per eye (20 samples total), cast against the Three.js environment | Per sample: body-relative direction, azimuth, elevation, luminance, contrast, optic-flow proxy, object angular size | Implemented |
+| Left/right vision | 5 azimuth x 2 elevation rays per eye (20 samples total), sampled at 10 Hz and cast against the Three.js environment | Per sample: body-relative direction, azimuth, elevation, luminance, contrast, optic-flow proxy, object angular size | Implemented |
 | Odor | Gaussian diffusion-like fields around the three synthetic token habitats; left/right antenna samples are offset from the body | Center concentration, left/right antenna concentration, temporal change | Implemented as synthetic world input |
 | Body motion | Body angular velocity and translational velocity transformed into the body frame | Angular velocity, body-frame velocity, speed, gravity alignment | Implemented as feedback; not mapped to CNS by default |
 | Wind | No airflow solver or wind field | `windImplemented=false`, null direction, zero speed | Explicitly unimplemented |
@@ -24,22 +24,22 @@ not a token API or a financial data feed. Their mock states are:
 
 | Habitat | Mock state | Physical fields exposed to the fly |
 |---|---|---|
-| TOKEN-A | ACTIVE / HEALTHY | brightness, canonical Flybody swarm motion, attractive odor, low danger |
-| TOKEN-B | QUIET / STABLE | lower motion/brightness, attractive odor, low danger |
-| TOKEN-C | ACTIVE / DANGEROUS | high motion/chaos, attractive odor, aversive danger |
+| TOKEN-A | ACTIVE / HEALTHY | brightness, visual motion, attractive odor, low danger |
+| TOKEN-B | QUIET / STABLE | lower brightness/motion, attractive odor, low danger |
+| TOKEN-C | ACTIVE / DANGEROUS | high visual motion/chaos, attractive odor, aversive danger |
 
-Scenario `A · OFF` sets the synthetic habitat sensory fields to neutral;
-`B · DIFFERENT` uses the default state/site assignment; `C · SWAPPED` rotates
-the state/site assignment. These fields are deliberately a local synthetic
-stimulus layer. They are not real tokens, prices, balances, wallet data, or
-social-network data.
+Scenario `NEUTRAL` sets the synthetic habitat sensory fields to neutral;
+`DIFFERENT SIGNALS` uses the default state/site assignment; `RELOCATED COINS`
+rotates the state/site assignment. These fields are deliberately a local
+synthetic stimulus layer. They are not real tokens, prices, balances, wallet
+data, or social-network data.
 
-Each coin pile displays three canonical Flybody swarm members. They begin in a
-shared distant launch zone and use the synthetic attraction, activity, and
-danger parameters to determine how far they approach their associated pile.
-This is a visual swarm demonstration, not nine additional MaleCNS
-simulations; only the two foreground bodies are present as agent IDs, and only
-Fly A currently has a live MaleCNS brain.
+The browser now creates eight canonical Flybody agents, with IDs
+`fly-001` through `fly-008`, in a deterministic distant launch formation.
+There are no visual-only swarm members and no foreground A/B pair. Each agent
+samples the world from its own body pose and sends its own sensor summary to
+its own brain stream. A camera selection changes only which agent is inspected;
+it does not give that agent privileged coordinates or a different controller.
 
 Attractive odor is sampled by the existing odor channel and encoded to the
 documented `ORN_DA1` population. Aversive danger is currently visible in the
@@ -76,4 +76,28 @@ and no neuron is selected by trial-and-error activity.
 Wind, gravity, contact, optic flow, and aversive odor are returned in the
 sensory frame but are reported as unimplemented MaleCNS mappings. The debug
 panel shows those channels and the encoded body-ID counts returned by the
-Python WebSocket adapter.
+Python WebSocket adapter. The browser does not convert these observations into
+movement unless a documented CNS mapping returns a command.
+
+## What moves a fly
+
+The causal chain for every numbered fly is:
+
+```text
+local world geometry and odor field
+  -> FlySensors on that fly's pose
+  -> encoded R8d / ORN_DA1 body IDs
+  -> that fly's persistent MaleCNS/Brian2 runtime
+  -> selected descending-neuron spike rates
+  -> FlightMotorDecoder
+  -> that fly's FlyActuators
+  -> that fly's FlyBody rigid-body integration
+  -> new pose and new sensor frame
+```
+
+The browser never sends a token position, target vector, or “go to coin”
+command. Habitat attraction and danger affect the odor/visual fields only.
+They are not a direct steering policy. In the current scientifically bounded
+MaleCNS mapping, if the selected flight DN populations produce no spikes, the
+decoded command remains neutral; that is an observed limitation, not a hidden
+autopilot.

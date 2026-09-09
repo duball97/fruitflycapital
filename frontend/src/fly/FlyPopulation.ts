@@ -1,0 +1,61 @@
+import { BrainSocket } from '../networking/BrainSocket'
+import { FlyAgent } from './FlyAgent'
+import { KeyboardState, MaleCNSController, ManualController, SwitchableController } from './FlyController'
+import { FlyRenderer } from '../rendering/FlyRenderer'
+import { SWARM_SIZE, swarmFlyId, swarmSpawnPosition } from './SwarmConfig'
+
+export interface FlyPopulationOptions {
+  keyboard: KeyboardState
+  brainSocket: BrainSocket
+  brainUpdateHz: number
+  size?: number
+}
+
+/**
+ * Owns the population boundary. There are no decorative members here:
+ * each entry has its own body, sensor state, controller, renderer, and
+ * flyId-backed server runtime.
+ */
+export class FlyPopulation {
+  readonly agents: FlyAgent[] = []
+  readonly controllers: SwitchableController[] = []
+  readonly renderers: FlyRenderer[] = []
+  private _selectedIndex = 0
+
+  constructor(options: FlyPopulationOptions) {
+    const size = options.size ?? SWARM_SIZE
+    if (!Number.isInteger(size) || size < 1) throw new Error('FlyPopulation size must be a positive integer')
+
+    for (let index = 0; index < size; index += 1) {
+      const id = swarmFlyId(index)
+      const manual = new ManualController(options.keyboard, () => index === this._selectedIndex)
+      const malecns = new MaleCNSController(options.brainSocket, id, options.brainUpdateHz, index * 0.05)
+      const controller = new SwitchableController(manual, malecns)
+      controller.setMode('malecns')
+      this.controllers.push(controller)
+      this.agents.push(new FlyAgent(id, controller, swarmSpawnPosition(index)))
+      this.renderers.push(new FlyRenderer())
+    }
+  }
+
+  get size() {
+    return this.agents.length
+  }
+
+  get selectedIndex() {
+    return this._selectedIndex
+  }
+
+  get selectedAgent() {
+    return this.agents[this._selectedIndex]!
+  }
+
+  get selectedController() {
+    return this.controllers[this._selectedIndex]!
+  }
+
+  select(index: number) {
+    this._selectedIndex = Math.min(this.size - 1, Math.max(0, Math.floor(index)))
+    return this._selectedIndex
+  }
+}

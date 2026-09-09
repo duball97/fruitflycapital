@@ -28,10 +28,16 @@ preserves it and converts the XML's centimetre-scale positions and mesh
 coordinates to metres. These conversions are interface adaptations, not a
 change to the body geometry.
 
-The Three.js renderer applies an explicit 8x display-only magnification so a
+The Three.js renderer applies an explicit 12x display-only magnification so a
 millimetre-scale fly can be inspected from the room-scale free camera. It does
 not change the FlyBody position, collision radius, sensor origins, or logged
 physical units.
+
+All eight pilot agents load the same canonical XML/OBJ scene. To keep the
+population view interactive, unselected agents use a render-only LOD showing the canonical
+head, thorax, abdomen, and wings; the selected agent renders all XML geoms.
+Selecting another fly changes only this display detail and camera focus, never
+the physical or neural state.
 
 The first-person camera is consequently offset beyond the magnified display
 mesh rather than placed at a literal millimetre-scale eye point. This is a

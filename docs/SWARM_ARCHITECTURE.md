@@ -1,0 +1,135 @@
+# NeuroSwarm: what the eight pilot flies are doing
+
+The browser simulation currently contains eight real pilot agents. They are
+numbered `fly-001` through `fly-008`; the letters A and B are not agent
+identities in this architecture. This is intentionally a verification
+population, not the final 100-fly deployment.
+
+## One fly's complete state
+
+Every `FlyAgent` owns these independent objects:
+
+| State | Code | Meaning |
+|---|---|---|
+| body pose | `FlyBody.position`, `quaternion` | SI-metre position and orientation |
+| body motion | `FlyBody.velocity`, `angularVelocity` | integrated translational and angular motion |
+| sensors | `FlySensors` | observations sampled from that fly's own pose |
+| actuators | `FlyActuators` | the latest command applied to that fly only |
+| controller | `SwitchableController` | MaleCNS by default; manual only for the selected debug fly |
+| brain identity | `fly-NNN` | the key for that fly's persistent Python runtime and output cache |
+| RNG stream | server-side stable seed | deterministic but independent neural randomness |
+
+The camera selector only changes which agent is inspected. It does not make a
+selected fly smarter, give it a target, or share its brain with another fly.
+
+## How to read the population counters
+
+The HUD keeps population existence separate from neural activity:
+
+| Counter | Meaning |
+|---|---|
+| `AGENTS` | Physical Flybody agents created in the browser |
+| `CNS RUNTIMES` | Distinct `fly-NNN` runtime outputs received from the adapter |
+| `CNS ACTIVE` | Those runtimes that reported at least one spike in the latest returned window |
+| `MOTOR CONTROLLED` | Those runtimes whose decoded command is currently non-neutral |
+| `DECORATIVE FLIES` | Visual-only agents; this must remain `0` |
+
+Thus `CNS RUNTIMES 8/8` does not imply that all eight flies are moving, and
+`CNS ACTIVE 0/8` is a meaningful neural result rather than a rendering error.
+
+## What can move one fly
+
+The movement path is deliberately one-way through the sensorimotor interface:
+
+```text
+coin geometry + odor field + physical boundaries
+              |
+              v
+fly-NNN FlySensors at its current pose
+              |
+              |  eye summaries, odor, motion, contact
+              v
+MaleCNSSensoryEncoder
+              |
+              |  exact annotated body IDs, currently R8d and ORN_DA1
+              v
+fly-NNN persistent Brian2 MaleCNS runtime
+              |
+              |  cached MaleCNS weighted edges and LIF spike windows
+              v
+FlightMotorDecoder
+              |
+              |  selected annotated descending-neuron rates
+              v
+fly-NNN FlyActuators
+              |
+              |  thrust, yaw, pitch, roll
+              v
+fly-NNN FlyBody rigid-body integrator
+              |
+              v
+new pose -> new sensors -> next loop
+```
+
+There is no `targetPosition`, no token-coordinate message, and no direct
+fly-to-fly neural connection. A coin's synthetic state changes brightness,
+visual motion, attractive odor, or aversive odor. Those fields can change what
+a fly senses; they do not directly select a coin or add a steering force.
+
+## Why a fly may not go anywhere
+
+“MaleCNS mode” does not mean “autopilot.” The decoded flight command is zero
+when the selected descending populations have no spikes. The current bounded
+realtime graph has already shown this distinction:
+
+- sensory stimulation can produce upstream activity;
+- odor can produce a turning readout;
+- the selected DNg02 wing-amplitude population has not produced sustained
+  thrust in the smoke experiment;
+- therefore sustained autonomous flight and token-directed navigation are not
+  yet demonstrated.
+
+The UI's causal panel reports this as `DN active` or `DN quiet`, then shows the
+actual command received by the body. If it says `waiting for this fly's brain
+output`, the Python adapter has not returned a window for that ID yet. If it
+says `DN quiet` and command values are zero, the brain ran and returned no
+selected motor activity.
+
+## What “independent brains” means operationally
+
+The browser sends a compact sensor frame for every distinct `fly-NNN` ID. The
+Python adapter creates one `LiveMaleCNSRuntime` per ID, with the same official
+MaleCNS topology and separate membrane state, spike history, and deterministic
+RNG stream. The initial requests are staggered to avoid a single connection
+burst. The browser also applies one-in-flight-frame backpressure per fly, so a
+slow Brian2 window cannot create an unbounded queue of stale sensor frames.
+
+The realtime cache is an explicit performance boundary: approximately 6,641
+neurons and 65,110 retained weighted edges per runtime before transmitter-sign
+filtering. One laptop may not sustain many full Brian2 copies at interactive
+latency. The status therefore distinguishes:
+
+```text
+8/8 independent browser bodies
+N/8 brain outputs received so far
+```
+
+If `N` remains low, that is runtime capacity/queueing—not evidence that the
+other bodies are secretly sharing a brain. The correct scaling work is a
+fleet scheduler or compiled/vectorized Brian2-compatible backend. Replacing
+the missing brains with a hand-written “go to coin” rule would invalidate the
+experiment.
+
+## Debugging one selected fly
+
+1. Select any `#NNN` in the top-right `INSPECT FLY` control.
+2. Click `FOCUS`, or use camera `2` for follow mode.
+3. Press `I` to open the causal panel.
+4. Read the chain from left/right luminance and odor, through encoded ID
+   counts and DN activity, to the command and body velocity.
+5. Press `M` only if you want to test that selected body's physics manually.
+   The other seven agents remain in their own MaleCNS mode.
+
+The flight log downloads the selected fly's sensor, stimulation, spike/DN,
+command, pose, and velocity history so a visible movement can be traced back
+to the exact input frame that preceded it.

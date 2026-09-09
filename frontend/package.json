@@ -1,5 +1,5 @@
 {
-  "name": "male-cns-fly-world",
+  "name": "fruit-fly-capital",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,6 +10,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "postprocessing": "^6.39.5",
     "three": "^0.180.0"
   },
   "devDependencies": {

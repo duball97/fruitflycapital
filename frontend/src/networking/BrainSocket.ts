@@ -16,6 +16,7 @@ export class BrainSocket {
   private latestCommands = new Map<string, ActuatorCommand>()
   private latestStimulations = new Map<string, MaleCNSSensoryStimulation>()
   private latestActivity = new Map<string, BrainActivity>()
+  private readonly pendingInputs = new Set<string>()
   private latestEnvironment: EnvironmentUpdateMessage['environment'] | null = null
   private status: BrainSocketStatus = 'disconnected'
   private readonly listeners = new Set<(status: BrainSocketStatus) => void>()
@@ -38,6 +39,7 @@ export class BrainSocket {
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return
       this.socket = null
+      this.pendingInputs.clear()
       this.setStatus('disconnected')
       this.scheduleReconnect()
     })
@@ -51,6 +53,7 @@ export class BrainSocket {
     this.reconnectTimer = null
     this.socket?.close()
     this.socket = null
+    this.pendingInputs.clear()
     this.setStatus('disconnected')
   }
 
@@ -61,7 +64,12 @@ export class BrainSocket {
 
   send(frame: BrainInputMessage) {
     if (this.socket?.readyState !== WebSocket.OPEN) return false
+    // The Brian2 adapter is deliberately slower than the render loop. Never
+    // let one fly build an unbounded queue of stale sensory frames while its
+    // previous fixed window is still running.
+    if (this.pendingInputs.has(frame.flyId)) return false
     this.socket.send(JSON.stringify(frame))
+    this.pendingInputs.add(frame.flyId)
     return true
   }
 
@@ -96,6 +104,7 @@ export class BrainSocket {
     try {
       const message: unknown = JSON.parse(raw)
       if (isBrainOutputMessage(message)) {
+        this.pendingInputs.delete(message.flyId)
         this.latestCommands.set(message.flyId, message.commands)
         if (message.stimulation) this.latestStimulations.set(message.flyId, message.stimulation)
         if (message.flightCommand && message.descendingRates && message.spikeCounts) {

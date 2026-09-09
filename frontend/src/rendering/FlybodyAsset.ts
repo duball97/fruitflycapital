@@ -27,13 +27,16 @@ const MUJOCO_MESH_SCALE = 0.1
 const CENTIMETRES_TO_METRES = 0.01
 
 const MATERIALS: Record<string, { color: number; opacity: number; transparent: boolean; roughness: number }> = {
-  body: { color: 0xac5924, opacity: 1, transparent: false, roughness: 0.62 },
+  // Near-black charcoal keeps the canonical Flybody geometry and material
+  // separation readable under the bright world lighting. The eyes and wings
+  // remain distinct so the fly does not collapse into a flat silhouette.
+  body: { color: 0x17181b, opacity: 1, transparent: false, roughness: 0.62 },
   red: { color: 0xcc0701, opacity: 1, transparent: false, roughness: 0.55 },
-  ocelli: { color: 0x210c04, opacity: 1, transparent: false, roughness: 0.3 },
+  ocelli: { color: 0x050608, opacity: 1, transparent: false, roughness: 0.3 },
   black: { color: 0x050505, opacity: 1, transparent: false, roughness: 0.48 },
-  'bristle-brown': { color: 0x140a04, opacity: 1, transparent: false, roughness: 0.5 },
-  lower: { color: 0xcc9c62, opacity: 1, transparent: false, roughness: 0.6 },
-  brown: { color: 0x341407, opacity: 1, transparent: false, roughness: 0.6 },
+  'bristle-brown': { color: 0x0b0b0d, opacity: 1, transparent: false, roughness: 0.5 },
+  lower: { color: 0x28282d, opacity: 1, transparent: false, roughness: 0.6 },
+  brown: { color: 0x0d0f12, opacity: 1, transparent: false, roughness: 0.6 },
   membrane: { color: 0x89afd0, opacity: 0.4, transparent: true, roughness: 0.25 },
   blue: { color: 0x334cff, opacity: 1, transparent: false, roughness: 0.55 },
   pink: { color: 0x994dcc, opacity: 1, transparent: false, roughness: 0.55 },
@@ -121,6 +124,10 @@ export class FlybodyAssetLoader {
       this.applyMaterial(visual, geom.getAttribute('material') ?? 'body')
       visual.traverse((child) => {
         if (child instanceof Mesh) {
+          // Fly bodies are physical agents, not world landmarks. Keeping
+          // them out of the environment ray list prevents the population from
+          // ray-testing against thousands of their own detail meshes.
+          child.userData.sensorVisible = false
           child.castShadow = false
           child.receiveShadow = true
         }
@@ -163,7 +170,7 @@ export class FlybodyAssetLoader {
 
   private applyMaterial(object: Object3D, materialName: string) {
     const definition = MATERIALS[materialName] ?? {
-      color: 0xac5924,
+      color: 0x17181b,
       opacity: 1,
       transparent: false,
       roughness: 0.62,

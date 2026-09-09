@@ -9,15 +9,15 @@ export class FreeCamera {
   constructor(domElement: HTMLElement) {
     // Frame the two flies closely enough to be identifiable while retaining
     // enough room context for orbit/pan/zoom exploration.
-    this.camera.position.set(1.25, 0.98, 1.45)
+    this.camera.position.set(0.98, 0.82, 1.12)
     this.controls = new OrbitControls(this.camera, domElement)
-    this.controls.target.set(0, 0.34, 0)
+    this.controls.target.set(0, 0.38, 0)
     this.controls.enableDamping = true
     this.controls.enablePan = true
     this.controls.screenSpacePanning = true
     this.controls.zoomToCursor = true
     this.controls.minDistance = 0.005
-    this.controls.maxDistance = 5
+    this.controls.maxDistance = 4
   }
 
   focusOn(position: Vector3) {
@@ -29,7 +29,7 @@ export class FreeCamera {
     if (this.focusOffset.lengthSq() < this.controls.minDistance ** 2) {
       this.focusOffset.set(0.12, 0.06, 0.12)
     }
-    this.focusOffset.setLength(Math.max(this.controls.minDistance * 5, Math.min(this.focusOffset.length(), 0.09)))
+    this.focusOffset.setLength(Math.max(this.controls.minDistance * 5, Math.min(this.focusOffset.length(), 0.14)))
     this.controls.target.copy(position)
     this.camera.position.copy(position).add(this.focusOffset)
     this.controls.update()

@@ -1,18 +1,22 @@
-import { Color, DirectionalLight, Fog, Group, HemisphereLight, Scene, Vector3 } from 'three'
+import { AmbientLight, Color, DirectionalLight, Fog, Group, HemisphereLight, Scene, Vector3 } from 'three'
 import { Arena } from './Arena'
 import { MOCK_HABITAT_COLORS, MOCK_HABITAT_POSITIONS, MOCK_TOKEN_STATES } from './tokenFixtures'
 import { TokenHabitat, type HabitatScenario } from './TokenHabitat'
 import type { OdorFieldSample } from '../fly/FlySensors'
 import type { EnvironmentUpdateMessage } from '../networking/protocol'
+import { ParticleField } from './ParticleField'
+import { PropLibrary } from './PropLibrary'
 
 export class Environment {
   readonly group = new Group()
   readonly arena = new Arena()
   readonly bounds = this.arena.bounds
   readonly habitats: TokenHabitat[]
-  readonly swarmReady: Promise<void>
+  readonly particles: ParticleField
+  readonly propsGroup = new Group()
+  readonly propsReady: Promise<void>
+  private readonly propLibrary = new PropLibrary()
   scenario: HabitatScenario = 'different'
-  private lastVisualUpdate = Number.NEGATIVE_INFINITY
 
   constructor() {
     this.group.name = 'Environment'
@@ -22,16 +26,12 @@ export class Environment {
       this.group.add(habitat.group)
       return habitat
     })
-    this.swarmReady = Promise.all(this.habitats.map((habitat) => habitat.swarmReady)).then(() => undefined)
+    this.particles = new ParticleField(this.habitats)
+    this.group.add(this.particles.mesh)
+    this.propsGroup.name = 'LocalCC0Props'
+    this.group.add(this.propsGroup)
+    this.propsReady = this.loadLocalProps()
     this.setHabitatScenario('different')
-  }
-
-  get swarmCount() {
-    return this.habitats.reduce((count, habitat) => count + habitat.swarmCount, 0)
-  }
-
-  get visualSwarmCapacity() {
-    return this.habitats.length * 3
   }
 
   setHabitatScenario(scenario: HabitatScenario) {
@@ -61,10 +61,9 @@ export class Environment {
     }
   }
 
-  update(elapsedSeconds: number) {
-    if (elapsedSeconds - this.lastVisualUpdate < 1 / 30) return
-    this.lastVisualUpdate = elapsedSeconds
-    this.habitats.forEach((habitat) => habitat.update(elapsedSeconds))
+  updateVisuals(timeSeconds: number) {
+    this.habitats.forEach((habitat) => habitat.update(timeSeconds))
+    this.particles.update(timeSeconds)
   }
 
   sampleOdorAt(position: Vector3, timeSeconds: number): OdorFieldSample {
@@ -81,14 +80,33 @@ export class Environment {
   }
 
   setupLighting(scene: Scene) {
-    scene.background = new Color(0x07111d)
-    scene.fog = new Fog(0x07111d, 2.5, 5)
-    scene.add(new HemisphereLight(0x9bc6ff, 0x162130, 1.25))
-    const key = new DirectionalLight(0xfff0d0, 2.2)
+    scene.background = new Color(0x7e8d87)
+    scene.fog = new Fog(0x7e8d87, 3.2, 6.5)
+    scene.add(new HemisphereLight(0xe8f4ed, 0x5e6962, 2.1))
+    scene.add(new AmbientLight(0xc6d5cf, 0.52))
+    const key = new DirectionalLight(0xffe8c5, 3.2)
     key.position.set(-1.5, 2.2, 1.1)
-    key.castShadow = true
-    key.shadow.mapSize.set(512, 512)
+    key.castShadow = false
     scene.add(key)
+    const fill = new DirectionalLight(0xbad5ff, 1.15)
+    fill.position.set(1.2, 1.1, -1.3)
+    scene.add(fill)
+  }
+
+  private async loadLocalProps() {
+    try {
+      const [trashCan, cardboardBox] = await Promise.all([
+        this.propLibrary.place('trashCan', new Vector3(-0.88, 0, -0.18), 0.18),
+        this.propLibrary.place('cardboardBox', new Vector3(0.86, 0, -0.55), 0.13),
+      ])
+      trashCan.rotation.y = -0.28
+      cardboardBox.rotation.y = 0.32
+      this.propsGroup.add(trashCan, cardboardBox)
+    } catch (error) {
+      // Local props are presentation-only. A missing optional CC0 asset must
+      // never block the biological world from starting.
+      console.warn(`Optional local CC0 props unavailable: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
 }

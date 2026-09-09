@@ -15,7 +15,9 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from websockets.exceptions import ConnectionClosed
 
 from .brain.realtime import LiveMaleCNSRuntime, RealtimeRuntimeUnavailable, default_realtime_cache
 from .brain.sensory_encoding import default_encoder
@@ -32,10 +34,68 @@ REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
 
 
-def _stable_fly_seed(fly_id: str) -> int:
+def _stable_fly_seed(fly_id: str, base_seed: int = REALTIME_SEED) -> int:
     """Give each fly a deterministic but independent RNG stream."""
     offset = sum((index + 1) * ord(character) for index, character in enumerate(fly_id))
-    return REALTIME_SEED + offset
+    return int(base_seed) + offset
+
+
+class RuntimeRegistry:
+    """Own one persistent neural runtime per distinct fly ID.
+
+    This is the server-side population boundary. A browser reconnect reuses
+    the same runtime objects, while two IDs always receive separate Brian2
+    state and separate deterministic seeds. ``runtime_factory`` is injectable
+    so the ownership contract can be tested without loading the large cache.
+    """
+
+    def __init__(
+        self,
+        cache_dir: str | Path,
+        *,
+        base_seed: int = 0,
+        window_ms: float = 50.0,
+        runtime_factory: Callable[..., LiveMaleCNSRuntime] = LiveMaleCNSRuntime,
+    ) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.base_seed = int(base_seed)
+        self.window_ms = float(window_ms)
+        self.runtime_factory = runtime_factory
+        self._runtimes: dict[str, LiveMaleCNSRuntime | None] = {}
+        self._lock: asyncio.Lock | None = None
+
+    @property
+    def runtime_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._runtimes))
+
+    async def get(self, fly_id: str) -> LiveMaleCNSRuntime | None:
+        if fly_id in self._runtimes:
+            return self._runtimes[fly_id]
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if fly_id in self._runtimes:
+                return self._runtimes[fly_id]
+            try:
+                runtime = await asyncio.to_thread(
+                    self.runtime_factory,
+                    self.cache_dir,
+                    seed=_stable_fly_seed(fly_id, self.base_seed),
+                    window_ms=self.window_ms,
+                )
+                self._runtimes[fly_id] = runtime
+                print(f"Live Brian2 MaleCNS runtime ready for {fly_id} from {self.cache_dir}", flush=True)
+            except (RealtimeRuntimeUnavailable, FileNotFoundError, ImportError, ValueError) as error:
+                self._runtimes[fly_id] = None
+                print(f"Live Brian2 runtime unavailable for {fly_id}: {error}", flush=True)
+            return self._runtimes[fly_id]
+
+
+RUNTIME_REGISTRY = RuntimeRegistry(
+    REALTIME_CACHE,
+    base_seed=REALTIME_SEED,
+    window_ms=REALTIME_WINDOW_MS,
+)
 
 
 def command_for_sensor_frame(
@@ -60,7 +120,6 @@ def command_for_sensor_frame(
 
 async def handle_client(websocket: Any) -> None:
     await websocket.send(json.dumps({"type": "hello", "protocol": "male-cns-fly-world", "version": 1}))
-    runtimes: dict[str, LiveMaleCNSRuntime | None] = {}
     async for raw in websocket:
         try:
             message = json.loads(raw)
@@ -72,23 +131,16 @@ async def handle_client(websocket: Any) -> None:
                     environment = {"source": "graph-uniswap", "status": "disabled", "observedAtMs": 0, "habitats": [], "rawMarketFieldsForwardedToFly": False}
                 else:
                     environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
-                await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
+                try:
+                    await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
+                except (ConnectionError, ConnectionClosed):
+                    break
             continue
         fly_id = message.get("flyId")
         if not isinstance(fly_id, str):
             continue
-        if fly_id not in runtimes:
-            try:
-                runtimes[fly_id] = LiveMaleCNSRuntime(
-                    REALTIME_CACHE,
-                    seed=_stable_fly_seed(fly_id),
-                    window_ms=REALTIME_WINDOW_MS,
-                )
-                print(f"Live Brian2 MaleCNS runtime ready for {fly_id} from {REALTIME_CACHE}", flush=True)
-            except (RealtimeRuntimeUnavailable, FileNotFoundError, ImportError, ValueError) as error:
-                runtimes[fly_id] = None
-                print(f"Live Brian2 runtime unavailable for {fly_id}: {error}", flush=True)
-        commands, decoded, runtime_metadata = command_for_sensor_frame(message, runtimes[fly_id])
+        runtime = await RUNTIME_REGISTRY.get(fly_id)
+        commands, decoded, runtime_metadata = await asyncio.to_thread(command_for_sensor_frame, message, runtime)
         output = {
             "type": "brain_output",
             "flyId": fly_id,
@@ -100,7 +152,10 @@ async def handle_client(websocket: Any) -> None:
         }
         if "spikeRates" in runtime_metadata:
             output["spikeRates"] = runtime_metadata["spikeRates"]
-        await websocket.send(json.dumps(output))
+        try:
+            await websocket.send(json.dumps(output))
+        except (ConnectionError, ConnectionClosed):
+            break
 
 
 async def serve_forever(host: str, port: int) -> None:

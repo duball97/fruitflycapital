@@ -9,9 +9,21 @@
 
 ## World geometry
 
-The current experiment intentionally contains no room props or placeholder
-landmarks. The floor and invisible arena bounds are procedural Three.js
-geometry. Token coin piles are also procedural geometry; their colored coin
-tops identify the synthetic sensory parameters assigned to each habitat. The
-floating labels and orbit rings were removed from the experiment view because
-they were presentation-only clutter, not sensory inputs.
+The floor and invisible arena bounds are procedural Three.js geometry. The
+floor uses a small deterministic procedural texture; the three token coin
+piles are procedural geometry and their colored tops identify the synthetic
+sensory parameters assigned to each habitat.
+
+The scene also uses two locally bundled Poly Haven CC0 props for restrained
+world context:
+
+- `metal_trash_can/metal_trash_can.gltf`
+- `cardboard_box_01/cardboard_box.gltf`
+
+They are loaded by `frontend/src/world/PropLibrary.ts`. The props are not
+market signals and are not used as privileged brain inputs; they are ordinary
+world geometry that the existing ray-based visual sensor may encounter.
+
+Habitat particles are pooled instances and fly trails share one dynamic line
+buffer. There are no decorative fly agents separate from the biological
+population.

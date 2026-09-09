@@ -13,7 +13,7 @@ export class FirstPersonCamera {
     // in metres. Put the visual camera beyond that display-only mesh; placing
     // it at a millimetre-scale physical eye point would clip into the larger
     // rendered head/thorax.
-    this.camera.position.copy(agent.body.position).addScaledVector(forward, 0.025).addScaledVector(up, 0.006)
+    this.camera.position.copy(agent.body.position).addScaledVector(forward, 0.07).addScaledVector(up, 0.012)
     this.camera.quaternion.copy(agent.body.quaternion)
   }
 }
