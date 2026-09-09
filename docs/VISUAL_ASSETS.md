@@ -11,5 +11,7 @@
 
 The current experiment intentionally contains no room props or placeholder
 landmarks. The floor and invisible arena bounds are procedural Three.js
-geometry. Token coin piles are also procedural geometry; their labels and
-colors identify the synthetic sensory parameters assigned to each habitat.
+geometry. Token coin piles are also procedural geometry; their colored coin
+tops identify the synthetic sensory parameters assigned to each habitat. The
+floating labels and orbit rings were removed from the experiment view because
+they were presentation-only clutter, not sensory inputs.

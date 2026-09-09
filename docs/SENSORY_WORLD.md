@@ -34,11 +34,12 @@ the state/site assignment. These fields are deliberately a local synthetic
 stimulus layer. They are not real tokens, prices, balances, wallet data, or
 social-network data.
 
-Each coin pile displays two canonical Flybody swarm members. They begin in a
+Each coin pile displays three canonical Flybody swarm members. They begin in a
 shared distant launch zone and use the synthetic attraction, activity, and
 danger parameters to determine how far they approach their associated pile.
-This is a visual swarm demonstration, not six additional MaleCNS simulations;
-only the two foreground flies have independent CNS agent IDs.
+This is a visual swarm demonstration, not nine additional MaleCNS
+simulations; only the two foreground bodies are present as agent IDs, and only
+Fly A currently has a live MaleCNS brain.
 
 Attractive odor is sampled by the existing odor channel and encoded to the
 documented `ORN_DA1` population. Aversive danger is currently visible in the

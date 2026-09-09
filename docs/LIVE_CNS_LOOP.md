@@ -16,7 +16,7 @@ Three.js FlySensors
 
 Fly A is the active candidate. Fly B remains rendered with the same canonical
 Flybody body but uses an `OFF` stationary controller and sends no brain input.
-The six small flies at the coin piles are visual swarm members only; they do
+The nine small flies at the coin piles are visual swarm members only; they do
 not each have a MaleCNS copy.
 
 ## Starting it

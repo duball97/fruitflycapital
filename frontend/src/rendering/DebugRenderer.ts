@@ -14,6 +14,7 @@ export class DebugRenderer {
   private readonly velocity = new Vector3()
   private readonly velocityDirection = new Vector3()
   private lastPanelUpdate = Number.NEGATIVE_INFINITY
+  private panelVisible = true
 
   constructor(uiRoot: HTMLElement, readonly label = 'FLY A', panelSide: 'left' | 'right' = 'right') {
     this.group.name = 'DebugVectors'
@@ -30,6 +31,11 @@ export class DebugRenderer {
 
   setVectorsVisible(visible: boolean) {
     this.group.visible = visible
+  }
+
+  setPanelVisible(visible: boolean) {
+    this.panelVisible = visible
+    this.panel.hidden = !visible
   }
 
   update(agent: FlyAgent, elapsedSeconds: number, brainStatus: string, stimulation: MaleCNSSensoryStimulation | null, activity: BrainActivity | null) {
@@ -49,6 +55,8 @@ export class DebugRenderer {
     this.sensoryArrow.position.copy(origin)
     this.sensoryArrow.setDirection(forward)
     this.sensoryArrow.setLength(Math.min(0.25, Math.max(0.03, agent.sensors.getObstacleDistance())), 0.018, 0.009)
+
+    if (!this.panelVisible) return
 
     // The vectors remain live at render rate, but the textual panel only needs
     // a 10 Hz refresh. Updating innerHTML for two panels every animation frame

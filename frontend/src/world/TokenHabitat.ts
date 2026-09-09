@@ -1,4 +1,4 @@
-import { CanvasTexture, Color, CylinderGeometry, Group, Mesh, MeshStandardMaterial, Sprite, SpriteMaterial, TorusGeometry, Vector3, Quaternion } from 'three'
+import { CylinderGeometry, Group, Mesh, MeshStandardMaterial, Vector3, Quaternion } from 'three'
 import { FlybodyAssetLoader } from '../rendering/FlybodyAsset'
 import { WingBeatPatternGenerator } from '../fly/WingBeatPattern'
 
@@ -48,12 +48,10 @@ export class TokenHabitat {
   readonly state: TokenState
   readonly basePosition = new Vector3()
   properties: HabitatProperties = { ...NEUTRAL_PROPERTIES }
-  private readonly ring: Mesh
   private readonly pile: Mesh
-  private readonly light: Mesh
+  private readonly coin: Mesh
   private readonly swarm: SwarmFlyVisual[] = []
   readonly swarmReady: Promise<void>
-  private readonly label: Sprite
   private enabled = true
   private readonly wingAxisX = new Vector3(1, 0, 0)
   private readonly wingAxisY = new Vector3(0, 1, 0)
@@ -66,25 +64,18 @@ export class TokenHabitat {
     this.group.name = `TokenHabitat:${state.id}`
     this.group.position.copy(position)
 
-    const ringMaterial = new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.18, transparent: true, opacity: 0.72, roughness: 0.48 })
-    this.ring = new Mesh(new TorusGeometry(0.12, 0.008, 8, 36), ringMaterial)
-    this.ring.rotation.x = Math.PI / 2
-    this.ring.position.y = 0.006
-    this.group.add(this.ring)
-
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
     this.pile.position.y = 0.028
     this.pile.castShadow = true
     this.group.add(this.pile)
 
-    this.light = new Mesh(new CylinderGeometry(0.07, 0.07, 0.006, 18), new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, transparent: true, opacity: 0.72 }))
-    this.light.position.y = 0.05
-    this.group.add(this.light)
-
-    this.label = new Sprite(new SpriteMaterial({ map: labelTexture(`${state.id}  /  ${state.label}`, color), transparent: true, depthWrite: false }))
-    this.label.position.y = 0.21
-    this.label.scale.set(0.27, 0.068, 1)
-    this.group.add(this.label)
+    // The colored coin is the only identity marker in the 3D world. Floating
+    // labels and orbit rings obscured the actual fly/coin interaction and
+    // were not sensory inputs.
+    this.coin = new Mesh(new CylinderGeometry(0.07, 0.07, 0.007, 18), new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.34 }))
+    this.coin.position.y = 0.05
+    this.coin.castShadow = true
+    this.group.add(this.coin)
     this.setScenario('different')
     this.swarmReady = this.loadCanonicalSwarm()
   }
@@ -108,9 +99,8 @@ export class TokenHabitat {
   private applyAppearance() {
     const visual = this.enabled ? this.properties : NEUTRAL_PROPERTIES
     const intensity = visual.brightness * (0.7 + visual.visualMotionIntensity * 0.3)
-    ;(this.ring.material as MeshStandardMaterial).emissiveIntensity = intensity
-    ;(this.light.material as MeshStandardMaterial).emissiveIntensity = intensity
-    ;(this.light.material as MeshStandardMaterial).opacity = this.enabled ? 0.72 : 0.3
+    ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
+    ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
     for (const fly of this.swarm) fly.carrier.visible = this.enabled && visual.particleActivity > 0.04
   }
 
@@ -126,7 +116,7 @@ export class TokenHabitat {
   }
 
   resetPosition() {
-    this.group.position.copy(this.basePosition)
+    this.setPosition(this.basePosition)
   }
 
   update(elapsedSeconds: number) {
@@ -142,7 +132,11 @@ export class TokenHabitat {
       const eased = progress * progress * (3 - 2 * progress)
       fly.carrier.position.lerpVectors(fly.start, fly.base, eased)
       fly.direction.subVectors(fly.base, fly.start).normalize()
-      fly.carrier.rotation.y = Math.atan2(fly.direction.x, -fly.direction.z) + Math.sin(elapsedSeconds * 0.8 + phase) * 0.65
+      // The canonical asset's local -Z is its head/forward axis. Keep the
+      // body aligned with its actual launch-to-coin path; the old large
+      // wobble made the fly visibly travel sideways and looked like broken
+      // flight rather than a small bank.
+      fly.carrier.rotation.y = Math.atan2(fly.direction.x, -fly.direction.z)
       fly.carrier.rotation.z = Math.sin(elapsedSeconds * 1.7 + phase) * 0.18 * (1 - progress)
       const angles = fly.wingBeat.step(1 / 30, activity)
       if (fly.leftWing) {
@@ -160,11 +154,19 @@ export class TokenHabitat {
   private async loadCanonicalSwarm() {
     try {
       const loader = new FlybodyAssetLoader()
-      // Two visible members per habitat are enough to communicate a swarm
-      // without multiplying the 85-geom canonical asset into a frame-rate
-      // problem. They are visual swarm members, not extra CNS simulations.
-      const positions = [new Vector3(-0.055, 0.11, 0.015), new Vector3(0.05, 0.14, -0.02)]
-      const launchOffsets = [new Vector3(-0.025, 0, 0), new Vector3(0.025, 0.025, 0)]
+      // Three visible members per habitat make the swarm legible while still
+      // sharing the parsed canonical geometry/materials. They are visual
+      // swarm members, not extra CNS simulations.
+      const positions = [
+        new Vector3(-0.055, 0.11, 0.015),
+        new Vector3(0.05, 0.14, -0.02),
+        new Vector3(-0.02, 0.17, -0.045),
+      ]
+      const launchOffsets = [
+        new Vector3(-0.04, 0, 0),
+        new Vector3(0.04, 0.025, 0),
+        new Vector3(-0.015, 0.035, -0.025),
+      ]
       const startPositions = launchOffsets.map((offset) => SWARM_START_WORLD.clone().sub(this.group.position).add(offset))
       const results = await Promise.all(positions.map(() => loader.load()))
       results.forEach((result, index) => {
@@ -173,7 +175,7 @@ export class TokenHabitat {
         carrier.position.copy(startPositions[index]!)
         carrier.scale.setScalar(8)
         const phase = index * Math.PI + this.state.activity * 0.7
-        carrier.rotation.y = Math.sin(phase) * 0.65
+        carrier.rotation.y = Math.atan2(positions[index]!.x - startPositions[index]!.x, -(positions[index]!.z - startPositions[index]!.z))
         carrier.add(result.root)
         this.group.add(carrier)
         const visual: SwarmFlyVisual = {
@@ -242,25 +244,4 @@ export function propertiesFromState(state: TokenState): HabitatProperties {
     attractiveOdor: Math.min(1, state.activity * 0.55 + state.liquidityDepth * 0.25 + Math.max(0, state.flowImbalance) * 0.2),
     aversiveDanger: Math.min(1, state.risk * 0.75 + state.volatility * 0.15 + (1 - state.stableStructure) * 0.1),
   }
-}
-
-function labelTexture(text: string, color: number) {
-  const canvas = document.createElement('canvas')
-  canvas.width = 640
-  canvas.height = 150
-  const context = canvas.getContext('2d')
-  if (!context) return new CanvasTexture(canvas)
-  context.clearRect(0, 0, canvas.width, canvas.height)
-  context.fillStyle = '#08121dcc'
-  context.roundRect(4, 18, canvas.width - 8, 94, 18)
-  context.fill()
-  context.strokeStyle = `#${new Color(color).getHexString()}`
-  context.lineWidth = 5
-  context.stroke()
-  context.fillStyle = '#eef7ff'
-  context.font = '700 34px ui-monospace, monospace'
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  context.fillText(text, canvas.width / 2, 65)
-  return new CanvasTexture(canvas)
 }

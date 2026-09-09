@@ -9,7 +9,11 @@ export class FirstPersonCamera {
   update(agent: FlyAgent) {
     const forward = this.forward.set(0, 0, -1).applyQuaternion(agent.body.quaternion).normalize()
     const up = this.up.set(0, 1, 0).applyQuaternion(agent.body.quaternion).normalize()
-    this.camera.position.copy(agent.body.position).addScaledVector(forward, 0.0025).addScaledVector(up, 0.001)
+    // The canonical mesh is magnified 8x for inspection while physics stays
+    // in metres. Put the visual camera beyond that display-only mesh; placing
+    // it at a millimetre-scale physical eye point would clip into the larger
+    // rendered head/thorax.
+    this.camera.position.copy(agent.body.position).addScaledVector(forward, 0.025).addScaledVector(up, 0.006)
     this.camera.quaternion.copy(agent.body.quaternion)
   }
 }

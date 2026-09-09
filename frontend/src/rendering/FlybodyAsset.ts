@@ -69,8 +69,11 @@ export class FlybodyAssetLoader {
     // MuJoCo is Z-up. Three.js is Y-up; this is the same coordinate mapping
     // used by the rest of this project for world-space vectors. Flybody's
     // anatomical head direction is MuJoCo +X, while FlyBody's flight
-    // direction is Three.js -Z. The second rotation aligns those axes so the
-    // rendered head, forward arrow, and velocity agree.
+    // direction is Three.js -Z. The rotation values alone are not enough:
+    // Three's default XYZ Euler order maps +X to -Y here. YXZ applies the
+    // intended conversion (+X -> -Z, +Z/up -> +Y) so the rendered head,
+    // forward arrow, and velocity agree.
+    root.rotation.order = 'YXZ'
     root.rotation.set(-Math.PI / 2, Math.PI / 2, 0)
     const state: { leftWing: Group | null; rightWing: Group | null; meshCount: number } = {
       leftWing: null,

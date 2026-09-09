@@ -30,6 +30,10 @@ export class Environment {
     return this.habitats.reduce((count, habitat) => count + habitat.swarmCount, 0)
   }
 
+  get visualSwarmCapacity() {
+    return this.habitats.length * 3
+  }
+
   setHabitatScenario(scenario: HabitatScenario) {
     this.scenario = scenario
     this.habitats.forEach((habitat, index) => habitat.setScenario(scenario))

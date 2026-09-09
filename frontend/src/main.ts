@@ -34,6 +34,7 @@ hud.innerHTML = `
     <span><kbd>M</kbd> manual / MaleCNS</span>
     <span><kbd>1–4</kbd> cameras</span>
     <span><kbd>V</kbd> debug vectors</span>
+    <span><kbd>I</kbd> inspect panels</span>
     <span>mouse drag orbit · right-drag pan · wheel zoom</span>
   </div>
 `
@@ -50,10 +51,6 @@ const modeButton = document.createElement('button')
 modeButton.className = 'mode-button'
 modeButton.textContent = 'MODE: MALECNS · FLY A / FLY B OFF (M)'
 app.append(modeButton)
-const architectureStatus = document.createElement('div')
-architectureStatus.className = 'architecture-status'
-architectureStatus.textContent = 'AGENTS · Fly A autonomous candidate · Fly B OFF · separate CNS state'
-app.append(architectureStatus)
 
 const scene = new Scene()
 const renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' })
@@ -116,11 +113,14 @@ bodyStatus.className = 'body-status'
 bodyStatus.textContent = 'BODY · loading canonical Flybody XML + OBJ assets'
 app.append(bodyStatus)
 void Promise.all([flyRendererA.ready, flyRendererB.ready, environment.swarmReady]).then(() => {
-  bodyStatus.textContent = `BODY · ${flyRendererA.assetStatus === 'canonical' && flyRendererB.assetStatus === 'canonical' ? `canonical Flybody loaded · ${flyRendererA.meshCount} XML geoms` : 'asset fallback · inspect console'} · CNS AGENTS · 1 active (A) · FLY B OFF · SWARM VISUALS · ${environment.swarmCount}/6`
+  bodyStatus.textContent = `BODY · ${flyRendererA.assetStatus === 'canonical' && flyRendererB.assetStatus === 'canonical' ? `canonical Flybody loaded · ${flyRendererA.meshCount} XML geoms` : 'asset fallback · inspect console'} · BRAINS · 1 live (A) + 1 OFF (B) · VISUAL FLY BODIES · ${environment.swarmCount + 2}/${environment.visualSwarmCapacity + 2}`
 })
 
 const debugA = new DebugRenderer(app, 'FLY A', 'right')
 const debugB = new DebugRenderer(app, 'FLY B', 'left')
+let debugPanelsVisible = false
+debugA.setPanelVisible(debugPanelsVisible)
+debugB.setPanelVisible(debugPanelsVisible)
 world.add(debugA.group)
 world.add(debugB.group)
 
@@ -191,6 +191,11 @@ window.addEventListener('keydown', (event) => {
     debugA.setVectorsVisible(debugVectorsVisible)
     debugB.setVectorsVisible(debugVectorsVisible)
   }
+  if (event.code === 'KeyI') {
+    debugPanelsVisible = !debugPanelsVisible
+    debugA.setPanelVisible(debugPanelsVisible)
+    debugB.setPanelVisible(debugPanelsVisible)
+  }
   const cameraKey = Number(event.code.replace('Digit', ''))
   if (cameraKey >= 1 && cameraKey <= 4) cameraIndex = cameraKey - 1
 })
@@ -222,9 +227,6 @@ function animate(now: number) {
   debugB.update(agentB, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(agentB.id), brainSocket.activityFor(agentB.id))
   const modeLabel = agentA.mode === 'manual' ? 'MANUAL · FLY A / FLY B OFF' : 'MALECNS · FLY A / FLY B OFF'
   modeButton.textContent = `MODE: ${modeLabel} (M)`
-  architectureStatus.textContent = agentA.mode === 'manual'
-    ? 'AGENTS · Fly A keyboard → actuator interface · Fly B OFF'
-    : 'AGENTS · Fly A sensors → MaleCNS → decoder → actuators · Fly B OFF'
 
   activeCamera = cameras[cameraIndex] ?? cameras[0]
   if (cameraIndex === 0) free.update()

@@ -25,6 +25,8 @@ export class FlyBody {
   readonly maxVerticalForceN = 0.000018
   readonly gravityN = 0.00000981
   readonly maxTorqueNm = 0.000001
+  readonly maxSpeedMps = 0.25
+  readonly maxAngularSpeedRadS = 6
   readonly linearDrag = 0.0032
   readonly angularDrag = 3.8
   // Approximate adult-fly collision radius in metres; the rendered mesh uses
@@ -48,9 +50,15 @@ export class FlyBody {
     force.addScaledVector(this.velocity, -this.linearDrag)
     this.velocity.addScaledVector(force, dt / this.massKg)
     this.velocity.multiplyScalar(Math.exp(-this.linearDrag * 2 * dt))
+    if (this.velocity.lengthSq() > this.maxSpeedMps ** 2) this.velocity.setLength(this.maxSpeedMps)
     this.position.addScaledVector(this.velocity, dt)
 
-    const localTorque = this.localTorque.set(command.pitchTorque, command.yawTorque, command.rollTorque)
+    // Angular velocity is kept in the fly/body frame. With Three.js forward
+    // defined as local -Z, a positive right-yaw command must rotate about -Y:
+    // local -Z -> world +X. This keeps the keyboard D command, the decoder's
+    // documented positive-right sign, the heading arrow, and the canonical
+    // Flybody head direction consistent.
+    const localTorque = this.localTorque.set(command.pitchTorque, -command.yawTorque, command.rollTorque)
     const angularAcceleration = this.angularAcceleration.set(
       (localTorque.x * this.maxTorqueNm) / this.inertia.x,
       (localTorque.y * this.maxTorqueNm) / this.inertia.y,
@@ -58,6 +66,7 @@ export class FlyBody {
     )
     this.angularVelocity.addScaledVector(angularAcceleration, dt)
     this.angularVelocity.multiplyScalar(Math.exp(-this.angularDrag * dt))
+    if (this.angularVelocity.lengthSq() > this.maxAngularSpeedRadS ** 2) this.angularVelocity.setLength(this.maxAngularSpeedRadS)
     const angle = this.angularVelocity.length() * dt
     if (angle > 0.0000001) {
       const delta = this.rotationDelta.setFromAxisAngle(this.rotationAxis.copy(this.angularVelocity).normalize(), angle)

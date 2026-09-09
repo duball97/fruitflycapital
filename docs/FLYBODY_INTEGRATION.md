@@ -21,7 +21,9 @@ The XML declares `angle="radian"` and uses MuJoCo's Z-up convention. The
 Three.js world is Y-up, so the loaded asset root applies a -90 degree rotation
 about X. Flybody's anatomical head direction is MuJoCo +X, while this
 simulation's forward direction is Three.js -Z, so the asset also applies a +90
-degree Y rotation. Flybody's XML mesh default scale is `0.1`; the loader
+degree Y rotation using Three's `YXZ` order. The order is material: default
+`XYZ` would send the head axis downward. The resulting conversion is +X -> -Z
+and +Z/up -> +Y. Flybody's XML mesh default scale is `0.1`; the loader
 preserves it and converts the XML's centimetre-scale positions and mesh
 coordinates to metres. These conversions are interface adaptations, not a
 change to the body geometry.
@@ -31,9 +33,23 @@ millimetre-scale fly can be inspected from the room-scale free camera. It does
 not change the FlyBody position, collision radius, sensor origins, or logged
 physical units.
 
+The first-person camera is consequently offset beyond the magnified display
+mesh rather than placed at a literal millimetre-scale eye point. This is a
+rendering accommodation only; sensor rays continue to originate from the
+physical FlyBody frame.
+
 The source XML explicitly exposes `wing_left` and `wing_right` bodies, each
 with yaw, roll, and pitch joints. The renderer retains those body nodes and
 drives their visual pose with `WingBeatPatternGenerator`.
+
+The browser rigid-body preview uses local body-frame angular velocity. Its
+forward axis is Three.js local `-Z`, so a positive right-yaw actuator is
+integrated about local `-Y`; this is the sign convention that keeps the
+displayed head, heading vector, and velocity direction aligned. It is an
+interface convention for the preview and does not alter the Flybody XML.
+The preview also bounds translational and angular rates to keep held manual
+inputs from numerically flipping or tunnelling through the small display
+volume; these are browser stability limits, not Flybody biomechanical data.
 
 ## Physics status
 
