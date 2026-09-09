@@ -1,0 +1,35 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #07111d;
+  color: #e8f1ff;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: #07111d; }
+.world-canvas { display: block; width: 100%; height: 100%; outline: none; }
+.hud { position: fixed; inset: 22px auto auto 26px; z-index: 2; pointer-events: none; text-shadow: 0 2px 12px #000; }
+.brand { letter-spacing: .17em; font-size: 13px; font-weight: 750; color: #e7f5ff; }
+.brand-mark { color: #58d5ff; margin-right: 7px; }
+.subtitle { margin-top: 6px; font-size: 11px; color: #9bb0c7; letter-spacing: .04em; }
+.controls-hint { display: flex; flex-wrap: wrap; gap: 8px 13px; max-width: 710px; margin-top: 14px; font-size: 11px; color: #b9c8d8; }
+kbd { display: inline-block; min-width: 17px; margin-right: 3px; padding: 2px 5px; border: 1px solid #587088; border-radius: 4px; background: #182b3caa; color: #eff8ff; font-size: 10px; text-align: center; }
+.socket-status { position: fixed; right: 25px; top: 23px; z-index: 2; padding: 7px 10px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #b7c9d9; font-size: 11px; box-shadow: 0 8px 30px #0005; }
+.log-button { position: fixed; right: 25px; top: 63px; z-index: 2; padding: 7px 10px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #8fdcff; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; cursor: pointer; }
+.log-button:hover { border-color: #62d8ff; background: #10263a; }
+.mode-button { position: fixed; right: 25px; top: 101px; z-index: 2; padding: 7px 10px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #8fdcff; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; cursor: pointer; }
+.body-status { position: fixed; right: 25px; top: 139px; z-index: 2; padding: 6px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #9fb8ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+.architecture-status { position: fixed; left: 25px; top: 171px; z-index: 2; max-width: min(760px, calc(100vw - 50px)); padding: 6px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725cc; color: #8fa9bd; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; }
+.mode-button:hover { border-color: #62d8ff; background: #10263a; }
+.scenario-panel { position: fixed; left: 25px; top: 124px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #2c455d; border-radius: 8px; background: #091725dd; color: #9eb6ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; box-shadow: 0 8px 30px #0005; }
+.scenario-panel button { padding: 5px 7px; border: 1px solid #34506a; border-radius: 5px; background: #102337; color: #b9d7eb; font: inherit; cursor: pointer; }
+.scenario-panel button[aria-pressed="true"] { border-color: #62d8ff; background: #173b56; color: #fff; }
+.scenario-panel button:hover { border-color: #62d8ff; color: #fff; }
+.socket-url { color: #718ba4; margin-left: 7px; }
+.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #8794a1; }
+.status-dot.connected { background: #56e39a; box-shadow: 0 0 9px #56e39a; }
+.status-dot.connecting { background: #f5cb63; }
+.status-dot.error { background: #ff6f7e; }
+.debug-panel { position: fixed; right: 25px; bottom: 22px; z-index: 2; width: calc(50vw - 45px); min-width: 320px; max-height: 43vh; overflow: hidden; padding: 11px 13px; border: 1px solid #294158; border-radius: 9px; background: #091725d9; color: #a8bfd2; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 8px 30px #0006; pointer-events: none; }
+.debug-panel strong { color: #62d8ff; letter-spacing: .08em; }
