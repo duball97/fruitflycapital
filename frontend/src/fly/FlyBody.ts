@@ -24,14 +24,18 @@ export class FlyBody {
   readonly maxForwardForceN = 0.00055
   readonly maxVerticalForceN = 0.000018
   readonly gravityN = 0.00000981
-  readonly maxTorqueNm = 0.000001
+  // The previous value made a boundary turn take many seconds at this
+  // millimetre-scale inertia. This remains a small rigid-body torque, but it
+  // gives the shared actuator interface enough authority to leave a wall
+  // without the old high-rate spinning behaviour.
+  readonly maxTorqueNm = 0.0000022
   readonly maxSpeedMps = 0.25
   // A 6 rad/s hard cap made a held yaw command spin the body like a
   // turntable. This lower physical rate limit keeps heading changes visible
   // while preserving the same actuator interface for every controller.
   readonly maxAngularSpeedRadS = 2.4
   readonly linearDrag = 0.0032
-  readonly angularDrag = 5.2
+  readonly angularDrag = 3.8
   // Approximate adult-fly collision radius in metres; the rendered mesh uses
   // the same physical scale rather than an arbitrary room-sized avatar.
   readonly collisionRadius = 0.0025

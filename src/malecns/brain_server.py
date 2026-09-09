@@ -19,11 +19,14 @@ from typing import Any, Callable
 
 from websockets.exceptions import ConnectionClosed
 
+from .config import load_project_env
 from .brain.realtime import LiveMaleCNSRuntime, RealtimeRuntimeUnavailable, default_realtime_cache
 from .brain.sensory_encoding import default_encoder
 from .motor.flight_decoder import FlightMotorDecoder
 from .market.signal_engine import MarketSignalEngine
 
+
+load_project_env()
 
 SENSORY_ENCODER = default_encoder()
 _ANNOTATIONS = Path(__file__).resolve().parents[2] / "data" / "raw" / "body-annotations-male-cns-v1.0-minconf-0.5.feather"

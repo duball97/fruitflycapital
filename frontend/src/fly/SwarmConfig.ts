@@ -1,10 +1,14 @@
 import { Vector3 } from 'three'
 
 /**
- * The first population experiment is intentionally small. Every entry below
- * is a real FlyAgent; scale beyond this only after independence is verified.
+ * Sixteen is the next interactive pilot target. A larger value can be selected
+ * explicitly with VITE_SWARM_SIZE after benchmarking the per-fly brain
+ * scheduler; the UI caps this experiment at 100 agents.
  */
-export const SWARM_SIZE = 8
+const configuredSize = Number(import.meta.env.VITE_SWARM_SIZE)
+export const SWARM_SIZE = Number.isInteger(configuredSize) && configuredSize >= 1 && configuredSize <= 100
+  ? configuredSize
+  : 16
 
 /**
  * Shared initial condition. The small deterministic offsets stop the bodies

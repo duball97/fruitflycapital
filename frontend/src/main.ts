@@ -17,6 +17,9 @@ import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProc
 import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
 
+const configuredFlightDriver = import.meta.env.VITE_FLIGHT_DRIVER
+const flightDriver: 'malecns' | 'preview' = configuredFlightDriver === 'malecns' ? 'malecns' : 'preview'
+
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
 
@@ -47,20 +50,6 @@ hud.className = 'hud'
 hud.innerHTML = `
   <div class="brand"><span class="brand-mark">✦</span> FRUIT FLY CAPITAL</div>
   <div class="neuroswarm">NEUROSWARM</div>
-  <div class="subtitle">Biological agents in an onchain market ecology</div>
-  <div class="technical-status">MaleCNS v1.0 · Flybody · The Graph</div>
-  <div class="controls-hint debug-only">
-    <span><kbd>W</kbd><kbd>S</kbd> pitch</span>
-    <span><kbd>A</kbd><kbd>D</kbd> yaw</span>
-    <span><kbd>Q</kbd><kbd>E</kbd> roll</span>
-    <span><kbd>Shift</kbd> thrust</span>
-    <span><kbd>Ctrl</kbd> descend</span>
-    <span><kbd>M</kbd> selected fly manual / MaleCNS</span>
-    <span><kbd>1–4</kbd> cameras</span>
-    <span><kbd>V</kbd> vectors</span>
-    <span><kbd>I</kbd> causal panel</span>
-    <span>mouse orbit · right-drag pan · wheel zoom</span>
-  </div>
 `
 app.append(hud)
 
@@ -135,9 +124,9 @@ const flightLog = new FlightLogger()
 const brainUpdateHz = Math.max(1, Number(import.meta.env.VITE_BRAIN_UPDATE_HZ ?? 2) || 2)
 let selectedIndex = 0
 
-// The pilot population is deliberately eight real agents. There is no
+// The pilot population is deliberately a numbered set of real agents. There is no
 // foreground pair, second stationary body, or habitat-only visual swarm.
-const population = new FlyPopulation({ keyboard, brainSocket, brainUpdateHz, size: SWARM_SIZE })
+const population = new FlyPopulation({ keyboard, brainSocket, brainUpdateHz, size: SWARM_SIZE, driver: flightDriver })
 const { agents, renderers: flyRenderers, controllers } = population
 modeButton.addEventListener('click', () => population.selectedController.toggleMode())
 
@@ -170,7 +159,9 @@ const firstPerson = new FirstPersonCamera()
 const side = new SideCamera()
 const presentation = new PresentationCamera()
 const cameras = [free.camera, follow.camera, firstPerson.camera, side.camera, presentation.camera] as const
-let cameraIndex = 4
+// Start in the user-controlled free orbit. Cinematic views remain opt-in via
+// the camera panel; they should never take over the first view.
+let cameraIndex = 0
 let activeCamera = cameras[cameraIndex] ?? cameras[0]!
 const cameraFocus = new Vector3()
 const pipeline = new PostProcessingPipeline(renderer, scene, activeCamera)
@@ -178,7 +169,7 @@ let renderQuality: RenderQuality = 'performance'
 const storedQuality = window.localStorage.getItem('ffc.renderQuality')
 if (storedQuality === 'demo' || storedQuality === 'performance') renderQuality = storedQuality
 pipeline.setQuality(renderQuality)
-presentation.setMode('director')
+presentation.setMode('overview')
 
 const performanceStatus = document.createElement('div')
 performanceStatus.className = 'performance-status debug-only'
@@ -201,7 +192,7 @@ setPresentationMode(presentationMode)
 presentationToggle.addEventListener('click', () => setPresentationMode(presentationMode === 'demo' ? 'debug' : 'demo'))
 
 const cameraTargetPanel = document.createElement('div')
-cameraTargetPanel.className = 'camera-target-panel debug-only'
+cameraTargetPanel.className = 'camera-target-panel'
 const cameraTargetLabel = document.createElement('span')
 cameraTargetLabel.textContent = 'INSPECT FLY'
 cameraTargetPanel.append(cameraTargetLabel)
@@ -214,14 +205,17 @@ for (let index = 0; index < SWARM_SIZE; index += 1) {
   flySelector.append(option)
 }
 flySelector.value = String(selectedIndex)
-flySelector.addEventListener('change', () => setSelectedFly(Number(flySelector.value), true))
+flySelector.addEventListener('change', () => setSelectedFly(Number(flySelector.value), false))
 cameraTargetPanel.append(flySelector)
 const focusButton = document.createElement('button')
 focusButton.textContent = 'FOCUS'
-focusButton.addEventListener('click', () => free.focusOn(cameraTargetPosition()))
+focusButton.addEventListener('click', () => {
+  cameraIndex = 0
+  free.focusOn(cameraTargetPosition())
+})
 cameraTargetPanel.append(focusButton)
 for (const [label, mode] of [
-  ['OVERVIEW', 'overview'],
+  ['SWARM', 'overview'],
   ['TOKEN', 'token'],
   ['AUTO', 'director'],
 ] as Array<[string, PresentationCameraMode]>) {
@@ -233,13 +227,21 @@ for (const [label, mode] of [
   })
   cameraTargetPanel.append(button)
 }
+const followButton = document.createElement('button')
+followButton.textContent = 'FOLLOW'
+followButton.addEventListener('click', () => { cameraIndex = 1 })
+cameraTargetPanel.append(followButton)
+const freeButton = document.createElement('button')
+freeButton.textContent = 'FREE'
+freeButton.addEventListener('click', () => { cameraIndex = 0 })
+cameraTargetPanel.append(freeButton)
 app.append(cameraTargetPanel)
 
 function setSelectedFly(index: number, focus: boolean) {
   selectedIndex = population.select(index)
   flySelector.value = String(selectedIndex)
   debug.setLabel(`FLY #${String(selectedIndex + 1).padStart(3, '0')}`)
-  if (focus) free.focusOn(cameraTargetPosition())
+  if (focus && cameraIndex === 0) free.focusOn(cameraTargetPosition())
 }
 
 function cameraTargetPosition() {
@@ -345,10 +347,13 @@ function animate(now: number) {
     const nonNeutral = command.forwardThrust > 0 || Math.abs(command.yawTorque) > 0 || Math.abs(command.pitchTorque) > 0 || Math.abs(command.rollTorque) > 0
     return count + (activity?.source === 'brian2-malecns-v1-realtime-3hop' && nonNeutral ? 1 : 0)
   }, 0)
-  populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>AGENTS ${SWARM_SIZE} · CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOTOR CONTROLLED ${motorControlled}/${SWARM_SIZE} · DECORATIVE FLIES 0`
+  const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
+  populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>AGENTS ${SWARM_SIZE} · CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE} · DRIVE ${motorControlled}/${SWARM_SIZE} · DECORATIVE FLIES 0`
+  const previewCount = agents.reduce((count, agent) => count + (agent.mode === 'preview' ? 1 : 0), 0)
   const manualCount = agents.reduce((count, agent) => count + (agent.mode === 'manual' ? 1 : 0), 0)
-  modeButton.textContent = `SWARM · ${SWARM_SIZE - manualCount} MALECNS · brains ${liveBrains}/${SWARM_SIZE} · #${String(selectedIndex + 1).padStart(3, '0')} (M)`
-  modeButton.title = `Each fly has an independent controller and brain ID. Live outputs received: ${liveBrains}/${SWARM_SIZE}. M toggles only the selected fly.`
+  const malecnsCount = agents.reduce((count, agent) => count + (agent.mode === 'malecns' ? 1 : 0), 0)
+  modeButton.textContent = `DRIVER · ${previewCount ? `PREVIEW ${previewCount}` : ''}${malecnsCount ? ` CNS ${malecnsCount}` : ''}${manualCount ? ` MANUAL ${manualCount}` : ''} · #${String(selectedIndex + 1).padStart(3, '0')}`
+  modeButton.title = `Selected fly driver. Preview is explicitly non-neural sensory flight; MaleCNS uses the decoded Brian2 command; manual is keyboard debug. Click to cycle.`
 
   activeCamera = cameras[cameraIndex] ?? cameras[0]!
   if (cameraIndex === 0) free.update()
@@ -371,7 +376,8 @@ function animate(now: number) {
     return pressure > bestPressure ? habitat : best
   }, environment.habitats[0]!)
   const pressure = salientHabitat.properties.attractiveOdor + salientHabitat.properties.aversiveDanger
-  demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>AGENTS ${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE}</span><span>SELECTED ${salientHabitat.state.id} · PRESSURE ${pressure.toFixed(2)} · ${selectedActivity?.source === 'brian2-malecns-v1-realtime-3hop' ? 'LIVE' : 'QUIET'}</span>`
+  demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>AGENTS ${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE} · DRIVE ${motorControlled}/${SWARM_SIZE}</span><span>DRIVER ${selectedAgent.mode.toUpperCase()} · SELECTED ${salientHabitat.state.id} · PRESSURE ${pressure.toFixed(2)} · ${selectedActivity?.source === 'brian2-malecns-v1-realtime-3hop' ? 'CNS TELEMETRY LIVE' : 'CNS QUIET'}</span>`
+  pipeline.render(delta, activeCamera)
   if (world.elapsedSeconds >= nextPerfUiAt) {
     const lodCounts = flyRenderers.reduce((counts, flyRenderer) => {
       const lod = flyRenderer.currentLod
@@ -382,7 +388,6 @@ function animate(now: number) {
     performanceStatus.textContent = `PERF · ${fps} FPS · ${renderer.info.render.calls} calls · ${renderer.info.render.triangles} tris · LOD full/med/low ${lodCounts.full}/${lodCounts.medium}/${lodCounts.low} · particles ${environment.particles.count} · brain ${brainUpdateHz} Hz · ${renderQuality.toUpperCase()}`
     nextPerfUiAt += 0.25
   }
-  pipeline.render(delta, activeCamera)
   requestAnimationFrame(animate)
 }
 
@@ -416,7 +421,9 @@ function updateCausalStatus(agent: FlyAgent) {
   const activity = brainSocket.activityFor(agent.id)
   const frame = agent.sensors.getFrame()
   const command = agent.actuators.get()
-  const brainStep = activity?.source === 'brian2-malecns-v1-realtime-3hop'
+  const brainStep = agent.mode === 'preview'
+    ? `sensory flight preview · CNS telemetry ${activity?.source === 'brian2-malecns-v1-realtime-3hop' ? 'live' : 'waiting'}`
+    : activity?.source === 'brian2-malecns-v1-realtime-3hop'
     ? `Brian2 output · DN ${Object.values(activity.descendingRates).some((rate) => rate > 0) ? 'active' : 'quiet'}`
     : activity
       ? 'decoder-only output · no live Brian2 provider'
@@ -424,7 +431,7 @@ function updateCausalStatus(agent: FlyAgent) {
   causalStatus.innerHTML = [
     `<strong>CAUSE MAP · ${agent.id}</strong> · ${brainStep}`,
     `senses: vision L/R ${frame.leftEye.meanLuminance.toFixed(2)}/${frame.rightEye.meanLuminance.toFixed(2)} · odor ${frame.odor.concentration.toFixed(2)} · wall ${frame.contact.wall}`,
-    `IDs: ${stimulation ? `${stimulation.visual.length} visual + ${stimulation.olfactory.length} odor` : 'not encoded yet'} → spikes/DN → command ${command.forwardThrust.toFixed(2)} thrust · ${command.yawTorque.toFixed(2)} yaw · ${command.pitchTorque.toFixed(2)} pitch`,
+    `${agent.mode === 'preview' ? 'CNS telemetry' : 'spikes/DN'}: ${stimulation ? `${stimulation.visual.length} visual + ${stimulation.olfactory.length} odor` : 'not encoded yet'} → ${agent.mode === 'preview' ? 'local sensors → preview' : 'spikes/DN'} → command ${command.forwardThrust.toFixed(2)} thrust · ${command.yawTorque.toFixed(2)} yaw · ${command.pitchTorque.toFixed(2)} pitch`,
   ].join('<br>')
 }
 

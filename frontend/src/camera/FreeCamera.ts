@@ -7,11 +7,13 @@ export class FreeCamera {
   private readonly focusOffset = new Vector3()
 
   constructor(domElement: HTMLElement) {
-    // Frame the two flies closely enough to be identifiable while retaining
+    // Frame the population closely enough to be identifiable while retaining
     // enough room context for orbit/pan/zoom exploration.
-    this.camera.position.set(0.98, 0.82, 1.12)
+    // Aim the opening view below the horizon so the room floor fills the
+    // frame instead of exposing the scene background above its far edge.
+    this.camera.position.set(1.12, 1.34, 1.28)
     this.controls = new OrbitControls(this.camera, domElement)
-    this.controls.target.set(0, 0.38, 0)
+    this.controls.target.set(0, 0.02, 0)
     this.controls.enableDamping = true
     this.controls.enablePan = true
     this.controls.screenSpacePanning = true

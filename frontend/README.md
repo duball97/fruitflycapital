@@ -53,8 +53,8 @@ Feather files in the repository root:
 The adapter encodes each embodied sensor frame into exact MaleCNS sensory IDs,
 advances one persistent Brian2 runtime per connected fly ID, and decodes that
 window's `spikeRates`/`spikeCounts` into the normalized `FlightCommand` through
-`FlightMotorDecoder`. The browser starts eight independent agents named
-`fly-001` through `fly-008`; there is no special A/B pair. Manual flight is
+`FlightMotorDecoder`. The browser starts sixteen independent agents named
+`fly-001` through `fly-016`; there is no special A/B pair. Manual flight is
 fully local and applies only to the selected fly for debugging. If the cache is
 absent, MaleCNS mode returns zero decoded flight drive and reports the missing
 source instead of fabricating spikes. See `../docs/SWARM_ARCHITECTURE.md` and
@@ -65,19 +65,29 @@ Set
 `VITE_BRAIN_UPDATE_HZ` when testing a different cadence; this is a transport
 cadence choice, not a neural-parameter change.
 
+The default visible driver is `VITE_FLIGHT_DRIVER=preview`. This is an
+explicitly labelled, non-neural sensor-only flight benchmark: it uses local
+eye/antenna/optic-flow/contact observations and the same actuator interface so
+the canonical Flybody agents visibly fly while the bounded neural lift path is
+being validated. Set `VITE_FLIGHT_DRIVER=malecns` to use only the decoded
+Brian2 command; the current honest result may then be neutral thrust.
+
+The current default is sixteen independent agents. To stage a larger population
+experiment, copy `frontend/.env.example` to `frontend/.env` and set
+`VITE_SWARM_SIZE` to a value from 1 to 100. This changes the number of browser
+agents and brain IDs requested; it does not make 100 full MaleCNS simulations
+fit within the current realtime CPU budget.
+
 ## Controls
 
-`W/S` pitch, `A/D` yaw, `Q/E` roll, `Shift` increases thrust, and `Ctrl`
-decreases thrust/descends. `M` toggles the selected numbered fly between
-manual/MaleCNS mode. Camera keys are `1` free orbit, `2` follow, `3`
-first-person, `4` side/debug, `5` token cinematic, and `6` auto director. In
-free orbit, left-drag rotates, right-drag pans, and the mouse wheel zooms toward
-the cursor. The top-right `INSPECT FLY` selector chooses any of the eight
-agents; `FOCUS` centers the free camera on it. Follow and first-person views
-use that same selected fly. Press `` ` `` to switch between the compact demo
-surface and detailed debug surface, and `P` to toggle the performance/demo
-post-processing preset. Press `V` to show or hide direction vectors, and `I`
-to show or hide the selected fly's detailed sensory/CNS causal panel.
+The product surface is mouse/UI-first. Use the top-right `INSPECT FLY` selector
+to choose any of the sixteen agents, then `FOCUS`, `FOLLOW`, `FREE`, `SWARM`,
+`TOKEN`, or `AUTO` to choose the view. In free orbit, left-drag rotates,
+right-drag pans, and the mouse wheel zooms toward the cursor. The mode button
+cycles the selected agent through the explicitly labelled preview driver,
+MaleCNS, and manual debug mode. Legacy
+keyboard shortcuts remain available only as an internal QA path and are not
+shown in the interface.
 
 The renderer reconstructs Flybody's articulated abdomen, thorax, head, eyes,
 antennae, halteres, legs, and wing assemblies while retaining `FlyBody`,
@@ -86,7 +96,7 @@ the existing rigid-body path until an optional MuJoCo pose server is attached.
 
 The arena is intentionally restrained: an invisible bounded flight volume, a
 readable floor, three differentiated coin piles, and two locally bundled CC0
-context props. All eight visible agents use the same canonical Flybody XML/OBJ
+context props. All sixteen visible agents use the same canonical Flybody XML/OBJ
 source; no decorative fallback swarm is created. Habitat particles and fly
 trails use pooled GPU buffers.
 
@@ -94,15 +104,15 @@ The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,
 sensors, or telemetry.
 
-At startup, all eight agents begin in a deterministic distant launch formation.
-Their movement is not a hidden path to a selected coin. Each body samples its
-own local vision, odor, motion, and contact state, sends compact sensor
-summaries to its own `fly-NNN` brain stream, receives that fly's latest Brian2
-command, and integrates the command through its own `FlyBody`. If the selected
-MaleCNS DN populations are quiet, the correct result is a neutral command and
-no autonomous token-directed movement. The selected causal panel exposes the
-left/right eye summaries, odor, contact state, exact encoded `R8d`/`ORN_DA1`
-counts, and the returned DN/command stage.
+At startup, all sixteen agents begin in a deterministic distant launch
+formation. In the default preview driver, each body samples its own local
+vision, antenna odor, optic flow, and contact state, then steers through the
+same `FlyActuators -> FlyBody` interface used by MaleCNS. The preview's
+forward/lift drive is not a neural result. In MaleCNS mode, the compact sensor
+summary goes to that fly's own brain stream, and a quiet selected DN
+population correctly produces a neutral command. The selected causal panel
+exposes the local sensor values, exact encoded `R8d`/`ORN_DA1` counts, neural
+telemetry, and which driver produced the command.
 
 Use `NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` to change only the
 habitat sensory fields. These are mock habitats, not live token data. `LIVE

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 
+from .config import load_project_env
 from .market.signal_engine import MarketSignalEngine
 
 
 def main() -> None:
+    load_project_env()
     engine = MarketSignalEngine.from_env()
     if engine is None:
         print(json.dumps({"source": "graph-uniswap", "status": "disabled", "reason": "configure GRAPH_SUBGRAPH_URL or GRAPH_UNISWAP_SUBGRAPH_ID plus NEUROSWARM_MARKET_HABITATS"}, indent=2))

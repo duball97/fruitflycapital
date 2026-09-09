@@ -1,7 +1,7 @@
-# NeuroSwarm: what the eight pilot flies are doing
+# NeuroSwarm: what the sixteen pilot flies are doing
 
-The browser simulation currently contains eight real pilot agents. They are
-numbered `fly-001` through `fly-008`; the letters A and B are not agent
+The browser simulation currently contains sixteen real pilot agents. They are
+numbered `fly-001` through `fly-016`; the letters A and B are not agent
 identities in this architecture. This is intentionally a verification
 population, not the final 100-fly deployment.
 
@@ -15,7 +15,7 @@ Every `FlyAgent` owns these independent objects:
 | body motion | `FlyBody.velocity`, `angularVelocity` | integrated translational and angular motion |
 | sensors | `FlySensors` | observations sampled from that fly's own pose |
 | actuators | `FlyActuators` | the latest command applied to that fly only |
-| controller | `SwitchableController` | MaleCNS by default; manual only for the selected debug fly |
+| controller | `SwitchableController` | Sensor-only preview by default; MaleCNS and manual remain selectable per fly |
 | brain identity | `fly-NNN` | the key for that fly's persistent Python runtime and output cache |
 | RNG stream | server-side stable seed | deterministic but independent neural randomness |
 
@@ -34,8 +34,8 @@ The HUD keeps population existence separate from neural activity:
 | `MOTOR CONTROLLED` | Those runtimes whose decoded command is currently non-neutral |
 | `DECORATIVE FLIES` | Visual-only agents; this must remain `0` |
 
-Thus `CNS RUNTIMES 8/8` does not imply that all eight flies are moving, and
-`CNS ACTIVE 0/8` is a meaningful neural result rather than a rendering error.
+Thus `CNS RUNTIMES 16/16` does not imply that all sixteen flies are moving, and
+`CNS ACTIVE 0/16` is a meaningful neural result rather than a rendering error.
 
 ## What can move one fly
 
@@ -76,7 +76,7 @@ fly-to-fly neural connection. A coin's synthetic state changes brightness,
 visual motion, attractive odor, or aversive odor. Those fields can change what
 a fly senses; they do not directly select a coin or add a steering force.
 
-## Why a fly may not go anywhere
+## Why the literal MaleCNS mode may not go anywhere
 
 “MaleCNS mode” does not mean “autopilot.” The decoded flight command is zero
 when the selected descending populations have no spikes. The current bounded
@@ -95,6 +95,13 @@ output`, the Python adapter has not returned a window for that ID yet. If it
 says `DN quiet` and command values are zero, the brain ran and returned no
 selected motor activity.
 
+The browser defaults to a separately labelled sensor-only `PREVIEW` driver so
+the population remains visibly in flight while this neural gap is investigated.
+The preview reads only local eye, antenna, optic-flow, and contact observations
+and sends commands through the same `FlyActuators -> FlyBody` boundary. It is a
+benchmark for body/world integration, not evidence of MaleCNS behaviour. Click
+the driver button to cycle a selected fly to literal `MALECNS` or `MANUAL`.
+
 ## What “independent brains” means operationally
 
 The browser sends a compact sensor frame for every distinct `fly-NNN` ID. The
@@ -110,8 +117,8 @@ filtering. One laptop may not sustain many full Brian2 copies at interactive
 latency. The status therefore distinguishes:
 
 ```text
-8/8 independent browser bodies
-N/8 brain outputs received so far
+16/16 independent browser bodies
+N/16 brain outputs received so far
 ```
 
 If `N` remains low, that is runtime capacity/queueing—not evidence that the
@@ -127,8 +134,9 @@ experiment.
 3. Press `I` to open the causal panel.
 4. Read the chain from left/right luminance and odor, through encoded ID
    counts and DN activity, to the command and body velocity.
-5. Press `M` only if you want to test that selected body's physics manually.
-   The other seven agents remain in their own MaleCNS mode.
+5. Use the driver button to compare `PREVIEW`, `MALECNS`, and `MANUAL` for the
+   selected body. The other agents retain their own selected driver and brain
+   state.
 
 The flight log downloads the selected fly's sensor, stimulation, spike/DN,
 command, pose, and velocity history so a visible movement can be traced back

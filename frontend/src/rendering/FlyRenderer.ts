@@ -1,4 +1,4 @@
-import { Group, Mesh, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, Vector3 } from 'three'
+import { Group, Mesh, MeshStandardMaterial, Object3D, PlaneGeometry, Quaternion, SphereGeometry, Vector3 } from 'three'
 import { FlyAgent } from '../fly/FlyAgent'
 import { WingBeatPatternGenerator } from '../fly/WingBeatPattern'
 import { FlybodyAssetLoader } from './FlybodyAsset'
@@ -9,6 +9,7 @@ export type FlyLod = 'full' | 'medium' | 'low'
 // scale from the free camera. This affects rendering only; physics, sensors,
 // collisions, and logged positions remain in SI metres.
 const DISPLAY_MAGNIFICATION = 12
+const HOVER_ACTUATOR_NEUTRAL = 0.5
 
 export class FlyRenderer {
   readonly group = new Group()
@@ -78,7 +79,12 @@ export class FlyRenderer {
     this.group.position.copy(agent.body.position)
     this.group.quaternion.copy(agent.body.quaternion)
     const command = agent.actuators.get()
-    const activity = Math.min(1, Math.max(0, command.forwardThrust + command.verticalThrust))
+    // A neutral vertical command is hover/idle in the shared actuator
+    // interface. Do not animate the canonical wings merely because that
+    // neutral value is non-zero; wing motion must correspond to actual
+    // forward or lift drive.
+    const liftDrive = Math.abs(command.verticalThrust - HOVER_ACTUATOR_NEUTRAL) * 2
+    const activity = Math.min(1, Math.max(0, command.forwardThrust + liftDrive))
     const angles = this.wingBeat.step(1 / 60, activity)
     if (this.canonicalLeftWing && this.canonicalRightWing) {
       this.canonicalLeftWing.quaternion.copy(this.canonicalLeftBase)
@@ -119,14 +125,15 @@ export class FlyRenderer {
     if (!this.loadedCanonical && !this.bodyRoot.getObjectByName('FlybodyCanonicalAsset')) return
     this.bodyRoot.traverse((child) => {
       if (!(child instanceof Mesh)) return
+      const geomName = canonicalGeomName(child)
       // The asset remains canonical for every agent. This is a render-only
       // LOD: unselected bodies keep the recognizable head/thorax/abdomen/
       // wing silhouette, while the selected body exposes all XML geoms for
       // inspection. It avoids rendering every XML geom for every population
       // member at room scale.
       child.visible = this.selected || this.lod === 'full'
-        || (this.lod === 'medium' && isSwarmSilhouetteGeom(child.name))
-        || (this.lod === 'low' && isLowDetailGeom(child.name))
+        || (this.lod === 'medium' && isSwarmSilhouetteGeom(geomName))
+        || (this.lod === 'low' && isLowDetailGeom(geomName))
     })
   }
 
@@ -173,9 +180,19 @@ export class FlyRenderer {
 }
 
 function isSwarmSilhouetteGeom(name: string) {
-  return /:geom:(thorax|thorax_black|head|head_red|head_ocelli|abdomen|abdomen_[2-8]|wing_left_(brown|membrane)|wing_right_(brown|membrane))$/.test(name)
+  return /:geom:(thorax|thorax_black|head|head_red|head_ocelli|abdomen(?:_\d+)?|wing_left_(brown|membrane)|wing_right_(brown|membrane))$/.test(name)
 }
 
 function isLowDetailGeom(name: string) {
-  return /:geom:(thorax|head|abdomen|abdomen_2|wing_left_membrane|wing_right_membrane)$/.test(name)
+  if (!/:geom:(thorax|head|abdomen|wing_left|wing_right)/.test(name)) return false
+  return !/(collision|fluid|inertial|abduct|twist|yaw|roll|pitch)/.test(name)
+}
+
+function canonicalGeomName(object: Object3D) {
+  let current: Object3D | null = object
+  while (current) {
+    if (current.name.startsWith('flybody:geom:')) return current.name
+    current = current.parent
+  }
+  return object.name
 }

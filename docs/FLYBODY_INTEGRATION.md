@@ -33,7 +33,7 @@ millimetre-scale fly can be inspected from the room-scale free camera. It does
 not change the FlyBody position, collision radius, sensor origins, or logged
 physical units.
 
-All eight pilot agents load the same canonical XML/OBJ scene. To keep the
+All sixteen pilot agents load the same canonical XML/OBJ scene. To keep the
 population view interactive, unselected agents use a render-only LOD showing the canonical
 head, thorax, abdomen, and wings; the selected agent renders all XML geoms.
 Selecting another fly changes only this display detail and camera focus, never

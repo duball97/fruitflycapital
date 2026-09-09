@@ -16,7 +16,10 @@ export class Arena {
     this.group.name = 'Arena'
     const floorTexture = createFloorTexture()
     const floor = new Mesh(
-      new PlaneGeometry(2, 2),
+      // The flight volume remains exactly 2 m x 2 m. This larger presentation
+      // floor prevents the free camera from looking past the room boundary at
+      // the default orbit distance; it does not extend the physical bounds.
+      new PlaneGeometry(6, 6),
       new MeshStandardMaterial({ color: 0x727a74, map: floorTexture, roughness: 0.94, metalness: 0.02 }),
     )
     floor.rotation.x = -Math.PI / 2
@@ -46,6 +49,6 @@ function createFloorTexture() {
   texture.colorSpace = SRGBColorSpace
   texture.wrapS = RepeatWrapping
   texture.wrapT = RepeatWrapping
-  texture.repeat.set(3, 3)
+  texture.repeat.set(9, 9)
   return texture
 }

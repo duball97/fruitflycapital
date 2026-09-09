@@ -1,4 +1,59 @@
-# Fruit Fly Capital / NeuroSwarm
+# 🪰 FRUIT FLY CAPITAL
+
+### What happens when a swarm of fruit-fly brains gets control of a crypto wallet?
+
+**We turn the crypto market into an ecosystem—and let biology decide where to go.**
+
+Fruit Fly Capital's multi-agent system is called **NeuroSwarm**. It combines the
+official MaleCNS v1.0 connectome, Brian2 neural dynamics, the canonical
+TuragaLab/Flybody body, Three.js, The Graph, and a quote-only Uniswap boundary.
+
+```text
+market data → sensory world → MaleCNS circuits → body movement
+             → population behavior → guarded trade intent
+```
+
+The flies never receive a token symbol, chart, price recommendation, target
+coordinate, or direct command such as “go to TOKEN-X”. Market information is
+translated into environmental signals—light, motion, odor, and danger—and is
+then sensed through the embodied loop.
+
+## Current reality
+
+The current interactive default is a **16-agent pilot**, not 100 completed
+full-CNS simulations. Each numbered agent (`fly-001` through `fly-016`) has its
+own Flybody pose, sensor frame, actuator state, and server-side Brian2 runtime
+identity/seed. The connectome topology and model parameters are shared as
+immutable configuration; membrane state, spikes, history, and RNG state are
+not shared.
+
+The realtime adapter currently runs a documented source-reachable three-hop
+MaleCNS circuit of roughly 6,641 neurons and 65,110 retained weighted edges per
+runtime. It does not step the full 211,577-neuron, 151,856,684-edge graph for
+each fly. The UI therefore separates `AGENTS`, `CNS RUNTIMES`, `CNS ACTIVE`,
+`MOVING`, and `DRIVE` instead of implying that neural activity equals movement.
+
+The literal MaleCNS decoder has evidence-constrained turning/flight readouts,
+but the live DNg02 wing-amplitude path has not yet produced sustained thrust in
+the realtime smoke result. The browser therefore starts in an explicitly
+labelled `PREVIEW` driver so the Flybody population is visibly flying while
+the neural result remains inspectable. Preview movement uses only each fly's
+local eye/antenna/optic-flow/contact observations and the same
+`FlyActuators -> FlyBody` interface; it does not receive token coordinates or
+issue a hidden “go to coin” command. Set `VITE_FLIGHT_DRIVER=malecns` to run
+the literal decoded neural command, where a neutral command is still an
+honest possible result until a validated lift pathway is established.
+
+The population size is configurable with `frontend/.env`:
+
+```env
+VITE_SWARM_SIZE=16
+```
+
+Values from 1 to 100 are accepted, but 100 should be treated as a staged
+benchmark target. One independent Brian2 runtime per fly at the current cache
+size is a substantial CPU/RAM workload; a fleet scheduler or compiled/vector
+backend is required before claiming that 100 agents run smoothly.
 
 The canonical rendered Drosophila body is TuragaLab/Flybody's MuJoCo model,
 loaded from `flybody/fruitfly/assets/fruitfly.xml` and its referenced OBJ
@@ -21,10 +76,29 @@ PYTHON312="$(brew --prefix python@3.12)/bin/python3.12"
 cp .env.example .env
 ```
 
+The Python brain server and market-report command automatically load this
+repository-root `.env` for local development. Explicitly exported shell
+variables take precedence. Restart the brain server after changing `.env`.
+
 `malecns.flybody.MuJoCoFlybody` accepts Flybody's native actuator vector and
 returns its pose. A FlightCommand-to-native-joint mapping is intentionally not
 invented; the browser remains on the existing actuator-compatible adapter
 until that mapping is scientifically specified.
+
+## Deployment boundary
+
+The Three.js client can be deployed to Vercel as a Vite site. Set Vercel's
+project root to `frontend`, use `npm run build`, and publish `dist`. Set
+`VITE_BRAIN_WS_URL` to a public `wss://` endpoint in the deployed environment;
+the local `ws://127.0.0.1:8765` default only works on the developer's machine.
+
+The current `malecns.brain_server` is a standalone, long-running WebSocket
+process with an in-memory Brian2 runtime registry. It is not a Vercel Function
+entrypoint and should run on a persistent Python host/container. Vercel's
+Python runtime is suitable for HTTP Functions, but adapting this stateful brain
+server to Vercel would require a Function/WebSocket entrypoint, externalized
+runtime state, and a separate capacity plan. Keep Graph and Uniswap credentials
+on that server; never expose them as `VITE_` variables.
 
 Bootstrap for a biologically grounded MaleCNS *Drosophila* swarm project. The
 product is Fruit Fly Capital / NeuroSwarm: biological agents in an onchain
@@ -231,7 +305,7 @@ metric definitions, provenance, and the planned provider boundaries.
 
 ## NeuroSwarm population pilot
 
-The current milestone is an eight-agent population pilot. All eight are real
+The current milestone is a sixteen-agent population pilot. All sixteen are real
 canonical Flybody agents and each has its own body, sensor frame, actuator
 state, unique `fly-NNN` brain ID, and server-side RNG stream. There are zero
 decorative habitat flies. The three synthetic `TokenHabitat` instances expose
@@ -253,3 +327,57 @@ embodied input-to-Brian2-to-decoder path when the cache and adapter are
 running, but it is not evidence that the MaleCNS has learned or chosen
 token-directed behavior. See [docs/SWARM_ARCHITECTURE.md](docs/SWARM_ARCHITECTURE.md)
 for the per-fly causal chain and runtime-capacity interpretation.
+
+## Why the flies do not go to the boxes yet
+
+The cardboard box and trash cans are optional local CC0 **context props**. They
+are not token habitats, do not emit the attractive odor field, and are not
+targets. The three colored coin piles are the synthetic token habitats used by
+the current prototype.
+
+The movement path is intentionally:
+
+```text
+habitat light / motion / odor
+        ↓
+embodied FlySensors
+        ↓
+exact MaleCNS sensory IDs
+        ↓
+Brian2 spikes and annotated descending activity
+        ↓
+FlightMotorDecoder
+        ↓
+FlyActuators → FlyBody
+```
+
+There is currently no validated ordinary-forward-flight output from the
+selected realtime MaleCNS path. When its thrust readout is quiet, the correct
+result is that the fly stays put. Adding a direct “go to the box/coin” force
+would make the demo look active but would invalidate the experiment. See
+[`docs/FLIGHT_MOTOR_MAPPING.md`](docs/FLIGHT_MOTOR_MAPPING.md) and
+[`docs/SWARM_ARCHITECTURE.md`](docs/SWARM_ARCHITECTURE.md).
+
+## Next steps
+
+1. Validate a scientifically defensible MaleCNS flight-output path, including
+   sustained lift/forward movement and stable turning, first for one fly.
+2. Replace synthetic habitats with configured token observations from The
+   Graph, preserving signal provenance and unavailable fields.
+3. Benchmark 16, 32, and then 100 independent runtimes. Add scheduling or
+   vectorized/compiled execution before making 100-agent realtime claims.
+4. Add measured swarm entry, exit, dwell, approach, avoidance, and persistence
+   metrics. These metrics—not a single fly—must produce any future TradeIntent.
+5. Add fly-to-fly perception through the world, then a risk guard around
+   Uniswap quote/calldata generation. Transaction broadcasting remains a later,
+   separately controlled step.
+
+## Scientific integrity
+
+This project does not train the connectome with gradient descent or
+reinforcement learning, add Fly A → Fly B neural edges, or silently modify
+synaptic weights to obtain a desired behavior. Observed MaleCNS data, published
+model assumptions, and project assumptions are separated in
+[`docs/MODEL_ASSUMPTIONS.md`](docs/MODEL_ASSUMPTIONS.md). The project is an
+experimental research/hackathon prototype, not financial advice or a validated
+trading strategy.

@@ -1,6 +1,5 @@
 import {
   AdditiveBlending,
-  BufferGeometry,
   DynamicDrawUsage,
   InstancedMesh,
   Matrix4,

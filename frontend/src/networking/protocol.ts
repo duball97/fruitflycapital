@@ -1,6 +1,6 @@
 import type { Quaternion, Vector3 } from 'three'
 
-export type FlyMode = 'manual' | 'malecns' | 'off'
+export type FlyMode = 'manual' | 'malecns' | 'preview' | 'off'
 
 export interface EyeSample {
   direction: { x: number; y: number; z: number }

@@ -1,6 +1,6 @@
 import { BrainSocket } from '../networking/BrainSocket'
 import { FlyAgent } from './FlyAgent'
-import { KeyboardState, MaleCNSController, ManualController, SwitchableController } from './FlyController'
+import { KeyboardState, MaleCNSController, ManualController, SensoryFlightPreviewController, SwitchableController } from './FlyController'
 import { FlyRenderer } from '../rendering/FlyRenderer'
 import { SWARM_SIZE, swarmFlyId, swarmSpawnPosition } from './SwarmConfig'
 
@@ -9,6 +9,7 @@ export interface FlyPopulationOptions {
   brainSocket: BrainSocket
   brainUpdateHz: number
   size?: number
+  driver?: 'malecns' | 'preview'
 }
 
 /**
@@ -30,8 +31,9 @@ export class FlyPopulation {
       const id = swarmFlyId(index)
       const manual = new ManualController(options.keyboard, () => index === this._selectedIndex)
       const malecns = new MaleCNSController(options.brainSocket, id, options.brainUpdateHz, index * 0.05)
-      const controller = new SwitchableController(manual, malecns)
-      controller.setMode('malecns')
+      const preview = new SensoryFlightPreviewController(options.brainSocket, id, options.brainUpdateHz, index * 0.37)
+      const controller = new SwitchableController(manual, malecns, preview)
+      controller.setMode(options.driver ?? 'preview')
       this.controllers.push(controller)
       this.agents.push(new FlyAgent(id, controller, swarmSpawnPosition(index)))
       this.renderers.push(new FlyRenderer())

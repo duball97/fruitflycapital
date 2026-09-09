@@ -34,8 +34,8 @@ rotates the state/site assignment. These fields are deliberately a local
 synthetic stimulus layer. They are not real tokens, prices, balances, wallet
 data, or social-network data.
 
-The browser now creates eight canonical Flybody agents, with IDs
-`fly-001` through `fly-008`, in a deterministic distant launch formation.
+The browser now creates sixteen canonical Flybody agents, with IDs
+`fly-001` through `fly-016`, in a deterministic distant launch formation.
 There are no visual-only swarm members and no foreground A/B pair. Each agent
 samples the world from its own body pose and sends its own sensor summary to
 its own brain stream. A camera selection changes only which agent is inspected;

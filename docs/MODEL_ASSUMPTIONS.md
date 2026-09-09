@@ -115,6 +115,14 @@ replacement for MaleCNS data and not a direct actuator path.
 | Per-fly deterministic seed offset | `OUR_ASSUMPTION` | Base `MALECNS_REALTIME_SEED` plus a stable fly-ID offset; no fly-to-fly neural edge |
 | Browser window duration | `OUR_ASSUMPTION` | `MALECNS_REALTIME_WINDOW_MS`, default 50 ms |
 
+The browser's default `PREVIEW` driver is also an explicit `OUR_ASSUMPTION`,
+not published biology: it uses local eye asymmetry, antenna-odor asymmetry,
+optic-flow braking, and contact feedback to generate a bounded benchmark
+command through the shared actuator interface. It exists to validate smooth
+body/world integration while the literal MaleCNS lift pathway remains under
+investigation. It does not receive token coordinates and must not be reported
+as autonomous MaleCNS flight.
+
 The live provider returns the actual spike counts/rates from the cached Brian2
 window. It does not guarantee a nonzero motor command: in the current direct
 check, turning populations spiked while the selected DNg02 wing-amplitude

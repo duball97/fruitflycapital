@@ -1,12 +1,12 @@
 # Live MaleCNS swarm loop
 
-This is the embodied integration path for the eight-fly browser population
+This is the embodied integration path for the sixteen-fly browser population
 pilot. It makes
 the data path real for each numbered fly without claiming that a desired
 behavior has emerged.
 
 ```text
-Three.js FlySensors (fly-001 ... fly-008)
+Three.js FlySensors (fly-001 ... fly-016)
   -> that fly's R8d / ORN_DA1 stimulation entries
   -> that fly's persistent Brian2 MaleCNS runtime
   -> actual cached-window spike counts and rates
@@ -16,10 +16,24 @@ Three.js FlySensors (fly-001 ... fly-008)
   -> changed pose and new sensor frame
 ```
 
-There is no A/B comparison body. The frontend owns eight independent
+There is no A/B comparison body. The frontend owns sixteen independent
 `FlyAgent`s, each with its own body state, sensors, actuator state, brain ID,
 and deterministic server-side RNG stream. The camera and causal panel inspect
 one selected ID at a time; selection does not alter the simulation.
+
+## Visible motion while the neural path is being validated
+
+The browser defaults to the explicitly labelled `PREVIEW` driver. It uses
+only each body's local eye, antenna-odor, optic-flow, and contact observations
+to produce a smooth benchmark command through the same
+`FlyActuators -> FlyBody` boundary. It is not a MaleCNS result and it does not
+receive token coordinates. The selected driver button cycles an individual
+agent between `PREVIEW`, literal `MALECNS`, and `MANUAL`.
+
+`VITE_FLIGHT_DRIVER=malecns` disables that preview drive and exposes the
+literal decoded neural command. With the current three-hop cache, that command
+can correctly remain neutral because the selected DNg02 wing-amplitude and
+ordinary-forward candidates have not produced sustained drive.
 
 ## Starting it
 
@@ -68,7 +82,7 @@ Our explicit boundary assumptions:
 - decoder normalization and the yaw sign remain project-level actuator
   conventions;
 - the default browser brain cadence is 2 Hz and initial requests are staggered
-  across the eight IDs to avoid a startup burst;
+  across the sixteen IDs to avoid a startup burst;
 - the browser permits only one in-flight sensor frame per fly, preventing
   stale brain-input backlog when Brian2 is slower than the requested cadence.
 
@@ -79,7 +93,7 @@ retained weighted edges before transmitter-sign filtering. One runtime is
 created per distinct `fly-NNN` ID by the Python adapter. Therefore each pilot
 brain is an independent state and runtime identity, but the population is
 still a substantial CPU/RAM workload on a laptop. The UI reports live
-brain outputs received as `N/8`; it must not be read as proof that all eight
+brain outputs received as `N/16`; it must not be read as proof that all sixteen
 Brian2 runtimes have already completed their first window. If the machine
 cannot sustain the full fleet, the next engineering step is a fleet scheduler
 or a compiled/vectorized backend—not a scripted movement replacement.
