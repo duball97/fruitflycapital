@@ -312,6 +312,7 @@ class TokenState:
     chain_id: str = "ethereum"
     dex_id: str = "uniswap"
     pair_address: str | None = None
+    dexscreener_url: str | None = None
     financial: "FinancialState | None" = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -324,6 +325,7 @@ class TokenState:
             "chainId": self.chain_id,
             "dexId": self.dex_id,
             "pairAddress": self.pair_address or self.pool_id,
+            "dexscreenerUrl": self.dexscreener_url,
             "observedAtMs": self.observed_at_ms,
             "market": {
                 "priceInPair": self.market.price_in_pair,

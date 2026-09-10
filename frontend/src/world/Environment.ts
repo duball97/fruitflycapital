@@ -1,6 +1,5 @@
 import { AmbientLight, Color, DirectionalLight, Fog, Group, HemisphereLight, PointLight, Scene, SRGBColorSpace, TextureLoader, Vector3 } from 'three'
 import { Arena } from './Arena'
-import { CityBackdrop } from './CityBackdrop'
 import { MOCK_HABITAT_COLORS, MOCK_HABITAT_POSITIONS, MOCK_TOKEN_STATES } from './tokenFixtures'
 import { TokenHabitat, type HabitatScenario } from './TokenHabitat'
 import type { OdorFieldSample } from '../fly/FlySensors'
@@ -17,7 +16,6 @@ const HABITAT_SCALE_STORAGE_KEY = 'ffc.habitatVisualScale.v2'
 export class Environment {
   readonly group = new Group()
   readonly arena = new Arena()
-  readonly city = new CityBackdrop()
   readonly bounds = this.arena.bounds
   private readonly habitatsById = new Map<string, TokenHabitat>()
   private readonly habitatList: TokenHabitat[] = []
@@ -33,13 +31,9 @@ export class Environment {
 
   constructor() {
     this.group.name = 'Environment'
-    this.group.add(this.city.group)
     this.group.add(this.arena.group)
     this.particles = new ParticleField(this.habitatList, 24, WORLD_HABITAT_CAPACITY)
     this.group.add(this.particles.mesh)
-    // The authored GLB is the normal floor. Keep the procedural plane only as
-    // a load-failure safety net so two visible plates never compete.
-    void this.city.ready.then(() => this.arena.setFallbackFloorVisible(!this.city.loaded))
     this.setHabitatScenario('live')
   }
 
@@ -85,7 +79,9 @@ export class Environment {
     // existing IDs retain their position, and departed IDs are retired.
     const incomingIds = new Set<string>()
     const wasEmpty = this.habitatList.length === 0
-    for (const state of update.habitats.slice(0, WORLD_HABITAT_CAPACITY)) {
+    // The public world is Robinhood-only. Keep this client-side guard as a
+    // safety net for an old/cached server snapshot during deployment rollout.
+    for (const state of update.habitats.filter(isRobinhoodHabitat).slice(0, WORLD_HABITAT_CAPACITY)) {
       incomingIds.add(state.id)
       const nextState = tokenStateFromEnvironment(state)
       let habitat = this.habitatsById.get(state.id)
@@ -233,8 +229,11 @@ export class Environment {
     const slot = this.slotFor(id, fallbackIndex)
     const columns = 10
     const rows = Math.ceil(WORLD_HABITAT_CAPACITY / columns)
-    const x = -0.86 + (slot % columns) * (1.72 / (columns - 1))
-    const z = -0.86 + Math.floor(slot / columns) * (1.72 / Math.max(1, rows - 1))
+    // Use a broad central field on the 6m floor. This keeps habitats visibly
+    // spread out while ensuring the odor-searching swarm encounters a source
+    // quickly instead of spending the opening minutes in empty corners.
+    const x = -1.9 + (slot % columns) * (3.8 / (columns - 1))
+    const z = -1.9 + Math.floor(slot / columns) * (3.8 / Math.max(1, rows - 1))
     return new Vector3(x, 0, z)
   }
 
@@ -257,7 +256,7 @@ export class Environment {
 
   setupLighting(scene: Scene) {
     // The image is a Three.js scene background, not a UI overlay. Keep a
-    // dark fallback while it loads so the city never flashes pale gray.
+    // Keep the floor and habitats readable against the star-field backdrop.
     scene.background = new Color(0x061017)
     const background = new TextureLoader().load('/design/fruit-fly-capital-canva-background.png', (texture) => {
       texture.colorSpace = SRGBColorSpace
@@ -306,8 +305,12 @@ function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment'
     id: state.id,
     label: state.label,
     imageUrl: state.imageUrl ?? imageUrlFromProvenance(state.provenance),
-    tokenAddress: null,
-    poolId: null,
+    tokenAddress: state.tokenAddress ?? null,
+    poolId: state.poolId ?? null,
+    chainId: state.chainId ?? provenanceString(state.provenance, 'chainId'),
+    dexId: state.dexId ?? provenanceString(state.provenance, 'dexId'),
+    pairAddress: state.pairAddress ?? provenanceString(state.provenance, 'pairAddress'),
+    dexscreenerUrl: state.dexscreenerUrl ?? provenanceString(state.provenance, 'url'),
     observedAtMs: 0,
     market: {
       priceInPair: null,
@@ -348,6 +351,16 @@ function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment'
     provenance: state.provenance ?? [],
     financial: state.financialTrace ?? null,
   }
+}
+
+function isRobinhoodHabitat(state: EnvironmentUpdateMessage['environment']['habitats'][number]) {
+  const chainId = state.chainId ?? provenanceString(state.provenance, 'chainId')
+  return typeof chainId === 'string' && chainId.trim().toLowerCase() === 'robinhood'
+}
+
+function provenanceString(provenance: Array<Record<string, unknown>> | undefined, key: string) {
+  const value = provenance?.find((item) => typeof item[key] === 'string')?.[key]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
 function imageUrlFromProvenance(provenance: Array<Record<string, unknown>> | undefined) {

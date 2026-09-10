@@ -50,8 +50,8 @@ round for exposure. Its internal discovery score is not serialized into
 logic. The habitat model does not depend on DexScreener's response shape, and
 no raw market fields are forwarded to a fly.
 
-The Graph remains the deeper observation provider for selected Ethereum /
-Uniswap pairs. The round can contain up to 100 physically present markets,
+The Graph remains the deeper observation provider for selected Robinhood /
+Uniswap-compatible pairs. The round can contain up to 100 physically present markets,
 while `NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT` bounds the expensive Graph tier.
 The other habitats receive lightweight state from the cached DexScreener row;
 this preserves market identity and a coarse sensory field without pretending
@@ -105,9 +105,9 @@ DexScreener's pair endpoint. This is a bootstrap/indexing path only; Graph
 does not select a fly preference. If that optional bootstrap fails, profile or
 explicit-seed discovery remains available.
 
-Eligibility defaults are explicit configuration: Ethereum, Base, and Robinhood,
-all DexScreener venues unless a DEX allowlist is supplied, at least $1,000
-liquidity, at least $1,000 24-hour volume, and a pair age of at least 30 minutes.
+The public eligibility configuration is explicit: Robinhood, all DexScreener
+venues unless a DEX allowlist is supplied, at least $1,000 liquidity, at least
+$1,000 24-hour volume, and a pair age of at least 30 minutes.
 They are operational quality filters for arena inclusion, not safety,
 profitability, or biological claims. The separate `InvestabilityGuard` applies
 the `$10,000` executable-liquidity and hard security rules before execution.

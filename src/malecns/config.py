@@ -28,5 +28,9 @@ def load_project_env(path: str | Path | None = None) -> Path | None:
             continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
+        # Some copied dashboard values escape underscores even though dotenv
+        # values do not require it. Normalize that harmless presentation
+        # escape so RPC hostnames remain usable.
+        value = value.replace("\\_", "_")
         os.environ[key] = value
     return env_path

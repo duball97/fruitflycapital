@@ -95,6 +95,7 @@ export interface TokenState {
   chainId?: string
   dexId?: string
   pairAddress?: string | null
+  dexscreenerUrl?: string | null
   observedAtMs: number
   market: MarketState
   flow: FlowState

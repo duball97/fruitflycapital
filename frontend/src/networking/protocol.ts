@@ -221,6 +221,12 @@ export interface EnvironmentUpdateMessage {
       id: string
       label: string
       imageUrl?: string | null
+      tokenAddress?: string | null
+      poolId?: string | null
+      chainId?: string | null
+      dexId?: string | null
+      pairAddress?: string | null
+      dexscreenerUrl?: string | null
       physicalRadiusM: number
       resourcePileRadiusM: number
       visualMotionIntensity: number

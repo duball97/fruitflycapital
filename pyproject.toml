@@ -18,6 +18,7 @@ dependencies = [
   "scipy>=1.11",
   "matplotlib>=3.8",
   "websockets>=12",
+  "eth-account>=0.13",
 ]
 
 [project.optional-dependencies]

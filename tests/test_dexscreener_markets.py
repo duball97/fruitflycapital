@@ -9,6 +9,7 @@ from malecns.market.universe import (
     MarketEligibility,
     MarketRoundManager,
     MarketSelector,
+    DexScreenerMarketDiscovery,
     candidate_from_pair,
 )
 
@@ -33,6 +34,16 @@ def _pair(address: str = "0xpair", *, token: str = "0xtoken", liquidity: float =
         "pairCreatedAt": 1_700_000_000_000,
         "info": {"imageUrl": "https://example.test/exm.png", "websites": [{"url": "https://example.test"}], "socials": [{"type": "twitter", "url": "https://x.test/exm"}]},
     }
+
+
+def test_public_discovery_ignores_legacy_multi_chain_environment(monkeypatch):
+    monkeypatch.setenv("NEUROSWARM_MARKET_DISCOVERY_ENABLED", "true")
+    monkeypatch.setenv("NEUROSWARM_MARKET_CHAINS", "ethereum,base,robinhood")
+
+    discovery = DexScreenerMarketDiscovery.from_env()
+
+    assert discovery is not None
+    assert discovery.universe_provider.chains == ("robinhood",)
 
 
 def test_dexscreener_client_batches_token_lookup_at_thirty_addresses():

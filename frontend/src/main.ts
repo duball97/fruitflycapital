@@ -18,7 +18,6 @@ import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 import type { TokenState } from './world/TokenState'
 import { SwarmObserver } from './swarm/SwarmObserver'
-import { CITY_SCENE_LIMITS, type CitySceneTuning } from './world/CityBackdrop'
 import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
 import { TradeExecutionBoundary } from './trading/TradeExecutionBoundary'
 import type { BehaviorTradeIntent } from './networking/protocol'
@@ -423,79 +422,20 @@ const sceneControls = document.createElement('aside')
 sceneControls.className = 'scene-controls'
 sceneControls.setAttribute('aria-label', 'Scene position controls')
 sceneControls.innerHTML = `
-  <div class="scene-controls-heading">SCENE POSITION</div>
-  <div class="scene-controls-note">City only · saved automatically · camera locked to 6m</div>
-  <div class="scene-control-rows"></div>
-  <button class="scene-reset" type="button">RESET CITY POSITION</button>
-  <div class="scene-control-divider"></div>
-  <div class="scene-controls-heading">GAME SCENE EDITOR</div>
+  <div class="scene-controls-heading">PLAY SPACE</div>
+  <div class="scene-controls-note">Floor only · 6m × 6m · saved automatically</div>
   <div class="scene-controls-note">Draw the complete playable scene. Habitats and flies stay inside it.</div>
   <div class="habitat-size-row"><span>ALL HABITATS</span><input type="range" min="0.3" max="1.35" step="0.05"><output></output></div>
   <div class="boundary-actions"><button class="boundary-draw" type="button">DRAW GAME SCENE</button><button class="boundary-clear" type="button">CLEAR SCENE</button></div>
   <div class="boundary-status">No custom fly area · default arena active</div>
 `
 app.append(sceneControls)
-const sceneControlRows = sceneControls.querySelector<HTMLDivElement>('.scene-control-rows')!
-const sceneReset = sceneControls.querySelector<HTMLButtonElement>('.scene-reset')!
 const habitatSizeInput = sceneControls.querySelector<HTMLInputElement>('.habitat-size-row input')!
 const habitatSizeOutput = sceneControls.querySelector<HTMLOutputElement>('.habitat-size-row output')!
 const boundaryDrawButton = sceneControls.querySelector<HTMLButtonElement>('.boundary-draw')!
 const boundaryClearButton = sceneControls.querySelector<HTMLButtonElement>('.boundary-clear')!
 const boundaryStatus = sceneControls.querySelector<HTMLDivElement>('.boundary-status')!
-const sceneControlConfig: Array<{
-  key: keyof CitySceneTuning
-  label: string
-  min: number
-  max: number
-  step: number
-  display: (value: number) => string
-}> = [
-  { key: 'offsetX', label: 'CITY X', min: CITY_SCENE_LIMITS.offsetX[0], max: CITY_SCENE_LIMITS.offsetX[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
-  { key: 'offsetY', label: 'CITY HEIGHT', min: CITY_SCENE_LIMITS.offsetY[0], max: CITY_SCENE_LIMITS.offsetY[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
-  { key: 'offsetZ', label: 'CITY Z', min: CITY_SCENE_LIMITS.offsetZ[0], max: CITY_SCENE_LIMITS.offsetZ[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
-  { key: 'rotationY', label: 'ROTATION', min: -180, max: 180, step: 1, display: (value) => `${Math.round(value)}°` },
-  { key: 'scaleMultiplier', label: 'SCALE', min: CITY_SCENE_LIMITS.scaleMultiplier[0], max: CITY_SCENE_LIMITS.scaleMultiplier[1], step: 0.01, display: (value) => `${value.toFixed(2)}×` },
-]
-const sceneInputs = new Map<keyof CitySceneTuning, HTMLInputElement>()
-const sceneOutputs = new Map<keyof CitySceneTuning, HTMLOutputElement>()
-for (const item of sceneControlConfig) {
-  const row = document.createElement('label')
-  row.className = 'scene-control-row'
-  row.innerHTML = `<span>${item.label}</span><button type="button" data-scene-step="-1" aria-label="Decrease ${item.label}">−</button><input type="range" min="${item.min}" max="${item.max}" step="${item.step}"><button type="button" data-scene-step="1" aria-label="Increase ${item.label}">+</button><output></output>`
-  const input = row.querySelector<HTMLInputElement>('input')!
-  const output = row.querySelector<HTMLOutputElement>('output')!
-  sceneInputs.set(item.key, input)
-  sceneOutputs.set(item.key, output)
-  const setFromInput = () => {
-    const value = Number(input.value)
-    const nextValue = item.key === 'rotationY' ? value * Math.PI / 180 : value
-    environment.city.setTuning({ [item.key]: nextValue })
-    renderSceneControls()
-  }
-  input.addEventListener('input', setFromInput)
-  row.querySelectorAll<HTMLButtonElement>('button[data-scene-step]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const direction = Number(button.dataset.sceneStep)
-      input.value = String(Number(input.value) + direction * item.step)
-      setFromInput()
-    })
-  })
-  sceneControlRows.append(row)
-}
-sceneReset.addEventListener('click', () => {
-  environment.city.resetTuning()
-  renderSceneControls()
-})
-
 function renderSceneControls() {
-  const tuning = environment.city.getTuning()
-  for (const item of sceneControlConfig) {
-    const input = sceneInputs.get(item.key)!
-    const output = sceneOutputs.get(item.key)!
-    const value = item.key === 'rotationY' ? tuning.rotationY * 180 / Math.PI : tuning[item.key]
-    input.value = String(value)
-    output.value = item.display(value)
-  }
   const habitatScale = environment.getHabitatVisualScale()
   habitatSizeInput.value = String(habitatScale)
   habitatSizeOutput.value = `${habitatScale.toFixed(2)}×`
@@ -719,6 +659,7 @@ tokenPopup.innerHTML = `
     <div class="token-popup-kicker">TOKEN HABITAT · LIVE SNAPSHOT</div>
     <h2 id="token-popup-title" class="token-popup-title"></h2>
     <div class="token-popup-subtitle"></div>
+    <a class="token-popup-dex-link" target="_blank" rel="noopener noreferrer">OPEN IN DEXSCREENER ↗</a>
     <div class="token-popup-grid">
       <div><span>PRICE</span><strong data-token-metric="price">—</strong></div>
       <div><span>MARKET CAP</span><strong data-token-metric="marketCap">—</strong></div>
@@ -742,6 +683,7 @@ app.append(tokenPopup)
 const tokenPopupElement = tokenPopup.querySelector<HTMLElement>('.token-popup')!
 const tokenPopupTitle = tokenPopup.querySelector<HTMLElement>('.token-popup-title')!
 const tokenPopupSubtitle = tokenPopup.querySelector<HTMLElement>('.token-popup-subtitle')!
+const tokenPopupDexLink = tokenPopup.querySelector<HTMLAnchorElement>('.token-popup-dex-link')!
 const tokenPopupClose = tokenPopup.querySelector<HTMLButtonElement>('.token-popup-close')!
 const tokenPopupMetrics = Object.fromEntries(
   Array.from(tokenPopup.querySelectorAll<HTMLElement>('[data-token-metric]')).map((element) => [element.dataset.tokenMetric!, element]),
@@ -768,6 +710,9 @@ function openTokenPopup(habitat: Environment['habitats'][number]) {
   tokenPopupSubtitle.textContent = [state.chainId?.toUpperCase(), state.dexId, state.pairAddress ?? state.id]
     .filter(Boolean)
     .join(' · ')
+  const dexscreenerUrl = state.dexscreenerUrl ?? buildDexscreenerUrl(state)
+  tokenPopupDexLink.href = dexscreenerUrl ?? '#'
+  tokenPopupDexLink.hidden = !dexscreenerUrl
   setPopupMetric('price', formatUsd(signalNumber(state, 'market.priceUsd', state.market.priceUsd)))
   setPopupMetric('marketCap', formatUsd(signalNumber(state, 'market.marketCapUsd', state.market.marketCapUsd)))
   setPopupMetric('fdv', formatUsd(signalNumber(state, 'market.fdvUsd', state.market.fdvUsd)))
@@ -781,6 +726,13 @@ function openTokenPopup(habitat: Environment['habitats'][number]) {
   tokenPopupSense.risk!.textContent = `RISK / CHAOS: ${Math.round(habitat.properties.chaos * 100)}%`
   tokenPopup.hidden = false
   tokenPopupClose.focus()
+}
+
+function buildDexscreenerUrl(state: TokenState) {
+  const chainId = state.chainId?.trim().toLowerCase()
+  const address = state.pairAddress ?? state.tokenAddress
+  if (!chainId || !address) return null
+  return `https://dexscreener.com/${encodeURIComponent(chainId)}/${encodeURIComponent(address)}`
 }
 
 function setPopupMetric(name: string, value: string) {

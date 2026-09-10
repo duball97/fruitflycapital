@@ -27,6 +27,12 @@ class PhysicalHabitatState:
     signals: tuple[Signal, ...] = ()
     provenance: tuple[dict[str, Any], ...] = ()
     financial_trace: dict[str, Any] | None = None
+    token_address: str | None = None
+    pool_id: str | None = None
+    chain_id: str | None = None
+    dex_id: str | None = None
+    pair_address: str | None = None
+    dexscreener_url: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +51,12 @@ class PhysicalHabitatState:
             "signals": [signal.as_dict() for signal in self.signals],
             "provenance": list(self.provenance),
             "financialTrace": self.financial_trace,
+            "tokenAddress": self.token_address,
+            "poolId": self.pool_id,
+            "chainId": self.chain_id,
+            "dexId": self.dex_id,
+            "pairAddress": self.pair_address,
+            "dexscreenerUrl": self.dexscreener_url,
         }
 
 
@@ -79,6 +91,12 @@ class HabitatEncoder:
                 signals=signal_list,
                 provenance=(*state.provenance, {"provider": "dexscreener", "imageUrl": state.image_url}) if state.image_url else state.provenance,
                 financial_trace=sensory.trace,
+                token_address=state.token_address,
+                pool_id=state.pool_id,
+                chain_id=state.chain_id,
+                dex_id=state.dex_id,
+                pair_address=state.pair_address or state.pool_id,
+                dexscreener_url=_dexscreener_url(state),
             )
         activity = _signal(signal_list, "market.volume5mUsd")
         tx_velocity = _signal(signal_list, "flow.txVelocity5m")
@@ -209,6 +227,7 @@ class HabitatEncoder:
                 chain_id=str(config.get("chainId", "ethereum")),
                 dex_id=str(config.get("dexId", "unknown")),
                 pair_address=str(config.get("pairAddress", config.get("poolId", ""))),
+                dexscreener_url=_optional_string(config.get("dexscreenerUrl")),
             )
             return self.encode(state)
         activity = _clip(float(config.get("volume5mUsd") or 0.0) / 10_000.0)
@@ -239,6 +258,14 @@ class HabitatEncoder:
                 "marketName": config.get("marketName"),
                 "lightweight": True,
             },),
+            token_address=_optional_string(config.get("tokenAddress")),
+            pool_id=_optional_string(config.get("poolId")),
+            chain_id=_optional_string(config.get("chainId")) or "ethereum",
+            dex_id=_optional_string(config.get("dexId")) or "unknown",
+            pair_address=_optional_string(config.get("pairAddress")) or _optional_string(config.get("poolId")),
+            dexscreener_url=_optional_string(config.get("dexscreenerUrl")) or _dexscreener_url_from_values(
+                config.get("chainId"), config.get("pairAddress") or config.get("poolId")
+            ),
         )
 
 
@@ -278,6 +305,20 @@ def _optional_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _dexscreener_url(state: TokenState) -> str | None:
+    if state.dexscreener_url:
+        return state.dexscreener_url
+    return _dexscreener_url_from_values(state.chain_id, state.pair_address or state.pool_id)
+
+
+def _dexscreener_url_from_values(chain_id: Any, pair_address: Any) -> str | None:
+    chain = _optional_string(chain_id)
+    pair = _optional_string(pair_address)
+    if not chain or not pair:
+        return None
+    return f"https://dexscreener.com/{chain}/{pair}"
 
 
 def _optional_int(value: Any) -> int | None:

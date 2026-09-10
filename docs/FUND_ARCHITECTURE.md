@@ -1,15 +1,20 @@
 # Fruit Fly Capital fund / treasury boundary
 
-This is a local, testnet, and dry-run architecture. It is not a regulated
+This is a local, Robinhood Chain wallet architecture with guarded execution. It is not a regulated
 public fund and does not claim trustless production NAV accounting.
 
 ```text
 market → habitat → MaleCNS → swarm observation → allocation → TradeIntent
                                              ↓
-                              RiskGuard → execution adapter → Privy policy
+                              RiskGuard → Uniswap API → direct wallet
                                              ↓
-                                      FundVault / portfolio ledger
+                                      portfolio ledger
 ```
+
+The saved `FruitFlyFundVault.sol` contract and its Foundry scripts remain in
+the repository for later use, but are inactive in wallet mode. The configured
+wallet owns the funds directly, and trades keep `FUND_GAS_RESERVE_WEI`
+(default `0.002 ETH`) untouched.
 
 ## Contract
 

@@ -25,8 +25,11 @@ export class FlyBody {
   // visible crawl. This remains a bounded millimetre-scale body force, but it
   // gives the 6m presentation scene enough travel to reach a habitat.
   readonly maxForwardForceN = 0.0026
-  readonly maxVerticalForceN = 0.000018
-  readonly gravityN = 0.00000981
+  // Keep the same neutral hover ratio (~0.55), but increase the vertical
+  // authority so an odor-triggered zero-lift command reaches the floor in a
+  // few seconds instead of looking frozen for most of the demo.
+  readonly maxVerticalForceN = 0.00016
+  readonly gravityN = 0.0000872
   // The previous value made a boundary turn take many seconds at this
   // millimetre-scale inertia. This remains a small rigid-body torque, but it
   // gives the shared actuator interface enough authority to leave a wall

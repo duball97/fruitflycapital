@@ -352,7 +352,7 @@ Enable it in the Python server environment:
 
 ```bash
 NEUROSWARM_MARKET_DISCOVERY_ENABLED=true
-NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood
+NEUROSWARM_MARKET_CHAINS=robinhood
 NEUROSWARM_MARKET_DEX_IDS=
 NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=
 NEUROSWARM_MARKET_CORE_TARGET=100
@@ -365,16 +365,16 @@ CMC_ALLOWED_CHAINS=robinhood
 
 The latest/recent profile feeds can seed discovery when they contain the
 configured chain. For a stable project-specific universe, provide explicit
-comma-separated token addresses (or `chainId:address` entries). The discovery
-configuration includes Base and Robinhood by default; leaving
-`NEUROSWARM_MARKET_DEX_IDS` blank accepts the native DEX venues returned by
-DexScreener on those chains. CoinMarketCap is a global ranked table, so its
-seed input is separately restricted by `CMC_ALLOWED_CHAINS` and defaults to
-Robinhood only; CMC rows from other networks are ignored.
+comma-separated token addresses (or `chainId:address` entries). The public
+configuration is Robinhood-only; leaving `NEUROSWARM_MARKET_DEX_IDS` blank
+accepts the native DEX venues returned by DexScreener on Robinhood.
+CoinMarketCap is a global ranked table, so its seed input is separately
+restricted by `CMC_ALLOWED_CHAINS` and defaults to Robinhood only; CMC rows
+from other networks are ignored.
 
 On Render, set these same values in the service environment and redeploy:
 `NEUROSWARM_MARKET_DISCOVERY_ENABLED=true`,
-`NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood`,
+`NEUROSWARM_MARKET_CHAINS=robinhood`,
 `NEUROSWARM_MARKET_CORE_TARGET=100`,
 `NEUROSWARM_MARKET_WORLD_CAPACITY=100`, and leave
 `NEUROSWARM_MARKET_DEX_IDS` empty. The capacity is an upper bound: the
@@ -425,11 +425,11 @@ evidence-bearing habitat convictions; `PortfolioAllocator` converts qualified
 convictions into capped target weights; and `RiskGuard` checks the fund-policy
 limits. The server returns this as a `swarm_update` message.
 
-This is a proposal-only boundary. It does not count render-only followers as
-votes, it does not send token recommendations into MaleCNS, and it does not
-contain a Privy signer or transaction broadcaster. Uniswap remains limited to
-quotes and unsigned calldata until a separate, explicitly approved custody
-milestone is implemented. See
+This is a guarded direct-wallet boundary. It does not count render-only
+followers as votes, it does not send token recommendations into MaleCNS, and
+it does not use the saved vault contract. Uniswap quotes and calldata are
+validated before a configured server wallet can sign; approvals are never
+broadcast implicitly. See
 [docs/SWARM_INTELLIGENCE.md](docs/SWARM_INTELLIGENCE.md).
 
 Run the deterministic headless sensory audit with:
@@ -486,9 +486,8 @@ would make the demo look active but would invalidate the experiment. See
 4. Connect the implemented behavior intentions to token routes and portfolio
    holdings only after RiskGuard validation. The intentions are observations,
    not automatic trades.
-5. Add fly-to-fly perception through the world, then a risk guard around
-   Uniswap quote/calldata generation. Transaction broadcasting remains a later,
-   separately controlled step.
+5. Add fly-to-fly perception through the world, then tune the guarded wallet
+   execution policy and token approval workflow.
 
 ## Scientific integrity
 

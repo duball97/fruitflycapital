@@ -11,6 +11,8 @@ from .pipeline import FundDecision, SwarmDecisionPipeline
 from .risk import RiskGuard, RiskResult
 from .service import FundService
 from .valuation import CMCValuationProvider, FakeValuationProvider, PriceQuote, ValuationProvider
+from .wallet import RpcWalletClient, WalletSnapshot, WalletRpcError
+from .wallet_execution import DirectWalletUniswapAdapter, WalletExecutionUnavailable
 
 __all__ = [
     "CMCValuationProvider", "ExecutionEngine", "ExecutionRecord", "FakeExecutionAdapter",
@@ -18,6 +20,7 @@ __all__ = [
     "FundLedger", "FundNavReporter", "FundService", "NavReportResult",
     "PortfolioAllocator", "PortfolioEngine", "PortfolioSnapshot", "PortfolioTarget",
     "PositionValue", "PriceQuote", "PrivyClient", "PrivyConfig", "RiskGuard",
-    "RiskResult", "SwarmDecisionPipeline", "TradeIntent", "TradeRoute",
+    "RiskResult", "RpcWalletClient", "SwarmDecisionPipeline", "TradeIntent", "TradeRoute",
+    "WalletExecutionUnavailable", "WalletRpcError", "WalletSnapshot",
     "UniswapQuoteAdapter", "ValuationProvider",
 ]

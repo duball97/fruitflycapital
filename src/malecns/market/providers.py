@@ -45,6 +45,7 @@ class GraphProvider:
             "volume24hUsd", "cmcId", "cmcSlug", "cmcRank",
             "circulatingSupply", "totalSupply", "cmcPercentChange7d",
             "cmcVolumeChange24h", "marketCapDominance",
+            "dexscreenerUrl",
         ):
             if key in config and config[key] is not None and key not in pool:
                 pool[key] = config[key]

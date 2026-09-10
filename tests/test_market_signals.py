@@ -118,6 +118,9 @@ def test_habitat_encoder_receives_signals_and_preserves_provenance():
     state = TokenSignalEngine().build_state(_observation())
     habitat = HabitatEncoder().encode(state)
     assert habitat.id == "TOKEN"
+    assert habitat.as_dict()["chainId"] == "ethereum"
+    assert habitat.as_dict()["pairAddress"] == "0xpool"
+    assert habitat.as_dict()["dexscreenerUrl"] == "https://dexscreener.com/ethereum/0xpool"
     assert habitat.signals == state.signals
     assert habitat.provenance[0]["provider"] == "the-graph"
     assert 0 <= habitat.brightness <= 1

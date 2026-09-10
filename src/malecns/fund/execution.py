@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any, Mapping, Protocol
 from .models import TradeIntent
 
-class FundExecutionMode(str, Enum): DRY_RUN = "dry-run"; TESTNET = "testnet"; LIVE = "live"
+class FundExecutionMode(str, Enum): DRY_RUN = "dry-run"; TESTNET = "testnet"; WALLET = "wallet"; LIVE = "live"
 @dataclass(frozen=True)
 class ExecutionRecord:
     status: str; mode: str; trade_intent: Mapping[str, Any]; reason: str
@@ -32,6 +32,10 @@ class ExecutionEngine:
         if usd_value is not None and usd_value > self.max_trade_usd: return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), "per-trade USD cap exceeded")
         if daily_usd_value is not None and daily_usd_value > self.max_daily_trade_usd: return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), "daily USD cap exceeded")
         if self.mode == FundExecutionMode.DRY_RUN: return ExecutionRecord("proposal_only", self.mode.value, intent.as_dict(), "dry-run never signs or broadcasts")
-        if self.mode == FundExecutionMode.LIVE and not (self.live_confirmed and explicit_confirmation): return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), "live mode requires environment confirmation and explicit confirmation")
+        if self.mode in {FundExecutionMode.WALLET, FundExecutionMode.LIVE} and not (self.live_confirmed and explicit_confirmation): return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), "wallet execution requires FUND_LIVE_TRADING_CONFIRMED=true and explicit confirmation")
         if self.adapter is None: return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), "no execution adapter configured")
-        result = self.adapter.execute(intent); return ExecutionRecord(str(result.get("status", "submitted")), self.mode.value, intent.as_dict(), "adapter result; inspect tx status separately")
+        try:
+            result = self.adapter.execute(intent)
+        except Exception as exc:
+            return ExecutionRecord("blocked", self.mode.value, intent.as_dict(), str(exc))
+        return ExecutionRecord(str(result.get("status", "submitted")), self.mode.value, intent.as_dict(), "adapter result; inspect tx status separately")

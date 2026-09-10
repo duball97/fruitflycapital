@@ -6,6 +6,7 @@ from malecns.fund.portfolio import PortfolioEngine
 from malecns.fund.privy_client import FakePrivyClient, PrivyConfig
 from malecns.fund.nav_reporter import FundNavReporter
 from malecns.fund.valuation import FakeValuationProvider
+from malecns.fund.wallet import RpcWalletClient, WalletSnapshot
 
 
 def test_ledger_deduplicates_external_events_and_records_trade():
@@ -69,3 +70,21 @@ def test_nav_reporting_and_privy_fake_are_explicitly_gated():
         pass
     else:
         raise AssertionError("fake Privy client must require confirmation")
+
+
+def test_wallet_snapshot_keeps_gas_reserve_out_of_tradeable_balance():
+    snapshot = WalletSnapshot(4663, "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9", 4_500_000_000_000_000)
+    assert float(snapshot.native_balance_eth) == 0.0045
+    assert snapshot.available_native_wei == 2_500_000_000_000_000
+    assert snapshot.as_dict()["availableToTrade"] == 0.0025
+
+
+def test_rpc_wallet_rejects_chain_mismatch_without_signing():
+    client = RpcWalletClient("https://example.invalid", "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9", expected_chain_id=4663)
+    client.call = lambda method, params: "0xb626" if method == "eth_chainId" else "0x0"  # type: ignore[method-assign]
+    try:
+        client.snapshot()
+    except RuntimeError as error:
+        assert "does not match" in str(error)
+    else:
+        raise AssertionError("wallet must reject an RPC on the wrong chain")

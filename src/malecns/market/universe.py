@@ -55,7 +55,7 @@ class DexScreenerUniverseProvider:
     client: DexScreenerClient
     # Keep Ethereum for continuity, while including the chains used by the
     # deployed demo. An empty dex_ids tuple means all DEXs on those chains.
-    chains: tuple[str, ...] = ("ethereum", "base", "robinhood")
+    chains: tuple[str, ...] = ("robinhood",)
     dex_ids: tuple[str, ...] = ()
     core_target: int = 100
     recent_target: int = 20
@@ -359,7 +359,10 @@ class DexScreenerMarketDiscovery:
         enabled = os.getenv("NEUROSWARM_MARKET_DISCOVERY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return None
-        chains = _csv(os.getenv("NEUROSWARM_MARKET_CHAINS", "ethereum,base,robinhood")) or ("ethereum", "base", "robinhood")
+        # This public experience is Robinhood-only. Keep the environment key
+        # for compatibility, but do not let an older deployment value such as
+        # `ethereum,base,robinhood` widen the live market universe again.
+        chains = ("robinhood",)
         configured_dex_ids = os.getenv("NEUROSWARM_MARKET_DEX_IDS", "").strip()
         dex_ids = _csv(configured_dex_ids) if configured_dex_ids else ()
         seeds = _seed_tokens(os.getenv("NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES", ""), chains[0])
@@ -424,6 +427,15 @@ class DexScreenerMarketDiscovery:
                     )
                     if desired_world > 0 and len(cached_round.markets) < desired_world:
                         self._universe = None
+                    elif any(
+                        _norm(market.identity.chain_id) not in {
+                            _norm(value) for value in self.universe_provider.chains
+                        }
+                        for market in cached_round.markets
+                    ):
+                        # Never replay a snapshot that contains markets from a
+                        # chain no longer allowed by the current deployment.
+                        self._universe = None
                     else:
                         self.rounds._current = cached_round
                         self.rounds._round_counter = max(self.rounds._round_counter, cached_round.round_number)
@@ -478,6 +490,7 @@ class DexScreenerMarketDiscovery:
             "chainId": candidate.identity.chain_id,
             "dexId": candidate.identity.dex_id,
             "pairAddress": candidate.identity.pair_address,
+            "dexscreenerUrl": _candidate_dexscreener_url(candidate),
             "observedAtMs": int(candidate.provenance[0].get("observedAtMs", 0)) if candidate.provenance else 0,
             "lightweight": True,
             "liquidityUsd": candidate.liquidity_usd,
@@ -690,6 +703,14 @@ def _candidate_class(candidate: MarketCandidate, profile_class: Mapping[tuple[st
     if profile_class.get((chain, candidate.base_token_address)) == "recent":
         return "recent"
     return "recent"
+
+
+def _candidate_dexscreener_url(candidate: MarketCandidate) -> str:
+    for item in candidate.provenance:
+        url = item.get("url")
+        if isinstance(url, str) and url.startswith("http"):
+            return url
+    return f"https://dexscreener.com/{candidate.identity.chain_id}/{candidate.identity.pair_address}"
 
 
 def _candidate_quality(candidate: MarketCandidate) -> tuple[float, float, str]:

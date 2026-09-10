@@ -205,6 +205,7 @@ class TokenSignalEngine:
             chain_id=observation.chain_id,
             dex_id=observation.dex_id,
             pair_address=observation.pair_address or observation.pool_id,
+            dexscreener_url=_optional_string(observation.pool.get("dexscreenerUrl") or observation.pool.get("url")),
         )
         return replace(state, financial=self.financial_pipeline.evaluate(state))
 
@@ -245,7 +246,7 @@ class MarketSignalEngine:
                 raise ValueError("NEUROSWARM_MARKET_HABITATS must be valid JSON") from exc
             if not isinstance(parsed_habitats, list) or not all(isinstance(item, dict) for item in parsed_habitats):
                 raise ValueError("NEUROSWARM_MARKET_HABITATS must be a JSON list of objects")
-            habitats = parsed_habitats
+            habitats = [item for item in parsed_habitats if _is_robinhood_config(item)]
         if client is None and not habitats:
             return cls(None, [], poll_seconds=float(os.getenv("NEUROSWARM_MARKET_POLL_SECONDS", "15")), discovery=discovery)
         return cls(
@@ -273,7 +274,10 @@ class MarketSignalEngine:
                 # Keep manually configured habitats as an explicit fallback;
                 # discovery must not erase a working local setup just because
                 # its provider has temporarily returned no candidates.
-                configs = world_configs or discovered_configs or self.habitat_configs
+                configs = [
+                    config for config in (world_configs or discovered_configs or self.habitat_configs)
+                    if _is_robinhood_config(config)
+                ]
                 discovery_payload = self.discovery.as_dict()
                 source = "dexscreener+the-graph" if self.provider is not None else "dexscreener"
             if self.provider is None and self.discovery is not None:
@@ -320,6 +324,10 @@ class MarketSignalEngine:
 def _window(swaps: tuple[Any, ...] | list[Any], end_s: float, duration_s: int) -> list[Any]:
     start_s = end_s - duration_s
     return [swap for swap in swaps if start_s <= swap.timestamp_s <= end_s]
+
+
+def _is_robinhood_config(config: dict[str, Any]) -> bool:
+    return str(config.get("chainId", "")).strip().lower() == "robinhood"
 
 
 def _token_side(observation: RawTokenObservation) -> str:
