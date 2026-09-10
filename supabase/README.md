@@ -25,6 +25,33 @@ and the selected round. It does not turn market data into a fly command.
    refresh interval. The active round is served from Supabase after a backend
    restart until it expires.
 
+## Execution intent queue
+
+Run [`migrations/004_execution_intents.sql`](migrations/004_execution_intents.sql)
+in the Supabase SQL editor to create the durable buy/sell queue. It stores the
+netted execution payload, fly IDs, token identity, processing status, retries,
+worker lease, result, and error for every intent. The queue is server-only;
+keep `SUPABASE_SERVICE_ROLE_KEY` on Render and never in the frontend.
+
+On the Render brain service, set:
+
+```env
+FUND_ADAPTER=supabase
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<server-only-key>
+```
+
+On the Render Background Worker, run:
+
+```bash
+PYTHONPATH=src python scripts/run_trade_executor.py --backend supabase --mode prepare
+```
+
+The worker claims rows atomically through `claim_execution_intents`, so a
+restart or a second worker cannot process the same pending row concurrently.
+Only change the worker to `--mode broadcast` after prepared transactions have
+been reviewed and the wallet/risk settings have been verified.
+
 `SUPABASE_ANON_KEY` is accepted for read attempts, but writes require the
 service-role key. With no Supabase variables, the application continues to use
 its existing in-process cache and does not fail startup.

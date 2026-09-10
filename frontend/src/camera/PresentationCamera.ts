@@ -1,6 +1,7 @@
 import { Object3D, PerspectiveCamera, Vector3 } from 'three'
 import type { FlyAgent } from '../fly/FlyAgent'
 import type { TokenHabitat } from '../world/TokenHabitat'
+import { PRESENTATION_SCENE_HALF_EXTENT } from '../world/Arena'
 
 export type PresentationCameraMode = 'overview' | 'token' | 'director'
 
@@ -15,7 +16,11 @@ export class PresentationCamera {
   private readonly overviewDirection = new Vector3(0.58, 0.42, 0.7).normalize()
 
   constructor() {
-    this.camera.position.set(1.45, 1.08, 1.5)
+    // Start cinematic mode from a clearly floor-facing establishing shot.
+    // This also prevents a previous free-orbit pose from leaving the first
+    // cinematic frames pointed at the star field.
+    this.camera.position.set(1.65, 1.55, 1.85)
+    this.camera.lookAt(0, 0.08, 0)
   }
 
   setMode(mode: PresentationCameraMode) {
@@ -43,7 +48,7 @@ export class PresentationCamera {
         this.center.multiplyScalar(1 / Math.max(1, agents.length))
         this.target.copy(this.center)
         const wideDistance = 1.45 + (Math.floor(timeSeconds / 36) % 2) * 0.42
-        this.desired.copy(this.center).add(new Vector3(0.58, 0.38, 0.72).normalize().multiplyScalar(wideDistance))
+        this.desired.copy(this.center).add(new Vector3(0.58, 0.78, 0.72).normalize().multiplyScalar(wideDistance))
       } else if (phase < 24 && habitats.length > 0) {
         const habitat = habitats[Math.floor((timeSeconds - 14) / 10) % habitats.length]!
         this.target.copy(habitat.group.position).add(new Vector3(0, 0.045, 0))
@@ -53,8 +58,15 @@ export class PresentationCamera {
         // The final shot is an occasional fly-eye view: close to the agent,
         // but still slightly above the floor so the subject remains visible.
         this.forward.set(0, 0, -1).applyQuaternion(selected.body.quaternion).normalize()
-        this.target.copy(selected.body.position).addScaledVector(this.forward, 0.14).add(new Vector3(0, 0.012, 0))
-        this.desired.copy(selected.body.position).addScaledVector(this.forward, -0.025).add(new Vector3(0, 0.025, 0))
+        // Flybody can briefly report a pitched/rolled orientation while it is
+        // settling. Use only its horizontal heading for the camera so a
+        // transient body rotation can never aim the shot into the sky or
+        // below the floor.
+        this.forward.y = 0
+        if (this.forward.lengthSq() < 0.0001) this.forward.set(0, 0, -1)
+        this.forward.normalize()
+        this.target.copy(selected.body.position).addScaledVector(this.forward, 0.14).add(new Vector3(0, 0.035, 0))
+        this.desired.copy(selected.body.position).addScaledVector(this.forward, -0.025).add(new Vector3(0, 0.11, 0))
       }
     } else {
       const swarmRadius = this.setSwarmCenter(agents)
@@ -65,10 +77,16 @@ export class PresentationCamera {
       const fitDistance = swarmRadius / Math.tan(verticalFov / 2) * 1.35
       this.desired.copy(this.center).addScaledVector(this.overviewDirection, Math.max(0.95, Math.min(4, fitDistance)))
     }
+    this.clampShot()
     this.camera.position.lerp(this.desired, 0.025)
+    this.camera.position.y = Math.max(0.09, this.camera.position.y)
     this.orientation.position.copy(this.camera.position)
     this.orientation.lookAt(this.target)
-    this.camera.quaternion.slerp(this.orientation.quaternion, 0.035)
+    this.camera.quaternion.slerp(this.orientation.quaternion, 0.08)
+    // Keep the camera's final aim authoritative. The target has already been
+    // clamped above the floor, so this cannot drift into the sky during a
+    // long cinematic transition.
+    this.camera.lookAt(this.target)
   }
 
   private setSwarmCenter(agents: FlyAgent[]) {
@@ -76,5 +94,15 @@ export class PresentationCamera {
     agents.forEach((agent) => this.center.add(agent.body.position))
     this.center.multiplyScalar(1 / Math.max(1, agents.length))
     return Math.max(0.12, ...agents.map((agent) => agent.body.position.distanceTo(this.center)))
+  }
+
+  private clampShot() {
+    const limit = PRESENTATION_SCENE_HALF_EXTENT - 0.12
+    this.target.x = Math.max(-limit, Math.min(limit, this.target.x))
+    this.target.y = Math.max(0.035, Math.min(0.42, this.target.y))
+    this.target.z = Math.max(-limit, Math.min(limit, this.target.z))
+    this.desired.x = Math.max(-limit, Math.min(limit, this.desired.x))
+    this.desired.y = Math.max(0.09, Math.min(1.8, this.desired.y))
+    this.desired.z = Math.max(-limit, Math.min(limit, this.desired.z))
   }
 }

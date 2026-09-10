@@ -17,6 +17,7 @@ from ..market.uniswap_client import UniswapTradingClient
 from .ledger import FundLedger
 from .receipts import BlockscoutClient, ReceiptStatus, explorer_url, observe_receipt
 from .wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
+from .supabase_queue import SupabaseIntentQueue
 
 
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -258,6 +259,29 @@ class QueueExecutionAdapter:
         return {"status": "queued", "txHash": None, "queuePath": queue_path}
 
 
+class SupabaseExecutionAdapter:
+    """Publish execution intents to the shared Supabase queue."""
+
+    def __init__(self, queue: SupabaseIntentQueue) -> None:
+        self.queue = queue
+
+    def execute(self, intent: ExecutionIntent, token: TokenRef) -> Mapping[str, Any]:
+        payload = {
+            "executionIntent": intent.as_dict(),
+            "token": {
+                "chainId": token.chain_id,
+                "address": token.address,
+                "symbol": token.symbol,
+                "liquidityUsd": token.liquidity_usd,
+                "priceUsd": token.price_usd,
+                "priceNative": token.price_native,
+            },
+            "queuedAtMs": int(time.time() * 1000),
+        }
+        self.queue.enqueue(payload)
+        return {"status": "queued", "txHash": None, "queueBackend": "supabase"}
+
+
 class AutonomousTradingRuntime:
     """Stateful 16-fly allocation runtime with netted execution intents."""
 
@@ -304,6 +328,11 @@ class AutonomousTradingRuntime:
             adapter = MainnetExecutionAdapter(wallet, client)
         elif mode == "queue":
             adapter = QueueExecutionAdapter(os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
+        elif mode == "supabase":
+            queue = SupabaseIntentQueue.from_env()
+            if queue is None:
+                raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for FUND_ADAPTER=supabase")
+            adapter = SupabaseExecutionAdapter(queue)
         return cls(ledger, expected_agents=16, wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_hold_seconds=float(os.getenv("FUND_MIN_HOLD_SECONDS", "120")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")))
 
     def update_habitats(self, habitats: Iterable[Mapping[str, Any]]) -> None:

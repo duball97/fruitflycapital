@@ -566,7 +566,10 @@ visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
 // embodiments and must never become extra portfolio votes or trade events.
 // A qualifying buy requires sustained contact, not a transient startup
 // overlap. Keep this client threshold aligned with the server observer.
-const swarmObserver = new SwarmObserver(SWARM_SIZE, 2.5)
+// Slow the proposal cadence: contact must persist for eight seconds and a
+// held fly must remain outside for six seconds before SELL is logged. The
+// trading runtime still applies its independent 120-second minimum hold.
+const swarmObserver = new SwarmObserver(SWARM_SIZE, 8, 0.0005, 6, 120)
 
 function updateFlightMotionStatus() {
   const cruise = agents.filter((agent) => agent.landingState === 'cruise').length

@@ -40,10 +40,18 @@ REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_c
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
 SWARM_SIZE = 16
-BEHAVIOR_DWELL_SECONDS = max(0.6, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "2.5")))
+# Keep the live proposal stream deliberately calm. Environment values may
+# increase these windows, but cannot silently make the feed more aggressive.
+BEHAVIOR_DWELL_SECONDS = max(8.0, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "8.0")))
+BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS = max(6.0, float(os.getenv("FUND_BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS", "6.0")))
 SWARM_DECISIONS = SwarmDecisionPipeline(
     max(1, SWARM_SIZE),
-    observer=SwarmObserver(max(1, SWARM_SIZE), sustained_dwell_s=BEHAVIOR_DWELL_SECONDS),
+    observer=SwarmObserver(
+        max(1, SWARM_SIZE),
+        sustained_dwell_s=BEHAVIOR_DWELL_SECONDS,
+        departure_debounce_s=BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS,
+        min_hold_s=120.0,
+    ),
 )
 FUND_SERVICE = FundService.from_env()
 AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)

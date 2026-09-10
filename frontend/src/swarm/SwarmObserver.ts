@@ -23,6 +23,9 @@ interface Track {
   contactSeconds: number
   currentVisitDwellSeconds: number
   buyIssuedForVisit: boolean
+  buyIssuedAtMs: number | null
+  outsideSeconds: number
+  departureCandidate: boolean
   lastLandingState: LandingState
   persistence: number
 }
@@ -41,6 +44,8 @@ export class SwarmObserver {
     private readonly expectedAgents: number,
     private readonly minBuyDwellSeconds = 0.6,
     private readonly approachEpsilonM = 0.0005,
+    private readonly departureDebounceSeconds = 0,
+    private readonly minHoldSeconds = 0,
   ) {
     if (!Number.isInteger(expectedAgents) || expectedAgents < 1) throw new Error('expectedAgents must be positive')
   }
@@ -68,9 +73,18 @@ export class SwarmObserver {
         const previousLandingState = track.lastLandingState
 
         if (inside && !previousInside) {
-          track.visits += 1
-          track.currentVisitDwellSeconds = 0
-          track.buyIssuedForVisit = false
+          const continuingHeldVisit = track.departureCandidate && track.buyIssuedForVisit
+          if (!continuingHeldVisit) {
+            track.visits += 1
+            track.currentVisitDwellSeconds = 0
+            track.buyIssuedForVisit = false
+            track.buyIssuedAtMs = null
+          } else {
+            // A short boundary re-entry is part of the same held visit. Do
+            // not turn geometry noise into a second BUY opportunity.
+            track.departureCandidate = false
+            track.outsideSeconds = 0
+          }
         }
         if (inside) {
           track.dwellSeconds += dtSeconds
@@ -79,11 +93,26 @@ export class SwarmObserver {
         }
         if (previousInside && !inside) {
           track.departures += 1
-          if (track.buyIssuedForVisit) {
+          track.outsideSeconds = 0
+          track.departureCandidate = track.buyIssuedForVisit
+        }
+        if (!inside) {
+          track.outsideSeconds += dtSeconds
+          if (
+            track.departureCandidate &&
+            track.buyIssuedForVisit &&
+            track.buyIssuedAtMs !== null &&
+            timestampMs - track.buyIssuedAtMs >= this.minHoldSeconds * 1000 &&
+            track.outsideSeconds >= this.departureDebounceSeconds
+          ) {
             this.emitIntent(track, 'sell', 'departure', timestampMs, distanceM, false)
+            track.departureCandidate = false
+            track.buyIssuedForVisit = false
+            track.buyIssuedAtMs = null
+            track.currentVisitDwellSeconds = 0
+          } else if (!track.buyIssuedForVisit) {
+            track.currentVisitDwellSeconds = 0
           }
-          track.currentVisitDwellSeconds = 0
-          track.buyIssuedForVisit = false
         }
 
         const decreasing = track.lastDistanceM !== null && distanceM < track.lastDistanceM - this.approachEpsilonM
@@ -101,12 +130,11 @@ export class SwarmObserver {
         ) {
           this.emitIntent(track, 'buy', 'dwell', timestampMs, distanceM, true)
           track.buyIssuedForVisit = true
+          track.buyIssuedAtMs = timestampMs
         } else if (previousLandingState === 'landed' && agent.landingState === 'departing' && track.buyIssuedForVisit) {
-          // A neural/aversive departure is a genuine sell signal even if the
-          // next contact sample still overlaps the habitat radius. Losing a
-          // single contact ray is not enough to sell.
-          this.emitIntent(track, 'sell', 'departure', timestampMs, distanceM, contact)
-          track.buyIssuedForVisit = false
+          // Mark the departure, then wait for the same body to remain outside
+          // the habitat for the debounce window before emitting SELL.
+          track.departureCandidate = true
         }
 
         const activeSpan = track.firstTimestampMs === null ? 0 : Math.max(0, (timestampMs - track.firstTimestampMs) / 1000)
@@ -164,6 +192,9 @@ export class SwarmObserver {
         contactSeconds: 0,
         currentVisitDwellSeconds: 0,
         buyIssuedForVisit: false,
+        buyIssuedAtMs: null,
+        outsideSeconds: 0,
+        departureCandidate: false,
         lastLandingState: landingState,
         persistence: 0,
       }

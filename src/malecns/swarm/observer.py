@@ -171,6 +171,9 @@ class _Track:
     congregation_sum: float = 0.0
     congregation_samples: int = 0
     buy_issued_for_visit: bool = False
+    buy_issued_at_ms: int | None = None
+    outside_time_s: float = 0.0
+    departure_candidate: bool = False
 
 
 class SwarmObserver:
@@ -187,6 +190,8 @@ class SwarmObserver:
         expected_agents: int,
         *,
         sustained_dwell_s: float = 0.6,
+        departure_debounce_s: float = 0.0,
+        min_hold_s: float = 0.0,
         congregation_radius_m: float = 0.12,
         max_sample_gap_s: float = 2.0,
         distance_history_size: int = 600,
@@ -196,6 +201,8 @@ class SwarmObserver:
             raise ValueError("expected_agents must be positive")
         self.expected_agents = expected_agents
         self.sustained_dwell_s = max(0.0, float(sustained_dwell_s))
+        self.departure_debounce_s = max(0.0, float(departure_debounce_s))
+        self.min_hold_s = max(0.0, float(min_hold_s))
         self.congregation_radius_m = max(0.001, float(congregation_radius_m))
         self.max_sample_gap_s = max(0.0, float(max_sample_gap_s))
         self.distance_history_size = max(2, int(distance_history_size))
@@ -260,16 +267,38 @@ class SwarmObserver:
         if track.first_timestamp_ms is None:
             track.first_timestamp_ms = timestamp_ms
         if inside and not previous_inside:
-            track.visits += 1
-            track.current_visit_dwell_s = 0.0
-            track.buy_issued_for_visit = False
+            continuing_held_visit = track.departure_candidate and track.buy_issued_for_visit
+            if not continuing_held_visit:
+                track.visits += 1
+                track.current_visit_dwell_s = 0.0
+                track.buy_issued_for_visit = False
+                track.buy_issued_at_ms = None
+            else:
+                # A short boundary re-entry is part of the same held visit.
+                track.departure_candidate = False
+                track.outside_time_s = 0.0
         if previous_inside and not inside:
             track.departures += 1
-            if track.buy_issued_for_visit:
+            track.outside_time_s = 0.0
+            track.departure_candidate = track.buy_issued_for_visit
+
+        if not inside:
+            track.outside_time_s += dt_s
+            if (
+                track.departure_candidate
+                and track.buy_issued_for_visit
+                and track.buy_issued_at_ms is not None
+                and timestamp_ms - track.buy_issued_at_ms >= self.min_hold_s * 1000
+                and track.outside_time_s >= self.departure_debounce_s
+            ):
                 self._emit_behavior_intent(track, "sell", "departure", timestamp_ms, distance_m, False)
-            track.buy_issued_for_visit = False
-            track.visit_dwell_s.append(track.current_visit_dwell_s)
-            track.current_visit_dwell_s = 0.0
+                track.departure_candidate = False
+                track.buy_issued_for_visit = False
+                track.buy_issued_at_ms = None
+                track.visit_dwell_s.append(track.current_visit_dwell_s)
+                track.current_visit_dwell_s = 0.0
+            elif not track.buy_issued_for_visit:
+                track.current_visit_dwell_s = 0.0
 
         if inside:
             track.dwell_time_s += dt_s
@@ -283,6 +312,7 @@ class SwarmObserver:
             ):
                 self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)
                 track.buy_issued_for_visit = True
+                track.buy_issued_at_ms = timestamp_ms
 
         decreasing = (
             not inside

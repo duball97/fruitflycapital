@@ -28,6 +28,7 @@ from malecns.fund.autonomous import AutonomousTradingRuntime, ExecutionIntent, T
 from malecns.fund.ledger import FundLedger
 from malecns.fund.wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
 from malecns.market.uniswap_client import UniswapTradingClient
+from malecns.fund.supabase_queue import SupabaseIntentQueue
 
 
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -260,6 +261,7 @@ class TradeExecutor:
 def main() -> int:
     load_project_env()
     parser = argparse.ArgumentParser(description="Consume FruitFly execution intents and run Uniswap swaps")
+    parser.add_argument("--backend", choices=("file", "supabase"), default=os.getenv("FUND_INTENT_QUEUE_BACKEND", "file"))
     parser.add_argument("--queue", default=os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
     parser.add_argument("--mode", choices=("prepare", "broadcast"), default=os.getenv("FUND_RUNNER_MODE", "prepare"))
     parser.add_argument("--once", action="store_true", help="process currently queued items and exit")
@@ -270,11 +272,33 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"status": "startup_error", "error": str(exc)}), file=sys.stderr)
         return 2
+    queue = SupabaseIntentQueue.from_env() if args.backend == "supabase" else None
+    if args.backend == "supabase" and queue is None:
+        print(json.dumps({"status": "startup_error", "error": "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for --backend supabase"}), file=sys.stderr)
+        return 2
+    worker_id = SupabaseIntentQueue.new_worker_id() if queue is not None else "file-worker"
     queue_path = Path(args.queue)
     offset_path = Path(os.getenv("FUND_RUNNER_OFFSET_PATH", f"{queue_path}.offset"))
     offset = int(offset_path.read_text(encoding="utf-8").strip() or "0") if offset_path.exists() else 0
     while True:
-        if queue_path.exists():
+        if queue is not None:
+            records = queue.claim(worker_id, limit=1)
+            for record in records:
+                raw_payload = record.get("payload")
+                try:
+                    intent, token = _load_record(json.dumps(raw_payload))
+                    result = executor.process(intent, token)
+                    status = "prepared" if args.mode == "prepare" else ("confirmed" if result.get("status") == "CONFIRMED" else "broadcast")
+                    queue.finish(intent.idempotency_key, status, result=result)
+                    print(json.dumps(result, sort_keys=True), flush=True)
+                except Exception as exc:
+                    key = str(record.get("idempotency_key") or "")
+                    if key:
+                        queue.finish(key, "failed", error=str(exc))
+                    print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True), flush=True)
+            if args.once:
+                return 0
+        elif queue_path.exists():
             with queue_path.open("r", encoding="utf-8") as stream:
                 stream.seek(offset)
                 for raw in stream:
