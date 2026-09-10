@@ -56,8 +56,12 @@ export class Environment {
     // A fresh snapshot is authoritative. Clear stale values before applying
     // the configured habitats from this response.
     this.habitats.forEach((habitat) => habitat.setScenario('off'))
-    for (const state of update.habitats) {
-      const habitat = this.habitats.find((candidate) => candidate.state.id === state.id)
+    for (const [index, state] of update.habitats.entries()) {
+      // Discovered markets use canonical chain-aware IDs (for example
+      // ethereum:0xpair), while the prototype has three fixed visual slots.
+      // Match known fixture IDs when present and otherwise place the first
+      // discovered markets into those slots deterministically.
+      const habitat = this.habitats.find((candidate) => candidate.state.id === state.id) ?? this.habitats[index]
       if (!habitat) continue
       habitat.setPhysicalProperties({
         physicalRadiusM: state.physicalRadiusM,

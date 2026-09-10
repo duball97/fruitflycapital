@@ -24,6 +24,7 @@ from .models import (
     TokenState,
 )
 from .providers import GraphProvider
+from .universe import DexScreenerMarketDiscovery
 
 
 @dataclass(frozen=True)
@@ -32,10 +33,12 @@ class MarketSnapshot:
     observed_at_ms: int
     habitats: tuple[PhysicalHabitatState, ...]
     error: str | None = None
+    source: str = "graph-uniswap"
+    discovery: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "source": "graph-uniswap",
+            "source": self.source,
             "status": self.status,
             "observedAtMs": self.observed_at_ms,
             "habitats": [habitat.as_dict() for habitat in self.habitats],
@@ -43,6 +46,8 @@ class MarketSnapshot:
         }
         if self.error:
             payload["error"] = self.error
+        if self.discovery is not None:
+            payload["discovery"] = self.discovery
         return payload
 
 
@@ -130,19 +135,33 @@ class TokenSignalEngine:
                     "provider": observation.provider,
                     "poolId": observation.pool_id,
                     "tokenAddress": observation.token_address,
+                    "chainId": observation.chain_id,
+                    "dexId": observation.dex_id,
+                    "pairAddress": observation.pair_address or observation.pool_id,
                     "observedAtMs": observation.observed_at_ms,
                 },
             ),
+            chain_id=observation.chain_id,
+            dex_id=observation.dex_id,
+            pair_address=observation.pair_address or observation.pool_id,
         )
 
 
 class MarketSignalEngine:
     """Poll configured providers, build TokenState, then encode habitats."""
 
-    def __init__(self, provider: GraphProvider, habitats: list[dict[str, Any]], *, poll_seconds: float = 15.0) -> None:
+    def __init__(
+        self,
+        provider: GraphProvider | None,
+        habitats: list[dict[str, Any]],
+        *,
+        poll_seconds: float = 15.0,
+        discovery: DexScreenerMarketDiscovery | None = None,
+    ) -> None:
         self.provider = provider
         self.habitat_configs = habitats
         self.poll_seconds = poll_seconds
+        self.discovery = discovery
         self.signal_engine = TokenSignalEngine()
         self.habitat_encoder = HabitatEncoder()
         self._last_poll = 0.0
@@ -153,22 +172,29 @@ class MarketSignalEngine:
     def from_env(cls) -> "MarketSignalEngine | None":
         client = GraphClient.from_env()
         raw_habitats = os.getenv("NEUROSWARM_MARKET_HABITATS", "").strip()
-        if client is None or not raw_habitats:
+        discovery = DexScreenerMarketDiscovery.from_env(graph_client=client)
+        if client is None and discovery is None:
             return None
-        try:
-            habitats = json.loads(raw_habitats)
-        except json.JSONDecodeError as exc:
-            raise ValueError("NEUROSWARM_MARKET_HABITATS must be valid JSON") from exc
-        if not isinstance(habitats, list) or not all(isinstance(item, dict) for item in habitats):
-            raise ValueError("NEUROSWARM_MARKET_HABITATS must be a JSON list of objects")
+        habitats: list[dict[str, Any]] = []
+        if raw_habitats:
+            try:
+                parsed_habitats = json.loads(raw_habitats)
+            except json.JSONDecodeError as exc:
+                raise ValueError("NEUROSWARM_MARKET_HABITATS must be valid JSON") from exc
+            if not isinstance(parsed_habitats, list) or not all(isinstance(item, dict) for item in parsed_habitats):
+                raise ValueError("NEUROSWARM_MARKET_HABITATS must be a JSON list of objects")
+            habitats = parsed_habitats
+        if client is None and not habitats:
+            return cls(None, [], poll_seconds=float(os.getenv("NEUROSWARM_MARKET_POLL_SECONDS", "15")), discovery=discovery)
         return cls(
             GraphProvider(
                 client,
                 lookback_seconds=int(os.getenv("NEUROSWARM_MARKET_LOOKBACK_SECONDS", "3600")),
                 swap_limit=int(os.getenv("NEUROSWARM_MARKET_SWAP_LIMIT", "1000")),
-            ),
+            ) if client is not None else None,
             habitats,
             poll_seconds=float(os.getenv("NEUROSWARM_MARKET_POLL_SECONDS", "15")),
+            discovery=discovery,
         )
 
     def snapshot_if_due(self, *, force: bool = False) -> dict[str, Any]:
@@ -176,19 +202,37 @@ class MarketSignalEngine:
         if not force and self._cached is not None and now - self._last_poll < self.poll_seconds:
             return self._cached
         try:
-            habitats = tuple(self._read_habitat(config) for config in self.habitat_configs)
-            snapshot = MarketSnapshot("ok", int(time.time() * 1000), habitats)
+            discovery_payload: dict[str, Any] | None = None
+            configs = self.habitat_configs
+            source = "graph-uniswap"
+            if self.discovery is not None:
+                discovered_configs = self.discovery.graph_habitat_configs(force=force)
+                # Keep manually configured habitats as an explicit fallback;
+                # discovery must not erase a working local setup just because
+                # its provider has temporarily returned no candidates.
+                configs = discovered_configs or self.habitat_configs
+                discovery_payload = self.discovery.as_dict()
+                source = "dexscreener+the-graph" if self.provider is not None else "dexscreener"
+            if self.provider is None:
+                snapshot = MarketSnapshot("discovery_only", int(time.time() * 1000), tuple(), source=source, discovery=discovery_payload)
+            else:
+                habitats = tuple(self._read_habitat(config) for config in configs)
+                status = "ok" if configs else "empty"
+                snapshot = MarketSnapshot(status, int(time.time() * 1000), habitats, source=source, discovery=discovery_payload)
         except Exception as exc:
-            snapshot = MarketSnapshot("error", int(time.time() * 1000), tuple(), str(exc))
+            snapshot = MarketSnapshot("error", int(time.time() * 1000), tuple(), str(exc), source="dexscreener+the-graph" if self.discovery else "graph-uniswap")
         self._last_poll = now
         self._cached = snapshot.as_dict()
         return self._cached
 
     def _read_habitat(self, config: dict[str, Any]) -> PhysicalHabitatState:
+        if self.provider is None:
+            raise RuntimeError("no deep market observation provider is configured")
         observation = self.provider.observe(config)
-        previous = self._previous_liquidity.get(observation.pool_id)
+        previous_key = f"{observation.chain_id}:{observation.pool_id}"
+        previous = self._previous_liquidity.get(previous_key)
         state = self.signal_engine.build_state(observation, previous_liquidity_usd=previous)
-        self._previous_liquidity[observation.pool_id] = state.liquidity.liquidity_usd
+        self._previous_liquidity[previous_key] = state.liquidity.liquidity_usd
         return self.habitat_encoder.encode(state)
 
 

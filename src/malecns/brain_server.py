@@ -137,7 +137,7 @@ async def handle_client(websocket: Any) -> None:
                         "observedAtMs": 0,
                         "habitats": [],
                         "rawMarketFieldsForwardedToFly": False,
-                        "reason": "configure GRAPH_SUBGRAPH_URL or GRAPH_UNISWAP_SUBGRAPH_ID plus NEUROSWARM_MARKET_HABITATS",
+                        "reason": "configure Graph credentials plus NEUROSWARM_MARKET_HABITATS, or enable DexScreener discovery",
                     }
                 else:
                     environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)

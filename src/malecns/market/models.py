@@ -13,6 +13,102 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class MarketIdentity:
+    """Canonical identity for one chain-specific DEX pair."""
+
+    chain_id: str
+    dex_id: str
+    pair_address: str
+
+    @property
+    def market_id(self) -> str:
+        return f"{self.chain_id}:{self.pair_address}"
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "marketId": self.market_id,
+            "chainId": self.chain_id,
+            "dexId": self.dex_id,
+            "pairAddress": self.pair_address,
+        }
+
+
+@dataclass(frozen=True)
+class MarketCandidate:
+    """A discovered market, before it is selected for an arena round.
+
+    This model deliberately contains discovery facts and provenance only. It
+    has no bullish flag, expected return, target position, or fly preference.
+    """
+
+    identity: MarketIdentity
+    base_token_address: str
+    base_token_symbol: str
+    base_token_name: str
+    quote_token_address: str | None
+    quote_token_symbol: str | None
+    represented_token_address: str
+    liquidity_usd: float
+    volume_5m_usd: float | None
+    volume_1h_usd: float | None
+    volume_24h_usd: float | None
+    buys_5m: int | None
+    sells_5m: int | None
+    buys_1h: int | None
+    sells_1h: int | None
+    price_change_5m: float | None
+    price_change_1h: float | None
+    price_change_24h: float | None
+    pair_created_at_ms: int | None
+    image_url: str | None
+    websites: tuple[dict[str, Any], ...]
+    socials: tuple[dict[str, Any], ...]
+    source: str
+    provenance: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def market_id(self) -> str:
+        return self.identity.market_id
+
+    @property
+    def token_id(self) -> str:
+        return f"{self.identity.chain_id}:{self.represented_token_address}"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            **self.identity.as_dict(),
+            "tokenId": self.token_id,
+            "baseToken": {
+                "address": self.base_token_address,
+                "symbol": self.base_token_symbol,
+                "name": self.base_token_name,
+            },
+            "quoteToken": {
+                "address": self.quote_token_address,
+                "symbol": self.quote_token_symbol,
+            },
+            "representedTokenAddress": self.represented_token_address,
+            "liquidityUsd": self.liquidity_usd,
+            "volume5mUsd": self.volume_5m_usd,
+            "volume1hUsd": self.volume_1h_usd,
+            "volume24hUsd": self.volume_24h_usd,
+            "buys5m": self.buys_5m,
+            "sells5m": self.sells_5m,
+            "buys1h": self.buys_1h,
+            "sells1h": self.sells_1h,
+            "priceChange5m": self.price_change_5m,
+            "priceChange1h": self.price_change_1h,
+            "priceChange24h": self.price_change_24h,
+            "pairCreatedAtMs": self.pair_created_at_ms,
+            "imageUrl": self.image_url,
+            "websites": list(self.websites),
+            "socials": list(self.socials),
+            "source": self.source,
+            "provenance": list(self.provenance),
+        }
+
+
+@dataclass(frozen=True)
 class RawSwapObservation:
     swap_id: str
     timestamp_s: int
@@ -35,6 +131,9 @@ class RawTokenObservation:
     observed_at_ms: int
     pool: dict[str, Any]
     swaps: tuple[RawSwapObservation, ...]
+    chain_id: str = "ethereum"
+    dex_id: str = "uniswap"
+    pair_address: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +233,9 @@ class TokenState:
     lore: LoreState = field(default_factory=LoreState)
     signals: tuple[Signal, ...] = ()
     provenance: tuple[dict[str, Any], ...] = ()
+    chain_id: str = "ethereum"
+    dex_id: str = "uniswap"
+    pair_address: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +243,9 @@ class TokenState:
             "label": self.label,
             "tokenAddress": self.token_address,
             "poolId": self.pool_id,
+            "chainId": self.chain_id,
+            "dexId": self.dex_id,
+            "pairAddress": self.pair_address or self.pool_id,
             "observedAtMs": self.observed_at_ms,
             "market": {
                 "priceInPair": self.market.price_in_pair,

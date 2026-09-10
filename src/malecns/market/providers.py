@@ -23,6 +23,9 @@ class GraphProvider:
         token_address = str(config.get("tokenAddress", "")).strip().lower()
         token_id = str(config.get("id", "")).strip()
         label = str(config.get("label", token_id)).strip()
+        chain_id = str(config.get("chainId", "ethereum")).strip().lower() or "ethereum"
+        dex_id = str(config.get("dexId", "uniswap")).strip().lower() or "uniswap"
+        pair_address = str(config.get("pairAddress", pool_id)).strip().lower() or pool_id
         if not token_id or not pool_id or not token_address:
             raise ValueError("each Graph habitat requires id, poolId, and tokenAddress")
 
@@ -64,6 +67,9 @@ class GraphProvider:
             observed_at_ms=observed_s * 1000,
             pool=dict(pool),
             swaps=swaps,
+            chain_id=chain_id,
+            dex_id=dex_id,
+            pair_address=pair_address,
         )
 
 

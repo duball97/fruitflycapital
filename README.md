@@ -291,14 +291,47 @@ limitations.
 The embodied sensor contract is documented in
 [docs/SENSORY_WORLD.md](docs/SENSORY_WORLD.md).
 
-## Onchain habitat data
+## Onchain market discovery and habitat data
 
-The optional `LIVE GRAPH` feed is deliberately layered:
+The optional live feed is deliberately layered:
 
 ```text
+DexScreener -> MarketUniverse -> eligibility -> locked MarketRound
+            -> selected Ethereum/Uniswap pairs
 GraphProvider -> RawTokenObservation -> TokenSignalEngine -> Signal[]
               -> HabitatEncoder -> physical habitat fields -> fly sensors
 ```
+
+DexScreener now supplies server-side market discovery through the documented
+public API. It decides which markets enter the arena, not which market is
+attractive to a fly: selection scores, rankings, bullish labels, expected
+returns, coordinates, and trading recommendations never enter the habitat or
+brain path. The default round exposes up to eight eligible markets and locks
+them for ten minutes. The Graph remains the deeper swap/pool observer for
+selected Ethereum/Uniswap pairs. See
+[docs/MARKET_SIGNAL_ARCHITECTURE.md](docs/MARKET_SIGNAL_ARCHITECTURE.md).
+
+Enable it in the Python server environment:
+
+```bash
+NEUROSWARM_MARKET_DISCOVERY_ENABLED=true
+NEUROSWARM_MARKET_CHAINS=ethereum
+NEUROSWARM_MARKET_DEX_IDS=uniswap,uniswap-v3
+NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=
+```
+
+The latest/recent profile feeds can seed discovery when they contain the
+configured chain. For a stable project-specific universe, provide explicit
+comma-separated token addresses (or `chainId:address` entries). The discovery
+report can be inspected with:
+
+```bash
+PYTHONPATH=src python -m malecns.market_discovery_cli
+```
+
+If DexScreener is reachable but no compatible Graph observer is configured,
+the report still shows the selected market round while the physical habitat
+feed remains empty. That is intentional: no swap data is fabricated.
 
 `TokenState` keeps market, flow, liquidity, holders, security, social, and
 lore as separate domains. Each derived signal carries its value, normalized

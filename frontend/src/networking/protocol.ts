@@ -113,8 +113,8 @@ export interface BrainOutputMessage {
 export interface EnvironmentUpdateMessage {
   type: 'environment_update'
   environment: {
-    source: 'graph-uniswap'
-    status: 'disabled' | 'ok' | 'error'
+    source: string
+    status: 'disabled' | 'discovery_only' | 'empty' | 'ok' | 'error'
     observedAtMs: number
     habitats: Array<{
       id: string
@@ -141,6 +141,11 @@ export interface EnvironmentUpdateMessage {
       provenance?: Array<Record<string, unknown>>
     }>
     rawMarketFieldsForwardedToFly: false
+    discovery?: {
+      universe?: Record<string, unknown> | null
+      round?: Record<string, unknown>
+      lastError?: string | null
+    }
     reason?: string
     error?: string
   }

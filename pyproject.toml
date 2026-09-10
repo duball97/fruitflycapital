@@ -30,6 +30,7 @@ malecns-report = "malecns.cli:main"
 malecns-download = "malecns.download:main"
 malecns-brain-server = "malecns.brain_server:main"
 malecns-market-report = "malecns.market_cli:main"
+malecns-market-discovery = "malecns.market_discovery_cli:main"
 malecns-realtime-cache = "malecns.realtime_cache:main"
 
 [tool.setuptools.packages.find]

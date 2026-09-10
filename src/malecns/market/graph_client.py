@@ -92,3 +92,22 @@ class GraphClient:
         """
         pools = self.query(document, {"pool": pool_id.lower()}).get("pools", [])
         return pools[0] if pools else None
+
+    def top_pools(self, *, first: int = 100) -> list[dict[str, Any]]:
+        """Discover high-TVL pools for universe bootstrap when supported."""
+
+        document = """
+        query TopPools($first: Int!) {
+          pools(first: $first, orderBy: totalValueLockedUSD, orderDirection: desc) {
+            id
+            token0 { id symbol decimals }
+            token1 { id symbol decimals }
+            totalValueLockedUSD
+            volumeUSD
+            txCount
+            token0Price
+            token1Price
+          }
+        }
+        """
+        return list(self.query(document, {"first": max(1, min(int(first), 1000))}).get("pools", []))

@@ -64,6 +64,9 @@ export interface TokenState {
   label: string
   tokenAddress: string | null
   poolId: string | null
+  chainId?: string
+  dexId?: string
+  pairAddress?: string | null
   observedAtMs: number
   market: MarketState
   flow: FlowState

@@ -7,7 +7,13 @@ market metric has a biological equivalent.
 ## Data flow
 
 ```text
-GraphProvider
+DexScreener market discovery
+    |
+    v
+MarketUniverse -> eligibility -> locked MarketRound
+    |
+    v
+GraphProvider (selected Ethereum/Uniswap pairs)
     |
     v
 RawTokenObservation
@@ -31,11 +37,50 @@ PhysicalHabitatState
 Three.js habitat -> embodied fly sensors -> MaleCNS input
 ```
 
-`GraphProvider` is one provider implementation. The habitat model does not
-depend on The Graph's response shape, and no raw market fields are forwarded
-to a fly. A future DexScreener, holder, security, or social provider should
-produce another `RawTokenObservation` or a domain-specific observation that
-is merged with explicit provenance before encoding.
+DexScreener is the discovery provider, not a fly preference model. It builds
+chain-aware `MarketCandidate` records and selects a small, quality-filtered
+round for exposure. Its internal discovery score is not serialized into
+`TokenState`, `Signal`, `HabitatEncoder`, sensors, motor control, or trading
+logic. The habitat model does not depend on DexScreener's response shape, and
+no raw market fields are forwarded to a fly.
+
+The Graph remains the deeper observation provider for selected Ethereum /
+Uniswap pairs. If it is unavailable, DexScreener discovery can still produce a
+market-universe report, but the live physical habitat feed stays empty rather
+than fabricating swap observations. A future holder, security, social, or lore
+provider should add its own explicit observations and provenance.
+
+## DexScreener discovery
+
+The implementation is in
+[`src/malecns/market/dexscreener_client.py`](../src/malecns/market/dexscreener_client.py)
+and [`src/malecns/market/universe.py`](../src/malecns/market/universe.py). It
+uses the documented server-side public endpoints:
+
+- `/token-profiles/latest/v1` and `/token-profiles/recent-updates/v1` provide
+  provider-supplied token profile seeds;
+- `/tokens/v1/{chainId}/{tokenAddresses}` resolves those seeds to pair
+  candidates in batches of up to 30 addresses;
+- `/token-pairs/v1/{chainId}/{tokenAddress}` is available for explicit
+  per-token lookups.
+
+The profile feeds are a discovery input, not a complete canonical list of all
+Ethereum pools. For a reliable project-specific universe, add explicit seed
+addresses through `NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES`; the provider
+still resolves their actual pairs and statistics. Core and recent targets are
+universe sizes, not numbers of habitats or brains. The default active round is
+eight markets locked for ten minutes.
+
+When a configured Graph client supports the `pools` query, the discovery
+provider also asks it for high-TVL pool IDs and enriches those IDs through
+DexScreener's pair endpoint. This is a bootstrap/indexing path only; Graph
+does not select a fly preference. If that optional bootstrap fails, profile or
+explicit-seed discovery remains available.
+
+Eligibility defaults are explicit configuration: Ethereum, Uniswap / Uniswap
+V3, at least $100,000 liquidity, at least $100,000 24-hour volume, and a pair
+age of at least one hour. They are operational quality filters for arena
+inclusion, not safety, profitability, or biological claims.
 
 ## TokenState
 
@@ -70,7 +115,7 @@ Every `Signal` includes:
 | `valence` | Signed interpretation where one is positive and minus one is negative; magnitude-only signals are neutral. |
 | `confidence` | Confidence that the provider supplied enough data for this value. |
 | `freshness` | Freshness at observation time, currently 1 for a successful poll. |
-| `source` | The provider that produced the observation, currently `the-graph`. |
+| `source` | The provider that produced the observation, such as `the-graph`. |
 | `observedAtMs` | Provider observation time. |
 
 The current signal list is intentionally small and inspectable:
@@ -159,11 +204,12 @@ remains the only route from the habitat to a motor command.
 
 ## Provider roadmap
 
-The next providers should be additive rather than changing the Graph layer:
+The next providers should be additive rather than changing the discovery or
+Graph layers:
 
-1. DexScreener for pair metadata and independently sourced market context;
-2. holder and contract-security providers for their explicit domains;
-3. social and lore providers for narrative observations.
+1. holder and contract-security providers for their explicit domains;
+2. social and lore providers for narrative observations;
+3. richer multi-chain deep observers where a compatible subgraph is configured.
 
 Each addition must preserve source, observed time, confidence, and the
 distinction between observed data, published assumptions, and project
