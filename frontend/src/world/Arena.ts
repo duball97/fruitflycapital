@@ -2,10 +2,14 @@ import { CanvasTexture, Group, Mesh, MeshStandardMaterial, PlaneGeometry, Repeat
 import type { WorldBounds } from '../fly/FlyBody'
 
 const FLOOR_Y = -0.012
+export const PRESENTATION_SCENE_HALF_EXTENT = 3
 
 export const ARENA_BOUNDS: WorldBounds = {
-  min: new Vector3(-1, 0, -1),
-  max: new Vector3(1, 1, 1),
+  // The authored city and the manual game-scene editor both use the full
+  // presentation floor. Keep the simulation and visible map in the same
+  // coordinate system so a drawn region is actually reachable by flies.
+  min: new Vector3(-PRESENTATION_SCENE_HALF_EXTENT, 0, -PRESENTATION_SCENE_HALF_EXTENT),
+  max: new Vector3(PRESENTATION_SCENE_HALF_EXTENT, 1, PRESENTATION_SCENE_HALF_EXTENT),
 }
 
 // The fallback exists only while the city asset is unavailable. The normal
@@ -18,9 +22,9 @@ export class Arena {
     this.group.name = 'Arena'
     const floorTexture = createFloorTexture()
     const floor = new Mesh(
-      // The flight volume remains exactly 2 m x 2 m. This larger presentation
-      // floor prevents the free camera from looking past the room boundary at
-      // the default orbit distance; it does not extend the physical bounds.
+      // The fallback floor covers the same 6m x 6m presentation volume as the
+      // default physics bounds, so the manual game-scene editor has no hidden
+      // unreachable area.
       new PlaneGeometry(6, 6),
       new MeshStandardMaterial({ color: 0x727a74, map: floorTexture, roughness: 0.94, metalness: 0.02 }),
     )

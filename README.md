@@ -157,7 +157,7 @@ cp .env.example .env
 Start the optional brain adapter from the repository root with:
 
 ```bash
-./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
+PYTHONPATH=src ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
 For the live MaleCNS loop, build the small, reproducible runtime cache
@@ -167,7 +167,7 @@ from the official local Feather files before starting the adapter:
 ./.venv312/bin/malecns-realtime-cache \
   --data-dir data/raw \
   --output-dir data/runtime/malecns-realtime-3hop --path-hops 3
-./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
+PYTHONPATH=src ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
 The cache retains exact MaleCNS weighted paths from the mapped sensory IDs to
@@ -360,6 +360,7 @@ NEUROSWARM_MARKET_WORLD_CAPACITY=100
 NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT=12
 CMC_API_KEY=
 CMC_LISTINGS_LIMIT=100
+CMC_ALLOWED_CHAINS=robinhood
 ```
 
 The latest/recent profile feeds can seed discovery when they contain the
@@ -367,7 +368,9 @@ configured chain. For a stable project-specific universe, provide explicit
 comma-separated token addresses (or `chainId:address` entries). The discovery
 configuration includes Base and Robinhood by default; leaving
 `NEUROSWARM_MARKET_DEX_IDS` blank accepts the native DEX venues returned by
-DexScreener on those chains.
+DexScreener on those chains. CoinMarketCap is a global ranked table, so its
+seed input is separately restricted by `CMC_ALLOWED_CHAINS` and defaults to
+Robinhood only; CMC rows from other networks are ignored.
 
 On Render, set these same values in the service environment and redeploy:
 `NEUROSWARM_MARKET_DISCOVERY_ENABLED=true`,

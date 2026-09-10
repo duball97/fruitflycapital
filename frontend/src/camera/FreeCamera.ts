@@ -1,5 +1,6 @@
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { PerspectiveCamera, Vector3 } from 'three'
+import { PRESENTATION_SCENE_HALF_EXTENT } from '../world/Arena'
 
 /** Keep the observer inside the presentation world while preserving orbit. */
 export const FREE_CAMERA_LIMITS = {
@@ -8,8 +9,8 @@ export const FREE_CAMERA_LIMITS = {
   maxPolarAngle: 1.48,
   minDistance: 0.04,
   maxDistance: 3.2,
-  targetLimit: 2.2,
-  sceneHalfExtent: 3,
+  targetLimit: PRESENTATION_SCENE_HALF_EXTENT,
+  sceneHalfExtent: PRESENTATION_SCENE_HALF_EXTENT,
 } as const
 
 export class FreeCamera {
@@ -51,6 +52,28 @@ export class FreeCamera {
     this.focusOffset.setLength(Math.max(this.controls.minDistance * 5, Math.min(this.focusOffset.length(), 0.14)))
     this.controls.target.copy(position)
     this.camera.position.copy(position).add(this.focusOffset)
+    this.controls.update()
+  }
+
+  frameBoundary(points: readonly Vector3[]) {
+    if (points.length < 3) return
+    const center = points.reduce((sum, point) => sum.add(point), new Vector3()).multiplyScalar(1 / points.length)
+    const min = new Vector3(Infinity, 0, Infinity)
+    const max = new Vector3(-Infinity, 0, -Infinity)
+    points.forEach((point) => {
+      min.x = Math.min(min.x, point.x)
+      min.z = Math.min(min.z, point.z)
+      max.x = Math.max(max.x, point.x)
+      max.z = Math.max(max.z, point.z)
+    })
+    const radius = Math.max(0.12, Math.max(max.x - min.x, max.z - min.z) * 0.5)
+    const distance = Math.max(this.controls.minDistance * 4, Math.min(this.controls.maxDistance * 0.82, radius / Math.tan((this.camera.fov * Math.PI / 180) / 2) * 1.35))
+    const direction = this.camera.position.clone().sub(this.controls.target)
+    if (direction.lengthSq() < 0.001) direction.set(0.7, 0.55, 0.7)
+    direction.normalize().multiplyScalar(distance)
+    this.controls.target.set(center.x, Math.max(FREE_CAMERA_LIMITS.floorY + 0.03, center.y + 0.02), center.z)
+    this.camera.position.copy(this.controls.target).add(direction)
+    this.camera.position.y = Math.max(FREE_CAMERA_LIMITS.floorY + 0.06, this.camera.position.y)
     this.controls.update()
   }
 

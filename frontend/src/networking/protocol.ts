@@ -220,6 +220,7 @@ export interface EnvironmentUpdateMessage {
     habitats: Array<{
       id: string
       label: string
+      imageUrl?: string | null
       physicalRadiusM: number
       resourcePileRadiusM: number
       visualMotionIntensity: number

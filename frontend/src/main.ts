@@ -1,5 +1,5 @@
 import './style.css'
-import { Object3D, Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
+import { BufferGeometry, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, Object3D, Plane, Points, PointsMaterial, Raycaster, Scene, Shape, ShapeGeometry, Vector2, Vector3, WebGLRenderer } from 'three'
 import { Environment } from './world/Environment'
 import { World } from './world/World'
 import { BrainSocket } from './networking/BrainSocket'
@@ -13,13 +13,15 @@ import { SideCamera } from './camera/SideCamera'
 import { FlightLogger } from './networking/FlightLog'
 import { BODIES_PER_BRAIN, SWARM_SIZE, VISUAL_FLY_COUNT } from './fly/SwarmConfig'
 import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProcessing'
-import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
 import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 import type { TokenState } from './world/TokenState'
 import { SwarmObserver } from './swarm/SwarmObserver'
 import { CITY_SCENE_LIMITS, type CitySceneTuning } from './world/CityBackdrop'
+import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
+import { TradeExecutionBoundary } from './trading/TradeExecutionBoundary'
+import type { BehaviorTradeIntent } from './networking/protocol'
 
 // The public experience is intentionally autonomous. Manual actuation remains
 // available only inside the controller module for isolated developer tests; it
@@ -29,11 +31,116 @@ if (!app) throw new Error('Missing #app root')
 
 const canvas = document.createElement('canvas')
 canvas.className = 'world-canvas'
+canvas.style.touchAction = 'none'
 app.append(canvas)
 
-// Keep the initial empty room out of view. The first frame is shown only after
-// the canonical Flybody scene is ready and the physics loop has produced a
-// real motion sample, so loading never looks like a broken/empty simulation.
+// Provider logos can be loaded by the browser as normal DOM images even when
+// the provider does not opt into WebGL canvas CORS. Keep the Three.js logo as
+// the depth-aware fallback, and place the real image above it when available.
+// This makes logos visible without turning a failed cross-origin texture load
+// into a blank habitat marker.
+const tokenLogoOverlay = document.createElement('div')
+tokenLogoOverlay.className = 'token-logo-overlay'
+app.append(tokenLogoOverlay)
+const tokenLogoElements = new Map<string, { element: HTMLImageElement; source: string }>()
+const logoWorldPosition = new Vector3()
+const logoEdgePosition = new Vector3()
+const drawOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+drawOverlay.classList.add('free-draw-overlay')
+drawOverlay.setAttribute('aria-hidden', 'true')
+drawOverlay.setAttribute('preserveAspectRatio', 'none')
+const drawPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+drawPath.classList.add('free-draw-path')
+drawOverlay.append(drawPath)
+app.append(drawOverlay)
+let draftScreenPoints: Array<[number, number]> = []
+
+function resizeDrawOverlay() {
+  drawOverlay.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`)
+}
+
+resizeDrawOverlay()
+window.addEventListener('resize', resizeDrawOverlay)
+
+function updateTokenLogoOverlay() {
+  const visibleIds = new Set<string>()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  for (const habitat of environment.habitats) {
+    const source = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
+    if (!source) continue
+    const id = habitat.state.id
+    visibleIds.add(id)
+    let entry = tokenLogoElements.get(id)
+    if (!entry) {
+      const element = document.createElement('img')
+      element.className = 'token-logo-image'
+      element.alt = `${habitat.state.label} logo`
+      element.draggable = false
+      element.loading = 'eager'
+      element.referrerPolicy = 'no-referrer'
+      element.addEventListener('error', () => { element.hidden = true })
+      tokenLogoOverlay.append(element)
+      entry = { element, source: '' }
+      tokenLogoElements.set(id, entry)
+    }
+    if (entry.source !== source) {
+      entry.source = source
+      entry.element.hidden = false
+      entry.element.src = normalizeImageUrl(source)
+    }
+    logoWorldPosition.copy(habitat.group.position).y += 0.19
+    logoEdgePosition.copy(logoWorldPosition).x += Math.max(0.04, habitat.properties.physicalRadiusM * 0.62)
+    logoWorldPosition.project(activeCamera)
+    logoEdgePosition.project(activeCamera)
+    const onScreen = logoWorldPosition.z >= -1 && logoWorldPosition.z <= 1
+      && logoWorldPosition.x >= -1.15 && logoWorldPosition.x <= 1.15
+      && logoWorldPosition.y >= -1.15 && logoWorldPosition.y <= 1.15
+    if (!onScreen) {
+      entry.element.hidden = true
+      continue
+    }
+    const centerX = (logoWorldPosition.x * 0.5 + 0.5) * viewportWidth
+    const centerY = (-logoWorldPosition.y * 0.5 + 0.5) * viewportHeight
+    const projectedRadius = Math.abs(logoEdgePosition.x - logoWorldPosition.x) * 0.5 * viewportWidth
+    const size = clamp(projectedRadius * 2, 22, 74)
+    entry.element.hidden = false
+    entry.element.style.width = `${size}px`
+    entry.element.style.height = `${size}px`
+    entry.element.style.left = `${centerX}px`
+    entry.element.style.top = `${centerY}px`
+  }
+  for (const [id, entry] of tokenLogoElements) {
+    if (!visibleIds.has(id)) entry.element.hidden = true
+  }
+}
+
+function imageUrlFromProvenance(provenance: Array<Record<string, unknown>>) {
+  const imageUrl = provenance.find((item) => typeof item.imageUrl === 'string')?.imageUrl
+  return typeof imageUrl === 'string' && imageUrl.length > 0 ? imageUrl : null
+}
+
+function normalizeImageUrl(url: string) {
+  if (url.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${url.slice('ipfs://'.length)}`
+  if (url.startsWith('ipns://')) return `https://ipfs.io/ipns/${url.slice('ipns://'.length)}`
+  return url
+}
+
+function updateDraftScreenPath() {
+  if (draftScreenPoints.length === 0) {
+    drawPath.setAttribute('d', '')
+    return
+  }
+  const [first, ...rest] = draftScreenPoints
+  const d = [`M ${first![0]} ${first![1]}`, ...rest.map(([x, y]) => `L ${x} ${y}`)]
+  if (draftBoundaryClosed) d.push('Z')
+  drawPath.setAttribute('d', d.join(' '))
+}
+
+// Keep the initial empty room out of view. The first frame is shown after the
+// canonical Flybody scene is ready. Brain connection and motion are runtime
+// states, not asset-loading prerequisites, so a quiet/late brain feed must not
+// leave the entire app behind the loading screen.
 const startupScreen = document.createElement('div')
 startupScreen.className = 'startup-screen'
 startupScreen.innerHTML = `
@@ -47,6 +154,7 @@ startupScreen.innerHTML = `
 `
 app.append(startupScreen)
 const startupMessage = startupScreen.querySelector<HTMLDivElement>('.startup-message')!
+const startupDetail = startupScreen.querySelector<HTMLDivElement>('.startup-detail')!
 const startupProgress = startupScreen.querySelector<HTMLSpanElement>('.startup-progress span')!
 
 const hud = document.createElement('div')
@@ -61,6 +169,72 @@ app.append(hud)
 const demoStatus = document.createElement('div')
 demoStatus.className = 'demo-status'
 app.append(demoStatus)
+
+const intentLogPanel = document.createElement('section')
+intentLogPanel.className = 'intent-log-panel'
+intentLogPanel.setAttribute('aria-label', 'Fly buy and sell intent log')
+intentLogPanel.innerHTML = `
+  <div class="intent-log-header">
+    <div>
+      <div class="intent-log-kicker">NEUROSWARM · BEHAVIOR LOG</div>
+      <div class="intent-log-title">BUY / SELL INTENTS</div>
+    </div>
+    <div class="intent-log-mode">PROPOSAL ONLY<br>NO EXECUTION</div>
+  </div>
+  <div class="intent-log-summary"><span class="intent-buy-count">BUY 0</span><span class="intent-sell-count">SELL 0</span><span class="intent-log-live">LIVE</span></div>
+  <div class="intent-log-motion">FLIGHT · CRUISE 0 · DESCENDING 0 · LANDED 0 · CLOSEST —</div>
+  <div class="intent-log-list"></div>
+`
+app.append(intentLogPanel)
+const intentLogList = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-list')!
+const intentBuyCount = intentLogPanel.querySelector<HTMLSpanElement>('.intent-buy-count')!
+const intentSellCount = intentLogPanel.querySelector<HTMLSpanElement>('.intent-sell-count')!
+const intentLogLive = intentLogPanel.querySelector<HTMLSpanElement>('.intent-log-live')!
+const intentLogMotion = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-motion')!
+const intentHistory: BehaviorTradeIntent[] = []
+let buyIntentCount = 0
+let sellIntentCount = 0
+
+function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
+  for (const intent of intents) {
+    const proposal = tradeExecutionBoundary.prepare(intent)
+    intentHistory.push(proposal.intent)
+    if (intent.side === 'buy') buyIntentCount += 1
+    else sellIntentCount += 1
+  }
+  if (intents.length > 0) {
+    while (intentHistory.length > 200) intentHistory.shift()
+    renderIntentLog()
+  }
+}
+
+function renderIntentLog() {
+  intentBuyCount.textContent = `BUY ${buyIntentCount}`
+  intentSellCount.textContent = `SELL ${sellIntentCount}`
+  intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
+  intentLogList.replaceChildren()
+  if (intentHistory.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'intent-log-empty'
+    empty.textContent = 'No intents yet · contact + dwell creates BUY · departure creates SELL'
+    intentLogList.append(empty)
+    return
+  }
+  for (const intent of intentHistory.slice(-40).reverse()) {
+    const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
+    const row = document.createElement('div')
+    row.className = `intent-log-row ${intent.side}`
+    const time = new Date(intent.observedAtMs).toLocaleTimeString([], { hour12: false })
+    const token = habitat?.state.label || intent.habitatId
+    const details = `${intent.reason.toUpperCase()} · dwell ${intent.metrics.dwellSeconds.toFixed(2)}s · ${intent.metrics.distanceM.toFixed(3)}m · confidence ${Math.round(intent.confidence * 100)}%`
+    row.innerHTML = `<div class="intent-log-row-top"><strong></strong><span></span><em>PROPOSAL</em></div><div class="intent-log-token"></div><div class="intent-log-details"></div>`
+    row.querySelector('strong')!.textContent = `${intent.side.toUpperCase()} INTENT`
+    row.querySelector('span')!.textContent = `${time} · ${intent.flyId}`
+    row.querySelector('.intent-log-token')!.textContent = token
+    row.querySelector('.intent-log-details')!.textContent = details
+    intentLogList.append(row)
+  }
+}
 
 const status = document.createElement('div')
 status.className = 'socket-status debug-only'
@@ -91,6 +265,8 @@ app.append(populationStatus)
 const brainUrl = import.meta.env.VITE_BRAIN_WS_URL ?? 'ws://127.0.0.1:8765'
 const brainSocket = new BrainSocket(brainUrl)
 const flightLog = new FlightLogger()
+const tradeExecutionBoundary = new TradeExecutionBoundary()
+renderIntentLog()
 const brainUpdateHz = Math.max(1, Number(import.meta.env.VITE_BRAIN_UPDATE_HZ ?? 2) || 2)
 let selectedIndex = 0
 let lastMarketUiStatus = ''
@@ -108,17 +284,59 @@ visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
 // embodiments and must never become extra portfolio votes or trade events.
 const swarmObserver = new SwarmObserver(SWARM_SIZE)
 
+function updateFlightMotionStatus() {
+  const cruise = agents.filter((agent) => agent.landingState === 'cruise').length
+  const descending = agents.filter((agent) => agent.landingState === 'descending').length
+  const landed = agents.filter((agent) => agent.landingState === 'landed').length
+  const ground = agents.filter((agent) => agent.body.contact.ground).length
+  const averageAltitude = agents.reduce((total, agent) => total + agent.body.position.y, 0) / Math.max(1, agents.length)
+  const averageSpeed = agents.reduce((total, agent) => total + agent.body.velocity.length(), 0) / Math.max(1, agents.length)
+  const maxOdor = agents.reduce((maximum, agent) => Math.max(maximum, agent.sensors.odor.concentration), 0)
+  let closest = Number.POSITIVE_INFINITY
+  for (const agent of agents) {
+    for (const habitat of environment.habitats) {
+      const distance = agent.body.position.distanceTo(habitat.group.position)
+      if (Number.isFinite(distance)) closest = Math.min(closest, distance)
+    }
+  }
+  intentLogMotion.textContent = `FLIGHT · CRUISE ${cruise} · DESCENDING ${descending} · LANDED ${landed} · GROUND ${ground} · ALT ${averageAltitude.toFixed(2)}m · SPEED ${averageSpeed.toFixed(2)}m/s · ODOR ${maxOdor.toFixed(2)} · CLOSEST ${Number.isFinite(closest) ? `${closest.toFixed(3)}m` : '—'}`
+}
+updateFlightMotionStatus()
+
 const bodyStatus = document.createElement('div')
 bodyStatus.className = 'body-status debug-only'
 bodyStatus.textContent = 'BODY · loading canonical Flybody XML + OBJ assets'
 app.append(bodyStatus)
 let canonicalBodiesReady = false
-void Promise.all(visualRenderers.map((flyRenderer) => flyRenderer.ready)).then(() => {
-  const firstRenderer = flyRenderers[0]
-  const allCanonical = visualRenderers.every((flyRenderer) => flyRenderer.assetStatus === 'canonical')
-  bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'canonical Flybody asset error · see console'} · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
-  canonicalBodiesReady = true
+let canonicalReadyCount = 0
+let canonicalFinishedCount = 0
+// Do not make the product view wait for 80 independent scene-graph clones.
+// The loader shares the expensive template, but cloning every visual follower
+// can still take several frames on a browser. One canonical body is enough to
+// release the scene; the rest can become visible as they finish.
+visualRenderers.forEach((flyRenderer) => {
+  void flyRenderer.ready.then(() => {
+    canonicalFinishedCount += 1
+    if (flyRenderer.assetStatus === 'canonical') canonicalReadyCount += 1
+    const firstRenderer = flyRenderers[0]
+    if (!canonicalBodiesReady && flyRenderer.assetStatus === 'canonical') {
+      canonicalBodiesReady = true
+      bodyStatus.textContent = `BODY · canonical Flybody ready · ${firstRenderer?.meshCount ?? flyRenderer.meshCount} XML geoms · loading remaining copies…`
+    }
+    if (canonicalFinishedCount === visualRenderers.length) {
+      const allCanonical = canonicalReadyCount === visualRenderers.length
+      bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'canonical Flybody asset error · see console'} · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
+    }
+  })
 })
+// If an asset request is delayed by the local dev server, never block the
+// playable scene indefinitely. The lightweight renderer fallback is already
+// visible and the canonical mesh will replace it whenever it arrives.
+window.setTimeout(() => {
+  if (canonicalBodiesReady) return
+  canonicalBodiesReady = true
+  bodyStatus.textContent = `BODY · loading canonical Flybody in background · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
+}, 3500)
 
 const debug = new DebugRenderer(app, 'FLY #001', 'right')
 let debugPanelVisible = false
@@ -127,8 +345,6 @@ world.add(debug.group)
 
 const brainActivityPanel = new BrainActivityPanel(app)
 
-const trails = new FlyTrails(agents)
-world.add(trails.mesh)
 
 const free = new FreeCamera(renderer.domElement)
 const follow = new FollowCamera()
@@ -208,13 +424,24 @@ sceneControls.className = 'scene-controls'
 sceneControls.setAttribute('aria-label', 'Scene position controls')
 sceneControls.innerHTML = `
   <div class="scene-controls-heading">SCENE POSITION</div>
-  <div class="scene-controls-note">City only · saved automatically</div>
+  <div class="scene-controls-note">City only · saved automatically · camera locked to 6m</div>
   <div class="scene-control-rows"></div>
   <button class="scene-reset" type="button">RESET CITY POSITION</button>
+  <div class="scene-control-divider"></div>
+  <div class="scene-controls-heading">GAME SCENE EDITOR</div>
+  <div class="scene-controls-note">Draw the complete playable scene. Habitats and flies stay inside it.</div>
+  <div class="habitat-size-row"><span>ALL HABITATS</span><input type="range" min="0.3" max="1.35" step="0.05"><output></output></div>
+  <div class="boundary-actions"><button class="boundary-draw" type="button">DRAW GAME SCENE</button><button class="boundary-clear" type="button">CLEAR SCENE</button></div>
+  <div class="boundary-status">No custom fly area · default arena active</div>
 `
 app.append(sceneControls)
 const sceneControlRows = sceneControls.querySelector<HTMLDivElement>('.scene-control-rows')!
 const sceneReset = sceneControls.querySelector<HTMLButtonElement>('.scene-reset')!
+const habitatSizeInput = sceneControls.querySelector<HTMLInputElement>('.habitat-size-row input')!
+const habitatSizeOutput = sceneControls.querySelector<HTMLOutputElement>('.habitat-size-row output')!
+const boundaryDrawButton = sceneControls.querySelector<HTMLButtonElement>('.boundary-draw')!
+const boundaryClearButton = sceneControls.querySelector<HTMLButtonElement>('.boundary-clear')!
+const boundaryStatus = sceneControls.querySelector<HTMLDivElement>('.boundary-status')!
 const sceneControlConfig: Array<{
   key: keyof CitySceneTuning
   label: string
@@ -269,8 +496,219 @@ function renderSceneControls() {
     input.value = String(value)
     output.value = item.display(value)
   }
+  const habitatScale = environment.getHabitatVisualScale()
+  habitatSizeInput.value = String(habitatScale)
+  habitatSizeOutput.value = `${habitatScale.toFixed(2)}×`
 }
 renderSceneControls()
+
+habitatSizeInput.addEventListener('input', () => {
+  environment.setHabitatVisualScale(Number(habitatSizeInput.value))
+  renderSceneControls()
+})
+
+// The editor draws in the same X/Z metre space used by the fly physics. The
+// result is both a visible floor boundary and a real containment boundary for
+// primary and follower bodies, so the tool changes the world rather than just
+// decorating it.
+const boundaryStorageKey = 'ffc.gameSceneBoundary.v2'
+const boundaryPlane = new Plane(new Vector3(0, 1, 0), 0)
+const boundaryRaycaster = new Raycaster()
+const boundaryPointer = new Vector2()
+const boundaryGroup = new Object3D()
+boundaryGroup.name = 'ManualFlyBoundary'
+scene.add(boundaryGroup)
+let boundaryPoints = readBoundaryPoints()
+let draftBoundary: Vector3[] = []
+let draftBoundaryClosed = false
+let drawingBoundary = false
+let boundaryLine: Line | null = null
+let boundaryFill: Mesh | null = null
+let boundaryDots: Points | null = null
+const DRAW_HALF_EXTENT = PRESENTATION_SCENE_HALF_EXTENT - 0.06
+world.setFlyBoundary(boundaryPoints)
+environment.setWorldBoundary(boundaryPoints)
+
+function readBoundaryPoints() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(boundaryStorageKey) ?? 'null') as Array<{ x?: number; z?: number }> | null
+    if (!Array.isArray(saved) || saved.length < 3) return []
+    return saved
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.z))
+      .map((point) => new Vector3(clamp(point.x!, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT), 0, clamp(point.z!, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT)))
+  } catch {
+    return []
+  }
+}
+
+function persistBoundary() {
+  window.localStorage.setItem(boundaryStorageKey, JSON.stringify(boundaryPoints.map((point) => ({ x: point.x, z: point.z }))))
+}
+
+function setBoundary(points: readonly Vector3[]) {
+  boundaryPoints = points.map((point) => new Vector3(clamp(point.x, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT), 0, clamp(point.z, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT)))
+  draftBoundary = []
+  draftBoundaryClosed = false
+  draftScreenPoints = []
+  updateDraftScreenPath()
+  persistBoundary()
+  world.setFlyBoundary(boundaryPoints)
+  environment.setWorldBoundary(boundaryPoints)
+  rebuildBoundaryVisual(boundaryPoints, true)
+  cameraIndex = 0
+  free.frameBoundary(boundaryPoints)
+  renderBoundaryStatus()
+}
+
+function clearBoundary() {
+  boundaryPoints = []
+  draftBoundary = []
+  draftBoundaryClosed = false
+  draftScreenPoints = []
+  updateDraftScreenPath()
+  window.localStorage.removeItem(boundaryStorageKey)
+  world.setFlyBoundary(null)
+  environment.setWorldBoundary(null)
+  rebuildBoundaryVisual([])
+  renderBoundaryStatus()
+}
+
+function rebuildBoundaryVisual(points: readonly Vector3[], closed = false) {
+  if (boundaryLine) {
+    boundaryGroup.remove(boundaryLine)
+    boundaryLine.geometry.dispose()
+    ;(boundaryLine.material as LineBasicMaterial).dispose()
+    boundaryLine = null
+  }
+  if (boundaryFill) {
+    boundaryGroup.remove(boundaryFill)
+    boundaryFill.geometry.dispose()
+    ;(boundaryFill.material as MeshBasicMaterial).dispose()
+    boundaryFill = null
+  }
+  if (boundaryDots) {
+    boundaryGroup.remove(boundaryDots)
+    boundaryDots.geometry.dispose()
+    ;(boundaryDots.material as PointsMaterial).dispose()
+    boundaryDots = null
+  }
+  const dotPoints = points.map((point) => new Vector3(point.x, 0.02, point.z))
+  boundaryDots = new Points(new BufferGeometry().setFromPoints(dotPoints), new PointsMaterial({ color: 0xd9fff5, size: 0.026, sizeAttenuation: false, transparent: true, opacity: 1, depthTest: false }))
+  boundaryDots.name = 'ManualFlyBoundaryPoints'
+  boundaryDots.renderOrder = 31
+  boundaryGroup.add(boundaryDots)
+  if (points.length < 2) return
+  const linePoints = points.map((point) => new Vector3(point.x, 0.014, point.z))
+  if (closed && points.length >= 3) linePoints.push(linePoints[0]!.clone())
+  boundaryLine = new Line(new BufferGeometry().setFromPoints(linePoints), new LineBasicMaterial({ color: 0x8ffff0, transparent: true, opacity: 1, depthTest: false }))
+  boundaryLine.name = 'ManualFlyBoundaryOutline'
+  boundaryLine.renderOrder = 30
+  boundaryGroup.add(boundaryLine)
+  if (!closed || points.length < 3) return
+  const shape = new Shape()
+  shape.moveTo(points[0]!.x, points[0]!.z)
+  for (const point of points.slice(1)) shape.lineTo(point.x, point.z)
+  shape.closePath()
+  boundaryFill = new Mesh(new ShapeGeometry(shape), new MeshBasicMaterial({ color: 0x38d9b2, transparent: true, opacity: 0.08, depthWrite: false, depthTest: false, side: 2 }))
+  boundaryFill.name = 'ManualFlyBoundaryFill'
+  boundaryFill.rotation.x = Math.PI / 2
+  boundaryFill.position.y = 0.011
+  boundaryFill.renderOrder = 29
+  boundaryGroup.add(boundaryFill)
+}
+
+function renderBoundaryStatus() {
+  boundaryStatus.textContent = boundaryPoints.length >= 3
+    ? `Game scene boundary active · ${boundaryPoints.length} points · saved`
+    : 'No game scene boundary · default scene active'
+}
+
+function groundPointFromEvent(event: PointerEvent) {
+  const bounds = canvas.getBoundingClientRect()
+  boundaryPointer.set(
+    ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+    -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+  )
+  activeCamera.updateMatrixWorld(true)
+  boundaryRaycaster.setFromCamera(boundaryPointer, activeCamera)
+  const point = new Vector3()
+  return boundaryRaycaster.ray.intersectPlane(boundaryPlane, point)
+}
+
+function closeDraftIfAtStart(event: PointerEvent, point: Vector3 | null) {
+  const start = draftBoundary[0]
+  const startScreen = draftScreenPoints[0]
+  if (draftBoundaryClosed || !start || !startScreen || draftBoundary.length < 3 || !point) return false
+  const screenDistance = Math.hypot(event.clientX - startScreen[0], event.clientY - startScreen[1])
+  if (screenDistance > 24 && point.distanceTo(start) > 0.065) return false
+  // Snap both representations to the exact first point. This prevents a
+  // small final gap when the browser's last pointermove is not delivered
+  // before pointerup.
+  draftBoundary[draftBoundary.length - 1] = start.clone()
+  draftScreenPoints[draftScreenPoints.length - 1] = [startScreen[0], startScreen[1]]
+  draftBoundaryClosed = true
+  rebuildBoundaryVisual(draftBoundary, true)
+  updateDraftScreenPath()
+  boundaryStatus.textContent = 'Line closed exactly at its start · release to save this game scene.'
+  return true
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function setBoundaryDrawing(enabled: boolean) {
+  drawingBoundary = enabled
+  if (!enabled && draftBoundaryClosed) {
+    draftBoundary = []
+    draftBoundaryClosed = false
+    draftScreenPoints = []
+  }
+  boundaryDrawButton.textContent = enabled ? 'CLOSE & USE REGION' : 'DRAW GAME SCENE'
+  boundaryDrawButton.setAttribute('aria-pressed', String(enabled))
+  canvas.classList.toggle('drawing-boundary', enabled)
+  if (!enabled) rebuildBoundaryVisual(draftBoundary.length >= 2 ? draftBoundary : boundaryPoints, draftBoundary.length >= 2 ? draftBoundaryClosed : true)
+  updateDraftScreenPath()
+  boundaryStatus.textContent = enabled
+    ? 'Draw one line, return to its start, then release to close and save.'
+    : boundaryPoints.length >= 3
+      ? `Game scene boundary active · ${boundaryPoints.length} points · saved`
+      : draftBoundary.length >= 2
+        ? 'Line still open · drag again to continue, then return to its start.'
+        : 'No game scene boundary · default scene active'
+}
+
+function closeDraftManually() {
+  if (!drawingBoundary || draftBoundary.length < 3) {
+    boundaryStatus.textContent = 'Draw at least three points before closing the region.'
+    return
+  }
+  const start = draftBoundary[0]
+  const startScreen = draftScreenPoints[0]
+  if (!start || !startScreen) return
+  draftBoundary[draftBoundary.length - 1] = start.clone()
+  draftScreenPoints[draftScreenPoints.length - 1] = [startScreen[0], startScreen[1]]
+  draftBoundaryClosed = true
+  rebuildBoundaryVisual(draftBoundary, true)
+  updateDraftScreenPath()
+  setBoundary(draftBoundary)
+  setBoundaryDrawing(false)
+}
+
+boundaryDrawButton.addEventListener('click', () => {
+  if (drawingBoundary) {
+    closeDraftManually()
+    return
+  }
+  closeTokenPopup()
+  setBoundaryDrawing(true)
+})
+boundaryClearButton.addEventListener('click', () => {
+  setBoundaryDrawing(false)
+  clearBoundary()
+})
+rebuildBoundaryVisual(boundaryPoints, true)
+renderBoundaryStatus()
 
 const tokenPopup = document.createElement('div')
 tokenPopup.className = 'token-popup-backdrop'
@@ -372,9 +810,52 @@ const tokenPicker = new Raycaster()
 const tokenPointer = new Vector2()
 let tokenPointerDown: { x: number; y: number } | null = null
 canvas.addEventListener('pointerdown', (event) => {
+  if (drawingBoundary) {
+    const point = groundPointFromEvent(event)
+    if (point) {
+      const next = new Vector3(clamp(point.x, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT), 0, clamp(point.z, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT))
+      if (draftBoundary.length === 0 || draftBoundaryClosed) {
+        draftBoundary = [next]
+        draftBoundaryClosed = false
+        draftScreenPoints = [[event.clientX, event.clientY]]
+      } else if (draftBoundary[draftBoundary.length - 1]!.distanceTo(next) >= 0.005) {
+        draftBoundary.push(next)
+        draftScreenPoints.push([event.clientX, event.clientY])
+      }
+      rebuildBoundaryVisual(draftBoundary, draftBoundaryClosed)
+      updateDraftScreenPath()
+      canvas.setPointerCapture(event.pointerId)
+    }
+    event.preventDefault()
+    return
+  }
   tokenPointerDown = { x: event.clientX, y: event.clientY }
 })
+canvas.addEventListener('pointermove', (event) => {
+  if (!drawingBoundary || draftBoundary.length === 0) return
+  const point = groundPointFromEvent(event)
+  const next = point && new Vector3(clamp(point.x, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT), 0, clamp(point.z, -DRAW_HALF_EXTENT, DRAW_HALF_EXTENT))
+  const last = draftBoundary[draftBoundary.length - 1]
+  if (!next || !last) return
+  if (closeDraftIfAtStart(event, next)) return
+  if (next.distanceTo(last) < 0.005) return
+  draftBoundary.push(next)
+  draftScreenPoints.push([event.clientX, event.clientY])
+  rebuildBoundaryVisual(draftBoundary, false)
+  updateDraftScreenPath()
+})
 canvas.addEventListener('pointerup', (event) => {
+  if (drawingBoundary) {
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+    closeDraftIfAtStart(event, groundPointFromEvent(event))
+    if (draftBoundaryClosed && draftBoundary.length >= 3) {
+      setBoundary(draftBoundary)
+      setBoundaryDrawing(false)
+    } else {
+      boundaryStatus.textContent = 'Line still open · return to the starting point before releasing to save.'
+    }
+    return
+  }
   if (!tokenPointerDown) return
   const moved = Math.hypot(event.clientX - tokenPointerDown.x, event.clientY - tokenPointerDown.y)
   tokenPointerDown = null
@@ -389,6 +870,16 @@ canvas.addEventListener('pointerup', (event) => {
   const habitatId = hit ? habitatIdFromObject(hit.object) : null
   const habitat = habitatId ? environment.habitats.find((candidate) => candidate.state.id === habitatId) : undefined
   if (habitat) openTokenPopup(habitat)
+})
+canvas.addEventListener('pointercancel', (event) => {
+  if (!drawingBoundary) return
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+  if (draftBoundaryClosed && draftBoundary.length >= 3) {
+    setBoundary(draftBoundary)
+    setBoundaryDrawing(false)
+  } else {
+    boundaryStatus.textContent = 'Line still open · return to the starting point before releasing to save.'
+  }
 })
 
 function habitatIdFromObject(object: Object3D) {
@@ -431,6 +922,7 @@ window.addEventListener('resize', resize)
 
 brainSocket.onStatusChange((next) => {
   status.innerHTML = `<span class="status-dot ${next}"></span> brain socket ${next} <span class="socket-url">${brainUrl}</span>`
+  intentLogLive.textContent = next === 'connected' ? 'LIVE' : 'WAITING'
   if (next === 'connected') brainSocket.requestEnvironment()
 })
 brainSocket.connect()
@@ -443,6 +935,7 @@ let previous = clock
 let nextLogAt = 0
 let nextCausalUiAt = 0
 let nextSwarmTelemetryAt = 0
+let nextIntentMotionUiAt = 0
 let startupReleased = false
 let nextPerfUiAt = 0
 function animate(now: number) {
@@ -451,8 +944,11 @@ function animate(now: number) {
   world.update(delta, (position) => environment.habitatContactAt(position).contact)
   followers.forEach((follower) => follower.update(delta, world.elapsedSeconds))
   environment.updateVisuals(world.elapsedSeconds)
-  trails.update(agents, selectedIndex, delta)
-  updateStartupGate(delta)
+  updateStartupGate()
+  if (world.elapsedSeconds >= nextIntentMotionUiAt) {
+    updateFlightMotionStatus()
+    nextIntentMotionUiAt += 0.25
+  }
   const marketEnvironment = brainSocket.environmentUpdate()
   if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
   updateMarketStatus(marketEnvironment)
@@ -469,6 +965,7 @@ function animate(now: number) {
 
   if (world.elapsedSeconds >= nextSwarmTelemetryAt) {
     const behaviorIntents = swarmObserver.drainIntents()
+    recordBehaviorIntents(behaviorIntents)
     brainSocket.sendSwarmTelemetry({
       type: 'swarm_telemetry',
       timestampMs: Date.now(),
@@ -552,6 +1049,7 @@ function animate(now: number) {
     : 'WAITING FOR TOKEN DATA'
   const brainLabel = brainSocket.getStatus() === 'connected' ? 'AUTONOMOUS FLY BRAINS' : 'CONNECTING TO FLY BRAINS'
   demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS</span><span>${marketLabel} · ${brainLabel}</span>`
+  updateTokenLogoOverlay()
   pipeline.render(delta, activeCamera)
   if (debugPanelVisible && world.elapsedSeconds >= nextPerfUiAt) {
     const lodCounts = visualRenderers.reduce((counts, flyRenderer) => {
@@ -566,23 +1064,30 @@ function animate(now: number) {
   requestAnimationFrame(animate)
 }
 
-function updateStartupGate(delta: number) {
+function updateStartupGate() {
   if (startupReleased) return
   const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
   if (!canonicalBodiesReady) {
     startupMessage.textContent = 'LOADING CANONICAL FLYBODY'
+    startupDetail.textContent = 'Preparing the independent agents…'
     startupProgress.style.width = '42%'
-  } else if (movingAgents < Math.max(1, Math.ceil(SWARM_SIZE * 0.5))) {
-    startupMessage.textContent = 'STARTING SWARM MOTION'
-    startupProgress.style.width = '78%'
+  } else if (brainSocket.getStatus() !== 'connected') {
+    startupMessage.textContent = 'SCENE READY'
+    startupDetail.textContent = 'Waiting for the autonomous brain feed…'
+    startupProgress.style.width = '100%'
+  } else if (movingAgents === 0) {
+    startupMessage.textContent = 'SCENE READY'
+    startupDetail.textContent = 'Brains connected · waiting for the first motor update…'
+    startupProgress.style.width = '100%'
   } else {
     startupMessage.textContent = 'SWARM IN MOTION'
+    startupDetail.textContent = 'Autonomous flight feed active.'
     startupProgress.style.width = '100%'
   }
 
-  // There is deliberately no preview timeout. The public scene opens only
-  // after the live MaleCNS path has produced real physical movement.
-  if (canonicalBodiesReady && brainSocket.getStatus() === 'connected' && movingAgents >= Math.max(1, Math.ceil(SWARM_SIZE * 0.5))) {
+  // Asset readiness controls the loading screen. Socket readiness and physical
+  // motion remain visible in the scene/HUD, but neither can block the app.
+  if (canonicalBodiesReady) {
     startupReleased = true
     startupScreen.classList.add('is-ready')
     window.setTimeout(() => startupScreen.remove(), 500)

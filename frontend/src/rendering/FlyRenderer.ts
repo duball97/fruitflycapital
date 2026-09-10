@@ -43,9 +43,11 @@ export class FlyRenderer {
     this.leftWingFallback = this.createFallbackWing()
     this.rightWingFallback = this.createFallbackWing()
     this.bodyRoot.add(this.createFallbackBody(), this.leftWingFallback, this.rightWingFallback)
-    // Never present the simplified loading body as if it were the canonical
-    // Flybody. The loading status remains visible until the real asset arrives.
-    this.bodyRoot.visible = false
+    // Show a lightweight silhouette immediately so motion/contact can be
+    // inspected while the canonical XML/OBJ asset is loading. The status HUD
+    // still identifies this as a loading fallback; it is never claimed to be
+    // the canonical Flybody.
+    this.bodyRoot.visible = true
     this.ready = this.loadCanonicalAsset()
   }
 
@@ -119,9 +121,10 @@ export class FlyRenderer {
       this.loadedCanonical = true
     } catch (error) {
       this.lastAssetError = error instanceof Error ? error.message : String(error)
-      // Never substitute a different fly. An error is reported in telemetry;
-      // the scene contains either canonical Flybody geometry or no body.
-      this.bodyRoot.visible = false
+      // Keep the lightweight silhouette visible if the optional canonical
+      // asset fails. Physics, sensors, and behavior remain fully active and
+      // the status HUD reports the asset error.
+      this.bodyRoot.visible = true
       console.error(`Flybody canonical asset unavailable: ${this.lastAssetError}`)
     }
   }

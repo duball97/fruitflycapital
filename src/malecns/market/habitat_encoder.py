@@ -22,6 +22,7 @@ class PhysicalHabitatState:
     chaos: float
     attractive_odor: float
     aversive_danger: float
+    image_url: str | None = None
     semantic_type: str = "market"
     signals: tuple[Signal, ...] = ()
     provenance: tuple[dict[str, Any], ...] = ()
@@ -31,6 +32,7 @@ class PhysicalHabitatState:
         return {
             "id": self.id,
             "label": self.label,
+            "imageUrl": self.image_url,
             "physicalRadiusM": self.physical_radius_m,
             "resourcePileRadiusM": self.resource_pile_radius_m,
             "visualMotionIntensity": self.visual_motion_intensity,
@@ -64,6 +66,7 @@ class HabitatEncoder:
             return PhysicalHabitatState(
                 id=state.id,
                 label=state.label,
+                image_url=state.image_url,
                 physical_radius_m=0.09 + sensory.resource * 0.13,
                 resource_pile_radius_m=0.045 + sensory.resource * 0.045,
                 visual_motion_intensity=sensory.motion,
@@ -74,7 +77,7 @@ class HabitatEncoder:
                 aversive_danger=sensory.odor_b,
                 semantic_type=_semantic_type(sensory.motion, sensory.resource, sensory.chaos),
                 signals=signal_list,
-                provenance=state.provenance,
+                provenance=(*state.provenance, {"provider": "dexscreener", "imageUrl": state.image_url}) if state.image_url else state.provenance,
                 financial_trace=sensory.trace,
             )
         activity = _signal(signal_list, "market.volume5mUsd")
@@ -138,6 +141,7 @@ class HabitatEncoder:
                 token_address=str(config.get("tokenAddress", "")),
                 pool_id=str(config.get("poolId", config.get("id", ""))),
                 observed_at_ms=observed_at_ms,
+                image_url=_optional_string(config.get("imageUrl")),
                 market=MarketState(
                     price_usd=_optional_float(config.get("priceUsd")),
                     price_native=_optional_float(config.get("priceNative")),
@@ -218,6 +222,7 @@ class HabitatEncoder:
         return PhysicalHabitatState(
             id=str(config.get("id", "")),
             label=str(config.get("label", config.get("id", ""))),
+            image_url=_optional_string(config.get("imageUrl")),
             physical_radius_m=0.09 + liquidity * 0.13,
             resource_pile_radius_m=0.045 + activity_level * 0.045,
             visual_motion_intensity=_clip(activity_level * 0.8 + abs(flow) * 0.2),
@@ -266,6 +271,13 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _optional_int(value: Any) -> int | None:

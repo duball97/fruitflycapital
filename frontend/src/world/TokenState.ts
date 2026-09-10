@@ -89,6 +89,7 @@ export interface LoreState {
 export interface TokenState {
   id: string
   label: string
+  imageUrl?: string | null
   tokenAddress: string | null
   poolId: string | null
   chainId?: string

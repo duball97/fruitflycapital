@@ -64,6 +64,11 @@ class DexScreenerUniverseProvider:
     pool_bootstrap: Callable[..., list[dict[str, Any]]] | None = None
     cmc_client: CoinMarketCapClient | None = None
     cmc_limit: int = 100
+    # CMC's ranked listings are global. Keep that enrichment scoped to the
+    # chain we actually want to seed from CMC instead of importing unrelated
+    # networks from the same table. This is intentionally separate from
+    # `chains`, which still controls DexScreener/profile discovery.
+    cmc_chains: tuple[str, ...] = ("robinhood",)
     last_bootstrap_error: str | None = field(default=None, init=False)
     last_cmc_error: str | None = field(default=None, init=False)
     last_cmc_count: int = field(default=0, init=False)
@@ -88,8 +93,14 @@ class DexScreenerUniverseProvider:
         if self.cmc_client is not None:
             try:
                 cmc_listings = self.cmc_client.latest_listings(limit=self.cmc_limit, force=force)
-                self.last_cmc_count = len(cmc_listings)
-                cmc_context = _cmc_context(cmc_listings, allowed_chains)
+                cmc_allowed_chains = {
+                    _norm(value) for value in self.cmc_chains if str(value).strip()
+                } & allowed_chains
+                cmc_context = _cmc_context(cmc_listings, cmc_allowed_chains)
+                # Report the accepted CMC rows, not the global response size,
+                # so telemetry/UI cannot imply that other networks entered the
+                # Robinhood market universe.
+                self.last_cmc_count = len(cmc_context)
                 for (chain, address) in cmc_context:
                     core_addresses.setdefault(chain, []).append(address)
             except Exception as exc:
@@ -375,6 +386,7 @@ class DexScreenerMarketDiscovery:
             pool_bootstrap=graph_client.top_pools if graph_client is not None else None,
             cmc_client=CoinMarketCapClient.from_env(),
             cmc_limit=int(os.getenv("CMC_LISTINGS_LIMIT", "100")),
+            cmc_chains=_csv(os.getenv("CMC_ALLOWED_CHAINS", "robinhood")) or ("robinhood",),
         )
         selector = MarketSelector(
             eligibility,
@@ -565,6 +577,14 @@ def candidate_from_pair(
     cmc_quote = cmc.get("quote", {}).get("USD", {}) if isinstance(cmc.get("quote"), Mapping) else {}
     cmc_market_cap = _optional_number(cmc_quote.get("market_cap")) if isinstance(cmc_quote, Mapping) else None
     cmc_price = _optional_number(cmc_quote.get("price")) if isinstance(cmc_quote, Mapping) else None
+    # DexScreener does not include an image on every pair response. Give the
+    # browser a deterministic public logo URL so a missing pair-level image
+    # never turns into a blank habitat. CMC is preferred for ranked assets;
+    # DexScreener's token CDN covers everything else without another API call.
+    if not image_url and cmc.get("id"):
+        image_url = f"https://s2.coinmarketcap.com/static/img/coins/64x64/{cmc['id']}.png"
+    if not image_url:
+        image_url = f"https://dd.dexscreener.com/ds-data/tokens/{chain_id}/{base_address}.png"
     if market_cap_usd is None:
         market_cap_usd = cmc_market_cap
     if price_usd is None:

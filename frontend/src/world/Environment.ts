@@ -12,6 +12,7 @@ import type { TokenState } from './TokenState'
 // from the smaller deep-observer tier on the backend.
 const WORLD_HABITAT_CAPACITY = 100
 const HABITAT_PALETTE = [0x4bd6a0, 0x6ca8ff, 0xff6e80, 0xf5c84c, 0xa980ff, 0xff9b5c, 0x56d9d0, 0xff80b8]
+const HABITAT_SCALE_STORAGE_KEY = 'ffc.habitatVisualScale.v2'
 
 export class Environment {
   readonly group = new Group()
@@ -21,6 +22,8 @@ export class Environment {
   private readonly habitatsById = new Map<string, TokenHabitat>()
   private readonly habitatList: TokenHabitat[] = []
   private readonly slotsById = new Map<string, number>()
+  private habitatVisualScale = readHabitatVisualScale()
+  private worldBoundary: Vector3[] | null = null
   readonly particles: ParticleField
   get habitats() {
     return this.habitatList
@@ -65,12 +68,23 @@ export class Environment {
     }
   }
 
+  getHabitatVisualScale() {
+    return this.habitatVisualScale
+  }
+
+  setHabitatVisualScale(scale: number) {
+    this.habitatVisualScale = clamp(scale, 0.3, 1.35)
+    window.localStorage.setItem(HABITAT_SCALE_STORAGE_KEY, String(this.habitatVisualScale))
+    this.habitatList.forEach((habitat) => habitat.setManualScale(this.habitatVisualScale))
+  }
+
   applyMarketHabitats(update: EnvironmentUpdateMessage['environment']) {
     if (update.observedAtMs <= this.lastAppliedMarketObservedAtMs) return
     this.lastAppliedMarketObservedAtMs = update.observedAtMs
     // The market snapshot is authoritative. New IDs create new habitats,
     // existing IDs retain their position, and departed IDs are retired.
     const incomingIds = new Set<string>()
+    const wasEmpty = this.habitatList.length === 0
     for (const state of update.habitats.slice(0, WORLD_HABITAT_CAPACITY)) {
       incomingIds.add(state.id)
       const nextState = tokenStateFromEnvironment(state)
@@ -103,6 +117,16 @@ export class Environment {
       this.slotsById.delete(habitat.state.id)
       this.habitatList.splice(index, 1)
     }
+    if (wasEmpty && this.worldBoundary) this.spreadHabitatsWithinWorldBoundary()
+    else this.constrainHabitatsToWorldBoundary()
+  }
+
+  setWorldBoundary(points: readonly Vector3[] | null) {
+    this.worldBoundary = points && points.length >= 3
+      ? points.map((point) => new Vector3(point.x, 0, point.z))
+      : null
+    if (this.worldBoundary) this.spreadHabitatsWithinWorldBoundary()
+    else this.constrainHabitatsToWorldBoundary()
   }
 
   updateVisuals(timeSeconds: number) {
@@ -149,10 +173,56 @@ export class Environment {
 
   private addHabitat(state: TokenState, position: Vector3, color: number) {
     const habitat = new TokenHabitat(state, position, color)
+    habitat.setManualScale(this.habitatVisualScale)
     this.habitatsById.set(state.id, habitat)
     this.habitatList.push(habitat)
     this.group.add(habitat.group)
+    this.constrainHabitatsToWorldBoundary()
     return habitat
+  }
+
+  private constrainHabitatsToWorldBoundary() {
+    if (!this.worldBoundary || this.worldBoundary.length < 3) return
+    const center = this.worldBoundary.reduce((sum, point) => sum.add(point), new Vector3()).multiplyScalar(1 / this.worldBoundary.length)
+    for (const habitat of this.habitatList) {
+      if (pointInPolygon(habitat.group.position, this.worldBoundary)) continue
+      const nearest = closestPointOnPolygon(habitat.group.position, this.worldBoundary)
+      const inward = center.clone().sub(nearest)
+      if (inward.lengthSq() > 0) inward.normalize().multiplyScalar(0.02)
+      const candidate = nearest.clone().add(inward)
+      const next = pointInPolygon(candidate, this.worldBoundary) ? candidate : nearest
+      habitat.setPosition(next)
+      habitat.basePosition.copy(next)
+    }
+  }
+
+  private spreadHabitatsWithinWorldBoundary() {
+    if (!this.worldBoundary || this.worldBoundary.length < 3 || this.habitatList.length === 0) return
+    const minX = Math.min(...this.worldBoundary.map((point) => point.x))
+    const maxX = Math.max(...this.worldBoundary.map((point) => point.x))
+    const minZ = Math.min(...this.worldBoundary.map((point) => point.z))
+    const maxZ = Math.max(...this.worldBoundary.map((point) => point.z))
+    const grid = 32
+    const candidates: Vector3[] = []
+    for (let row = 0; row < grid; row += 1) {
+      const z = minZ + (row + 0.5) / grid * (maxZ - minZ)
+      for (let column = 0; column < grid; column += 1) {
+        const x = minX + (column + 0.5) / grid * (maxX - minX)
+        const candidate = new Vector3(x, 0, z)
+        if (pointInPolygon(candidate, this.worldBoundary)) candidates.push(candidate)
+      }
+    }
+    if (candidates.length === 0) {
+      const center = this.worldBoundary.reduce((sum, point) => sum.add(point), new Vector3()).multiplyScalar(1 / this.worldBoundary.length)
+      candidates.push(center)
+    }
+    const count = this.habitatList.length
+    this.habitatList.forEach((habitat, index) => {
+      const candidateIndex = Math.min(candidates.length - 1, Math.floor((index + 0.5) * candidates.length / count))
+      const next = candidates[candidateIndex]!
+      habitat.setPosition(next)
+      habitat.basePosition.copy(next)
+    })
   }
 
   private colorFor(id: string) {
@@ -218,6 +288,15 @@ export class Environment {
 
 }
 
+function readHabitatVisualScale() {
+  const saved = Number(window.localStorage.getItem(HABITAT_SCALE_STORAGE_KEY))
+  return Number.isFinite(saved) ? clamp(saved, 0.3, 1.35) : 0.62
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
 function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment']['habitats'][number]): TokenState {
   const numberSignal = (name: string, fallback: number | null = null) => {
     const value = state.signals?.find((signal) => signal.name === name)?.value
@@ -226,6 +305,7 @@ function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment'
   return {
     id: state.id,
     label: state.label,
+    imageUrl: state.imageUrl ?? imageUrlFromProvenance(state.provenance),
     tokenAddress: null,
     poolId: null,
     observedAtMs: 0,
@@ -270,8 +350,44 @@ function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment'
   }
 }
 
+function imageUrlFromProvenance(provenance: Array<Record<string, unknown>> | undefined) {
+  const imageUrl = provenance?.find((item) => typeof item.imageUrl === 'string')?.imageUrl
+  return typeof imageUrl === 'string' && imageUrl.length > 0 ? imageUrl : null
+}
+
 function hashString(value: string) {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619)
   return hash >>> 0
+}
+
+function pointInPolygon(position: Vector3, polygon: readonly Vector3[]) {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const current = polygon[index]!
+    const prior = polygon[previous]!
+    const intersects = (current.z > position.z) !== (prior.z > position.z)
+      && position.x < ((prior.x - current.x) * (position.z - current.z)) / (prior.z - current.z) + current.x
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
+function closestPointOnPolygon(position: Vector3, polygon: readonly Vector3[]) {
+  let closest = polygon[0]!.clone()
+  let closestDistance = Number.POSITIVE_INFINITY
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index]!
+    const end = polygon[(index + 1) % polygon.length]!
+    const edge = end.clone().sub(start)
+    const denominator = edge.lengthSq()
+    const t = denominator > 0 ? clamp(position.clone().sub(start).dot(edge) / denominator, 0, 1) : 0
+    const candidate = start.clone().add(edge.multiplyScalar(t))
+    const distance = candidate.distanceToSquared(position)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closest = candidate
+    }
+  }
+  return closest
 }

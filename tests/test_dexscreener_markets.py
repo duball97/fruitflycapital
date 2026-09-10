@@ -100,6 +100,7 @@ def test_coinmarketcap_exact_platform_address_seeds_dexscreener_resolution():
         DexScreenerClient(fetcher=dex_fetch),
         chains=("ethereum",),
         cmc_client=CoinMarketCapClient(api_key="test-key", fetcher=cmc_fetch),
+        cmc_chains=("ethereum",),
     )
     universe = provider.refresh(now_ms=1_700_010_000_000)
 
@@ -108,6 +109,19 @@ def test_coinmarketcap_exact_platform_address_seeds_dexscreener_resolution():
     assert candidate.market_cap_usd == 2_000_000
     assert candidate.cmc_percent_change_7d == 12
     assert candidate.provenance[-1]["provider"] == "coinmarketcap"
+
+
+def test_coinmarketcap_context_can_be_restricted_to_robinhood():
+    from malecns.market.universe import _cmc_context
+
+    context = _cmc_context([
+        {"id": 1, "platform": {"slug": "ethereum", "token_address": "0xeth"}},
+        {"id": 2, "platform": {"slug": "base", "token_address": "0xbase"}},
+        {"id": 3, "platform": {"slug": "robinhood", "token_address": "0xrh"}},
+        {"id": 4, "symbol": "NATIVE", "platform": None},
+    ], {"robinhood"})
+
+    assert set(context) == {("robinhood", "0xrh")}
 
 
 def test_candidate_normalizes_pair_identity_and_preserves_provider_fields():

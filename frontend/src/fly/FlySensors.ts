@@ -145,9 +145,13 @@ export class FlySensors {
 
   private updateOdor(body: FlyBody, odorSampler: OdorSampler) {
     const center = odorSampler(body.position, this.currentTimeSeconds)
-    this.antennaOrigin.set(-0.0014, 0.0004, -0.0012).applyQuaternion(body.quaternion).add(body.position)
+    // A slightly wider virtual antenna baseline makes the odor gradient
+    // numerically observable at this metre-scale demo resolution.
+    // Use a visible metre-scale baseline so the bilateral signal remains
+    // useful while the fly is still several body-lengths from a habitat.
+    this.antennaOrigin.set(-0.012, 0.0004, -0.0012).applyQuaternion(body.quaternion).add(body.position)
     const left = odorSampler(this.antennaOrigin, this.currentTimeSeconds + 0.013)
-    this.antennaOrigin.set(0.0014, 0.0004, -0.0012).applyQuaternion(body.quaternion).add(body.position)
+    this.antennaOrigin.set(0.012, 0.0004, -0.0012).applyQuaternion(body.quaternion).add(body.position)
     const right = odorSampler(this.antennaOrigin, this.currentTimeSeconds + 0.027)
     this.odor.concentration = center.attractive
     this.odor.leftAntenna = left.attractive

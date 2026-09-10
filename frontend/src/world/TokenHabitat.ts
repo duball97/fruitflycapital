@@ -1,4 +1,4 @@
-import { AdditiveBlending, BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, Sprite, SpriteMaterial, SphereGeometry, TorusGeometry, Vector3 } from 'three'
+import { AdditiveBlending, BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, SRGBColorSpace, Sprite, SpriteMaterial, SphereGeometry, TorusGeometry, Vector3 } from 'three'
 import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
@@ -42,11 +42,12 @@ export class TokenHabitat {
   private readonly signalCap: Mesh
   private readonly signalLight: PointLight
   private readonly floorGlow: Mesh
-  private readonly label: Sprite
+  private readonly logo: Sprite
   private readonly semanticGroup = new Group()
   private readonly smellGroup = new Group()
   private readonly smellPuffs: Array<{ mesh: Mesh; phase: number }> = []
   private enabled = true
+  private manualScale = 1
 
   constructor(state: TokenState, position: Vector3, color: number) {
     this.state = state
@@ -77,12 +78,12 @@ export class TokenHabitat {
     this.floorGlow.position.y = 0.006
     this.group.add(this.floorGlow)
 
-    this.label = new Sprite(new SpriteMaterial({ map: labelTexture(state.label), transparent: true, depthWrite: false }))
-    this.label.name = 'TokenLabel'
-    this.label.userData.tokenHabitatId = state.id
-    this.label.position.y = 0.2
-    this.label.scale.set(0.23, 0.044, 1)
-    this.group.add(this.label)
+    this.logo = new Sprite(new SpriteMaterial({ map: logoTexture(state.label, imageUrlForState(state)), transparent: true, depthWrite: false }))
+    this.logo.name = 'TokenLogo'
+    this.logo.userData.tokenHabitatId = state.id
+    this.logo.position.y = 0.19
+    this.logo.scale.set(0.115, 0.115, 1)
+    this.group.add(this.logo)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
     this.pile.position.y = 0.028
@@ -290,31 +291,41 @@ export class TokenHabitat {
     this.group.position.copy(position)
   }
 
+  setManualScale(scale: number) {
+    this.manualScale = Math.max(0.3, Math.min(1.35, scale))
+    this.group.scale.setScalar(this.manualScale)
+  }
+
   setIdentity(id: string, label: string) {
     this.state = { ...this.state, id, label }
-    this.label.material.map?.dispose()
-    this.label.material.map = labelTexture(label)
-    this.label.material.needsUpdate = true
+    this.replaceLogoTexture(label, imageUrlForState(this.state))
     this.group.name = `TokenHabitat:${id}`
     this.group.userData.tokenHabitatId = id
-    this.label.userData.tokenHabitatId = id
+    this.logo.userData.tokenHabitatId = id
   }
 
   setMarketState(state: TokenState) {
     this.state = state
     this.group.name = `TokenHabitat:${state.id}`
     this.group.userData.tokenHabitatId = state.id
-    this.label.userData.tokenHabitatId = state.id
-    this.label.material.map?.dispose()
-    this.label.material.map = labelTexture(state.label)
-    this.label.material.needsUpdate = true
+    this.logo.userData.tokenHabitatId = state.id
+    this.replaceLogoTexture(state.label, imageUrlForState(state))
   }
 
   resetIdentity() {
     this.state = this.initialState
     this.group.name = `TokenHabitat:${this.state.id}`
     this.group.userData.tokenHabitatId = this.state.id
-    this.label.userData.tokenHabitatId = this.state.id
+    this.logo.userData.tokenHabitatId = this.state.id
+    this.replaceLogoTexture(this.state.label, imageUrlForState(this.state))
+  }
+
+  private replaceLogoTexture(label: string, imageUrl?: string | null) {
+    const material = this.logo.material as SpriteMaterial
+    const previous = material.map
+    material.map = logoTexture(label, imageUrl)
+    material.needsUpdate = true
+    previous?.dispose()
   }
 
   resetPosition() {
@@ -336,7 +347,10 @@ export class TokenHabitat {
     // field made the floor-level habitat effectively unsmellable before a fly
     // had any chance to descend, so keep a readable vertical gradient while
     // preserving spatial separation between nearby sources.
-    const sigma = 0.36 + this.properties.physicalRadiusM * 0.55
+    // A broad plume gives an airborne fly time to follow a local bilateral
+    // gradient. The final contact radius still remains physical and is not
+    // widened by this sensory calibration.
+    const sigma = 0.58 + this.properties.physicalRadiusM * 0.7
     const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma))
     const fluctuation = 1 + Math.sin(timeSeconds * (0.7 + this.properties.chaos * 2.0) + this.group.position.x * 4.0) * this.properties.chaos * 0.08
     return {
@@ -346,32 +360,85 @@ export class TokenHabitat {
   }
 }
 
-function labelTexture(value: string) {
+function logoTexture(label: string, imageUrl?: string | null) {
   const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 96
-  const context = canvas.getContext('2d')
-  if (context) {
-    context.clearRect(0, 0, canvas.width, canvas.height)
-    context.shadowColor = 'rgba(40, 244, 205, 0.95)'
-    context.shadowBlur = 18
-    context.fillStyle = 'rgba(3, 12, 19, 0.94)'
-    context.beginPath()
-    context.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 18)
-    context.fill()
-    context.shadowBlur = 0
-    context.strokeStyle = 'rgba(69, 239, 216, 0.96)'
-    context.lineWidth = 3
-    context.stroke()
-    context.fillStyle = '#8fffea'
-    context.font = '700 34px monospace'
-    context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText(value.slice(0, 22), canvas.width / 2, canvas.height / 2 + 1)
-  }
+  canvas.width = 256
+  canvas.height = 256
   const texture = new CanvasTexture(canvas)
+  texture.colorSpace = SRGBColorSpace
+  drawLogoFallback(canvas, label)
   texture.needsUpdate = true
+
+  if (imageUrl) {
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.onload = () => {
+      const context = canvas.getContext('2d')
+      if (!context) return
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.save()
+      context.beginPath()
+      context.arc(128, 128, 107, 0, Math.PI * 2)
+      context.clip()
+      const ratio = Math.max(214 / image.width, 214 / image.height)
+      const width = image.width * ratio
+      const height = image.height * ratio
+      context.drawImage(image, 128 - width / 2, 128 - height / 2, width, height)
+      context.restore()
+      drawLogoBorder(context)
+      texture.needsUpdate = true
+    }
+    image.onerror = () => { /* The initials fallback remains visible. */ }
+    image.src = normalizeImageUrl(imageUrl)
+  }
   return texture
+}
+
+function imageUrlForState(state: TokenState) {
+  if (state.imageUrl) return state.imageUrl
+  const imageUrl = state.provenance.find((item) => typeof item.imageUrl === 'string')?.imageUrl
+  return typeof imageUrl === 'string' && imageUrl.length > 0 ? imageUrl : null
+}
+
+function normalizeImageUrl(url: string) {
+  if (url.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${url.slice('ipfs://'.length)}`
+  if (url.startsWith('ipns://')) return `https://ipfs.io/ipns/${url.slice('ipns://'.length)}`
+  return url
+}
+
+function drawLogoFallback(canvas: HTMLCanvasElement, label: string) {
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  const gradient = context.createRadialGradient(94, 82, 8, 128, 128, 124)
+  gradient.addColorStop(0, '#1c5961')
+  gradient.addColorStop(1, '#06131c')
+  context.fillStyle = gradient
+  context.beginPath()
+  context.arc(128, 128, 107, 0, Math.PI * 2)
+  context.fill()
+  context.fillStyle = '#9bffe4'
+  context.font = '800 54px ui-monospace, monospace'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(symbolFromLabel(label), 128, 130)
+  drawLogoBorder(context)
+}
+
+function drawLogoBorder(context: CanvasRenderingContext2D) {
+  context.strokeStyle = 'rgba(114, 244, 210, 0.95)'
+  context.lineWidth = 7
+  context.shadowColor = 'rgba(55, 238, 204, 0.85)'
+  context.shadowBlur = 18
+  context.beginPath()
+  context.arc(128, 128, 108, 0, Math.PI * 2)
+  context.stroke()
+  context.shadowBlur = 0
+}
+
+function symbolFromLabel(label: string) {
+  const value = label.split('·')[0]?.trim() || label
+  return value.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase() || '?'
 }
 
 function odorColor(type: HabitatProperties['semanticType']) {

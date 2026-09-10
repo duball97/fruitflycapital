@@ -41,7 +41,7 @@ agent bodies, sensors, brains, and trajectories remain unchanged.
 
 ## Habitats and particles
 
-The world contains up to 128 dynamically keyed market habitats. Their compact
+The world contains up to 100 dynamically keyed market habitats. Their compact
 token marker, neon label, floor glow, semantic food/rot/trash/market props, and
 particle intensity are derived from the existing provider-neutral
 `HabitatProperties` (`brightness`, `particleActivity`, `chaos`, and motion),
@@ -77,14 +77,11 @@ negative moves the GLB down. These controls do not move habitats, flies, or
 the physics arena. The supplied city remains unrotated so its street plan is
 preserved.
 
-For quick browser experiments, URL parameters override the same values without
-editing code:
-
-```text
-/?cityY=-0.14&cityX=0.03&cityZ=0&cityScale=1.02&cityRot=0
-```
-
-`cityY` is the vertical offset in metres; reload after changing the URL.
+The public scene includes a small `SCENE POSITION` panel on the right. Its
+buttons and sliders change X, height, Z, rotation, and scale without editing a
+URL. Every change is clamped to safe presentation limits and saved in browser
+local storage, so a refresh keeps the chosen placement. `RESET CITY POSITION`
+restores the authored fit.
 
 ## Presentation and debug modes
 

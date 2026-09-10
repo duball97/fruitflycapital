@@ -72,8 +72,11 @@ and [`src/malecns/market/universe.py`](../src/malecns/market/universe.py). The
 optional CoinMarketCap client uses the classic latest-listings endpoint for a
 broad ranked universe. Its rank, supply, market-cap, seven-day change, 24-hour
 volume change, and dominance fields are metadata/context; they are not proof
-of a tradable pool on Robinhood, Base, or any other chain. Only listings with
-an exact platform chain and token address seed DexScreener resolution.
+of a tradable pool on Robinhood, Base, or any other chain. In the live
+configuration, only the exact `robinhood` platform is accepted from CMC
+(`CMC_ALLOWED_CHAINS=robinhood`); other CMC network rows are ignored. Only
+listings with an exact accepted platform chain and token address seed
+DexScreener resolution.
 Symbol-only matches are rejected to avoid collisions. The discovery layer
 uses the documented server-side public endpoints:
 

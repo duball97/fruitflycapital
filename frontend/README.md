@@ -27,7 +27,7 @@ brew install python@3.12
 PYTHON312="$(brew --prefix python@3.12)/bin/python3.12"
 "$PYTHON312" -m venv .venv312
 ./.venv312/bin/python -m pip install -e '.[dev,physics,speed]'
-./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
+PYTHONPATH=src ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
 The Vite script uses `--force` so stale optimized-dependency responses do not
@@ -38,7 +38,7 @@ In another terminal, the optional Python protocol adapter can be started from
 the repository root:
 
 ```bash
-./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
+PYTHONPATH=src ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
 Before starting the adapter, build the realtime cache from the official local
@@ -93,11 +93,11 @@ antennae, halteres, legs, and wing assemblies while retaining `FlyBody`,
 the existing rigid-body path until an optional MuJoCo pose server is attached.
 
 The arena is intentionally restrained: an invisible bounded flight volume, a
-readable floor, and up to 128 differentiated market habitats. Each habitat is
+readable city floor, and up to 100 differentiated market habitats. Each habitat is
 presented as a compact food, rot, trash, or market-smell source derived from
 its encoded signals. Unrelated props are not rendered. The sixteen primary
 agents and their render-only followers all use the same canonical Flybody
-XML/OBJ source. Habitat particles and fly trails use pooled GPU buffers.
+XML/OBJ source. Habitat particles use a pooled GPU buffer.
 
 The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,

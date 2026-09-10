@@ -302,6 +302,7 @@ class TokenState:
     market: MarketState
     flow: FlowState
     liquidity: LiquidityState
+    image_url: str | None = None
     holders: HoldersState = field(default_factory=HoldersState)
     security: SecurityState = field(default_factory=SecurityState)
     social: SocialState = field(default_factory=SocialState)
@@ -317,6 +318,7 @@ class TokenState:
         return {
             "id": self.id,
             "label": self.label,
+            "imageUrl": self.image_url,
             "tokenAddress": self.token_address,
             "poolId": self.pool_id,
             "chainId": self.chain_id,

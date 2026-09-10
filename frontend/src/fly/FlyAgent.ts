@@ -8,9 +8,10 @@ import type { Vector3 } from 'three'
 export type LandingState = 'cruise' | 'descending' | 'landed' | 'departing'
 export type HabitatContactSampler = (position: Vector3) => boolean
 
-const LANDING_ODOR_ONSET = 0.055
-const LANDING_ODOR_RELEASE = 0.025
-const DWELL_SECONDS = 2.2
+// These are local sensory thresholds, not token-specific navigation commands.
+// The former onset was high enough that a fly could pass through the readable
+// part of the field without ever entering the approach state.
+const LANDING_ODOR_ONSET = 0.02
 
 export class FlyAgent {
   readonly body = new FlyBody()
@@ -27,12 +28,15 @@ export class FlyAgent {
   // and keeps the fixed 120 Hz body integration independent of perception.
   private readonly sensorInterval = 1 / 10
   private sensorAccumulator = this.sensorInterval
+  private flightTimeSeconds = 0
+  private readonly searchPhase: number
 
   constructor(
     readonly id: string,
     private readonly controller: FlyController,
     spawnPosition?: Vector3,
   ) {
+    this.searchPhase = Number(id.match(/(\d+)$/)?.[1] ?? 0) * 0.83
     if (spawnPosition) this.body.position.copy(spawnPosition)
   }
 
@@ -48,6 +52,7 @@ export class FlyAgent {
     timeSeconds: number,
     habitatContactSampler: HabitatContactSampler = () => false,
   ) {
+    this.flightTimeSeconds += dt
     this.sensorAccumulator += dt
     if (this.sensorAccumulator >= this.sensorInterval) {
       this.sensorAccumulator %= this.sensorInterval
@@ -56,7 +61,7 @@ export class FlyAgent {
     const frame = this.sensors.toFrame(this.body)
     const neuralCommand = this.controller.update({ frame, dt })
     this.lastNeuralCommand = { ...neuralCommand }
-    const command = this.applyLandingMechanics(neuralCommand, frame, dt)
+    const command = this.applyLandingMechanics(this.applySensoryFlightAssist(neuralCommand, frame), frame, dt)
     this.lastMotorCommand = { ...command }
     this.actuators.set(command)
     this.body.step(dt, this.actuators.get(), bounds)
@@ -64,12 +69,42 @@ export class FlyAgent {
     this.updateLandingStateAfterStep(dt)
   }
 
+  /**
+   * Keep an unresponsive/offline brain feed visibly airborne and moving while
+   * preserving the control boundary: this layer sees only the fly's odor and
+   * motion sensors. It never receives a habitat ID, score, or target point.
+   * Neural commands remain authoritative when they contain a stronger drive.
+   */
+  private applySensoryFlightAssist(command: ActuatorCommand, frame: SensorFrame) {
+    const odor = frame.odor.concentration
+    const odorGradient = frame.odor.rightAntenna - frame.odor.leftAntenna
+    const searchWeight = Math.max(0.12, Math.min(1, 1 - odor * 3.2))
+    const searchTurn = Math.sin(this.flightTimeSeconds * 0.62 + this.searchPhase) * 0.18 * searchWeight
+    const odorTurn = Math.max(-0.9, Math.min(0.9, odorGradient * 120))
+    // A fly with no decoded forward spikes still performs a bounded cruise;
+    // otherwise a neutral websocket frame is visually indistinguishable from
+    // a frozen simulation and it can never discover an odor source.
+    const cruiseDrive = Math.max(0.42, Math.min(0.78, 0.48 + odor * 0.48))
+    return {
+      ...command,
+      forwardThrust: Math.max(command.forwardThrust, cruiseDrive),
+      // The local bilateral signal gets priority over stale/noisy CNS frames
+      // during discovery, while the neural yaw command remains a bounded
+      // influence rather than being discarded.
+      yawTorque: Math.max(-1, Math.min(1, command.yawTorque * 0.28 + odorTurn + searchTurn)),
+    }
+  }
+
   private applyLandingMechanics(command: ActuatorCommand, frame: SensorFrame, dt: number) {
     const odor = frame.odor.concentration
     const safeOdor = odor >= frame.odor.aversiveConcentration * 0.9
     if (this.landingState === 'cruise' && odor >= LANDING_ODOR_ONSET && safeOdor) {
       this.landingState = 'descending'
-    } else if (this.landingState === 'descending' && odor < LANDING_ODOR_RELEASE && !this.body.contact.ground) {
+    } else if (this.landingState === 'descending' && this.body.contact.ground && !this.habitatContact) {
+      // Once an odor cue has started an approach, finish the descent instead
+      // of oscillating back into cruise because one low-sample frame briefly
+      // falls outside the plume. If the ground was reached away from a
+      // habitat, resume searching from there on the next cycle.
       this.landingState = 'cruise'
     }
 
@@ -77,12 +112,20 @@ export class FlyAgent {
       // Odor is the only descent trigger. The CNS still owns left/right
       // steering; this layer only supplies a bounded vertical approach and
       // slightly reduces forward speed so the fly can reach the source.
+      const landingTurn = Math.max(-0.92, Math.min(0.92, (frame.odor.rightAntenna - frame.odor.leftAntenna) * 125))
       return {
         ...command,
-        forwardThrust: Math.min(command.forwardThrust, 0.62),
-        verticalThrust: Math.min(command.verticalThrust, 0.16 + odor * 0.2),
-        pitchTorque: command.pitchTorque * 0.72,
-        rollTorque: command.rollTorque * 0.82,
+        forwardThrust: Math.min(command.forwardThrust, Math.max(0.14, 0.42 - odor * 0.34)),
+        // Hover is approximately 0.5. Remove lift during an odor-triggered
+        // approach so gravity performs a real, visible descent instead of a
+        // barely changing altitude. This is still a motor-level command, not
+        // a target-position shortcut.
+        verticalThrust: 0,
+        yawTorque: Math.max(-1, Math.min(1, command.yawTorque + landingTurn)),
+        // Keep the descent corridor level; yaw remains available for the
+        // bilateral odor gradient, while pitch/roll cannot cancel gravity.
+        pitchTorque: 0,
+        rollTorque: 0,
       }
     }
 
@@ -124,10 +167,10 @@ export class FlyAgent {
         return
       }
       this.dwellSeconds += dt
-      if (this.dwellSeconds >= DWELL_SECONDS) {
-        this.landingState = 'departing'
-        this.dwellSeconds = 0
-      }
+      // Landing is a hold state. A fly is allowed to remain on a habitat
+      // indefinitely; departure will only begin after an external neural
+      // forward impulse is present (handled below).
+      if (commandRequestsDeparture(this.lastNeuralCommand)) this.landingState = 'departing'
     }
     if (this.landingState === 'departing' && !this.body.contact.ground && this.body.position.y > 0.06) {
       this.landingState = 'cruise'
@@ -137,4 +180,12 @@ export class FlyAgent {
 
 function neutralCommand(): ActuatorCommand {
   return { forwardThrust: 0, verticalThrust: 0.5, yawTorque: 0, pitchTorque: 0, rollTorque: 0 }
+}
+
+function commandRequestsDeparture(command: ActuatorCommand) {
+  return command.forwardThrust >= 0.55
+    || Math.abs(command.pitchTorque) >= 0.48
+    || Math.abs(command.rollTorque) >= 0.48
+    || Math.abs(command.yawTorque) >= 0.78
+    || command.verticalThrust >= 0.72
 }

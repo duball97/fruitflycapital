@@ -9,27 +9,28 @@
 
 ## World geometry
 
-The floor and invisible arena bounds are procedural Three.js geometry. The
-floor uses a small deterministic procedural texture; live market habitats are
-procedural geometry with compact food/rot/trash/market details, and their
-colored tops identify the encoded sensory parameters assigned to each habitat.
-The world can render up to 128 market identities without downloading one
+The supplied city GLB is the normal visible floor and the invisible arena
+bounds remain separate physics limits. A procedural floor is used only if the
+city asset cannot load. Live market habitats are procedural geometry with
+compact food/rot/trash/market details, and their colored tops identify the
+encoded sensory parameters assigned to each habitat.
+The world can render up to 100 market identities without downloading one
 large prop pack per token.
 
 The supplied `street_city_7_for_games_free.glb` is copied to
 `frontend/public/models/city/street_city.glb` and loaded by
 `frontend/src/world/CityBackdrop.ts`. It is fitted around the presentation
 floor while the physical fly bounds stay unchanged and receives a cool night
-grade. Lightweight street details add barrels, trash bags, crates, safety
-lines, oil stains, raised platforms, fog, and colored floor glow. Live habitats
+grade. The application does not add a second perimeter plate or unrelated side
+props; the city, habitats, and flies are the visible world elements. Live habitats
 are placed on the street floor inside the city and display neon token symbol/name labels plus
 physical food, rot, trash-can, bag, or crate props.
 
 The scene no longer uses unrelated bundled context props; only the coin/market
 habitats are rendered as semantic objects.
 
-Habitat particles are pooled instances and fly trails share one dynamic line
-buffer. The scene has no unrelated decorative fly population. The four
+Habitat particles are pooled instances. The scene has no unrelated decorative
+fly population. The four
 additional render-only bodies attached to each primary CNS agent are explicitly
 labelled followers and do not add brains, sensors, or consensus votes.
 
