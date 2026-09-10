@@ -253,8 +253,9 @@ class SensoryEncodingTest(unittest.TestCase):
         self.assertEqual([entry["bodyId"] for entry in encoded["visual"]], [11, 22])
         self.assertEqual([entry["rateHz"] for entry in encoded["visual"]], [150.0, 0.0])
         self.assertEqual(encoded["olfactory"][0]["rateHz"], 75.0)
-        self.assertEqual(encoded["mechanosensory"], [])
-        self.assertIn("contact_to_maleCNS_mechanosensory", encoded["unimplemented"])
+        self.assertEqual([entry["bodyId"] for entry in encoded["mechanosensory"]], [44])
+        self.assertEqual(encoded["mechanosensory"][0]["rateHz"], 150.0)
+        self.assertNotIn("contact_to_maleCNS_mechanosensory", encoded["unimplemented"])
 
 
 class FlightDecoderTest(unittest.TestCase):

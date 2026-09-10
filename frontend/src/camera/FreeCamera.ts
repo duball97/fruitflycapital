@@ -11,15 +11,15 @@ export class FreeCamera {
     // enough room context for orbit/pan/zoom exploration.
     // Aim the opening view below the horizon so the room floor fills the
     // frame instead of exposing the scene background above its far edge.
-    this.camera.position.set(1.12, 1.34, 1.28)
+    this.camera.position.set(1.42, 1.02, 1.48)
     this.controls = new OrbitControls(this.camera, domElement)
-    this.controls.target.set(0, 0.02, 0)
+    this.controls.target.set(0, 0.18, 0)
     this.controls.enableDamping = true
     this.controls.enablePan = true
     this.controls.screenSpacePanning = true
     this.controls.zoomToCursor = true
     this.controls.minDistance = 0.005
-    this.controls.maxDistance = 4
+    this.controls.maxDistance = 3.2
   }
 
   focusOn(position: Vector3) {

@@ -1,4 +1,4 @@
-import { BoxGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, SphereGeometry, TorusGeometry, Vector3 } from 'three'
+import { BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, Sprite, SpriteMaterial, SphereGeometry, TorusGeometry, Vector3 } from 'three'
 import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
@@ -41,6 +41,8 @@ export class TokenHabitat {
   private readonly signalColumn: Mesh
   private readonly signalCap: Mesh
   private readonly signalLight: PointLight
+  private readonly floorGlow: Mesh
+  private readonly label: Sprite
   private readonly semanticGroup = new Group()
   private enabled = true
 
@@ -52,6 +54,20 @@ export class TokenHabitat {
     this.group.position.copy(position)
     this.semanticGroup.name = 'SemanticSmellSource'
     this.group.add(this.semanticGroup)
+
+    this.floorGlow = new Mesh(
+      new CircleGeometry(0.18, 32),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.08, depthWrite: false }),
+    )
+    this.floorGlow.rotation.x = -Math.PI / 2
+    this.floorGlow.position.y = 0.006
+    this.group.add(this.floorGlow)
+
+    this.label = new Sprite(new SpriteMaterial({ map: labelTexture(state.label), transparent: true, depthWrite: false }))
+    this.label.name = 'TokenLabel'
+    this.label.position.y = 0.23
+    this.label.scale.set(0.31, 0.058, 1)
+    this.group.add(this.label)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
     this.pile.position.y = 0.028
@@ -133,15 +149,27 @@ export class TokenHabitat {
     ;(this.outerRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.12 + visual.chaos * 0.2 : 0.04
     ;(this.innerRing.material as MeshPhysicalMaterial).emissiveIntensity = this.enabled ? 0.24 + visual.brightness * 0.55 : 0.08
     this.pile.scale.setScalar(Math.max(0.72, visual.resourcePileRadiusM / 0.06))
-    this.signalLight.intensity = this.enabled ? 0.08 + visual.brightness * 0.65 + visual.particleActivity * 0.35 : 0
-    this.signalColumn.visible = this.enabled && visual.visualMotionIntensity > 0.04
-    this.signalCap.visible = this.signalColumn.visible
+    this.signalLight.intensity = this.enabled ? 0.05 + visual.brightness * 0.38 + visual.particleActivity * 0.18 : 0
+    this.floorGlow.visible = this.enabled
+    ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled ? 0.045 + visual.brightness * 0.13 : 0
+    this.floorGlow.scale.setScalar(0.82 + visual.physicalRadiusM * 2.4)
+    // The old floating column/cap read as a sci-fi status widget rather than
+    // a place a fly would investigate. Signal is now carried by the physical
+    // prop, floor glow, and neon token label.
+    this.signalColumn.visible = false
+    this.signalCap.visible = false
     const columnMaterial = this.signalColumn.material as MeshStandardMaterial
     columnMaterial.emissiveIntensity = 0.25 + visual.brightness * 1.2
   }
 
   private rebuildSemanticVisual(type: HabitatProperties['semanticType']) {
     if (this.semanticGroup.userData.type === type) return
+    this.semanticGroup.traverse((object) => {
+      const mesh = object as Mesh
+      mesh.geometry?.dispose()
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach((material) => material?.dispose())
+    })
     this.semanticGroup.clear()
     this.semanticGroup.userData.type = type
     const add = (geometry: any, material: MeshStandardMaterial, x: number, y: number, z: number) => {
@@ -151,19 +179,25 @@ export class TokenHabitat {
       this.semanticGroup.add(mesh)
     }
     if (type === 'food') {
+      // Bruised fruit and a curved banana are the attractive odor source.
+      add(new CylinderGeometry(0.052, 0.058, 0.018, 14), new MeshStandardMaterial({ color: 0x403b2d, roughness: 0.94 }), 0, 0.062, 0)
+      add(new TorusGeometry(0.018, 0.005, 7, 14, Math.PI * 1.35), new MeshStandardMaterial({ color: 0xe0b83c, roughness: 0.78 }), -0.025, 0.085, 0.012)
       add(new SphereGeometry(0.022, 8, 6), new MeshStandardMaterial({ color: 0xe86f45, roughness: 0.72 }), -0.032, 0.075, 0.014)
       add(new SphereGeometry(0.018, 8, 6), new MeshStandardMaterial({ color: 0x8ebd4b, roughness: 0.8 }), 0.028, 0.072, -0.012)
-      add(new ConeGeometry(0.012, 0.03, 7), new MeshStandardMaterial({ color: 0x4f783d, roughness: 0.9 }), 0, 0.085, 0.018)
+      add(new SphereGeometry(0.013, 7, 5), new MeshStandardMaterial({ color: 0x9a4d31, roughness: 0.92 }), 0.012, 0.075, 0.022)
     } else if (type === 'rot') {
-      add(new SphereGeometry(0.026, 7, 5), new MeshStandardMaterial({ color: 0x334b34, roughness: 0.95 }), -0.028, 0.073, 0.012)
-      add(new SphereGeometry(0.021, 7, 5), new MeshStandardMaterial({ color: 0x6d8240, roughness: 1 }), 0.028, 0.07, -0.01)
-      add(new ConeGeometry(0.018, 0.045, 7), new MeshStandardMaterial({ color: 0x738c54, transparent: true, opacity: 0.42, roughness: 1 }), 0.01, 0.105, 0.012)
+      add(new SphereGeometry(0.034, 8, 6), new MeshStandardMaterial({ color: 0x14191a, roughness: 0.98 }), -0.018, 0.078, 0.012)
+      add(new SphereGeometry(0.026, 7, 5), new MeshStandardMaterial({ color: 0x52613a, roughness: 1 }), 0.026, 0.07, -0.01)
+      add(new SphereGeometry(0.014, 7, 5), new MeshStandardMaterial({ color: 0x8a6b37, roughness: 1 }), 0.004, 0.086, 0.024)
     } else if (type === 'trash') {
-      add(new BoxGeometry(0.044, 0.038, 0.044), new MeshStandardMaterial({ color: 0x58636a, metalness: 0.42, roughness: 0.7 }), -0.028, 0.075, 0.012)
-      add(new CylinderGeometry(0.018, 0.021, 0.042, 10), new MeshStandardMaterial({ color: 0x7c6b53, metalness: 0.25, roughness: 0.88 }), 0.031, 0.077, -0.012)
+      add(new CylinderGeometry(0.026, 0.021, 0.075, 12), new MeshStandardMaterial({ color: 0x2b3538, metalness: 0.42, roughness: 0.78 }), -0.026, 0.09, 0.008)
+      add(new TorusGeometry(0.026, 0.004, 6, 14), new MeshStandardMaterial({ color: 0x59686b, metalness: 0.54, roughness: 0.62 }), -0.026, 0.13, 0.008)
+      add(new SphereGeometry(0.029, 8, 6), new MeshStandardMaterial({ color: 0x121517, roughness: 0.98 }), 0.026, 0.074, -0.014)
     } else {
-      add(new BoxGeometry(0.038, 0.028, 0.038), new MeshStandardMaterial({ color: 0x9c7042, roughness: 0.86 }), -0.025, 0.07, 0.012)
-      add(new BoxGeometry(0.028, 0.02, 0.028), new MeshStandardMaterial({ color: 0x596b7b, metalness: 0.2, roughness: 0.7 }), 0.025, 0.066, -0.012)
+      add(new BoxGeometry(0.065, 0.048, 0.055), new MeshStandardMaterial({ color: 0x805938, roughness: 0.9 }), -0.025, 0.082, 0.012)
+      add(new BoxGeometry(0.008, 0.052, 0.058), new MeshStandardMaterial({ color: 0x34271d, roughness: 0.94 }), -0.025, 0.083, 0.012)
+      add(new BoxGeometry(0.008, 0.048, 0.058), new MeshStandardMaterial({ color: 0x34271d, roughness: 0.94 }), 0.002, 0.083, 0.012)
+      add(new BoxGeometry(0.031, 0.024, 0.031), new MeshStandardMaterial({ color: 0x4d6470, metalness: 0.28, roughness: 0.76 }), 0.031, 0.067, -0.012)
     }
   }
 
@@ -176,10 +210,10 @@ export class TokenHabitat {
     const pulse = 0.82 + Math.sin(timeSeconds * (1.1 + visual.visualMotionIntensity * 4.5) + this.basePosition.x * 2.7) * 0.18
     this.coin.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.04 * pulse)
     this.pressureRing.scale.setScalar(0.94 + visual.chaos * 0.22 + visual.visualMotionIntensity * 0.08 * pulse)
-    this.pressureRing.rotation.z = timeSeconds * (0.03 + visual.chaos * 0.24)
+    this.pressureRing.rotation.z = timeSeconds * (0.008 + visual.chaos * 0.04)
     this.innerRing.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.06 * pulse)
     this.outerRing.scale.setScalar(0.96 + visual.chaos * 0.35 + visual.visualMotionIntensity * 0.12 * pulse)
-    this.outerRing.rotation.z = -timeSeconds * (0.015 + visual.visualMotionIntensity * 0.08)
+    this.outerRing.rotation.z = -timeSeconds * (0.004 + visual.visualMotionIntensity * 0.02)
     this.signalLight.intensity = this.enabled ? 0.08 + visual.brightness * 0.65 + visual.particleActivity * (0.22 + pulse * 0.18) : 0
     if (this.signalColumn.visible) {
       const columnScale = 0.5 + visual.particleActivity * 1.4 + visual.chaos * 0.4
@@ -195,6 +229,9 @@ export class TokenHabitat {
 
   setIdentity(id: string, label: string) {
     this.state = { ...this.state, id, label }
+    this.label.material.map?.dispose()
+    this.label.material.map = labelTexture(label)
+    this.label.material.needsUpdate = true
     this.group.name = `TokenHabitat:${id}`
   }
 
@@ -226,6 +263,34 @@ export class TokenHabitat {
       aversive: Math.min(1, Math.max(0, gaussian * this.properties.aversiveDanger * fluctuation)),
     }
   }
+}
+
+function labelTexture(value: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 96
+  const context = canvas.getContext('2d')
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.shadowColor = 'rgba(40, 244, 205, 0.95)'
+    context.shadowBlur = 18
+    context.fillStyle = 'rgba(3, 12, 19, 0.94)'
+    context.beginPath()
+    context.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 18)
+    context.fill()
+    context.shadowBlur = 0
+    context.strokeStyle = 'rgba(69, 239, 216, 0.96)'
+    context.lineWidth = 3
+    context.stroke()
+    context.fillStyle = '#8fffea'
+    context.font = '700 34px monospace'
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.fillText(value.slice(0, 22), canvas.width / 2, canvas.height / 2 + 1)
+  }
+  const texture = new CanvasTexture(canvas)
+  texture.needsUpdate = true
+  return texture
 }
 
 export function propertiesFromState(state: TokenState): HabitatProperties {

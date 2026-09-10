@@ -374,9 +374,12 @@ class DexScreenerMarketDiscovery:
 
     @staticmethod
     def _config_for(candidate: MarketCandidate) -> dict[str, Any]:
+        label = candidate.base_token_symbol or candidate.base_token_name or candidate.market_id
+        if candidate.base_token_name and candidate.base_token_symbol and candidate.base_token_name.lower() != candidate.base_token_symbol.lower():
+            label = f"{candidate.base_token_symbol} · {candidate.base_token_name}"
         return {
             "id": candidate.market_id,
-            "label": candidate.base_token_symbol or candidate.market_id,
+            "label": label,
             "marketName": candidate.base_token_name,
             "imageUrl": candidate.image_url,
             "poolId": candidate.identity.pair_address,

@@ -11,8 +11,9 @@ neural state, sensor encoding, physics units, or actuator semantics.
   ACES filmic tone mapping, selective bloom, vignette, and an optional low-cost
   normal/AO pass.
 - The canonical Flybody XML and its referenced OBJ meshes are vendored under
-  `frontend/public/models/flybody/` through the checked-in `third_party/flybody/`
-  source tree. No optional prop bundle is loaded by the scene.
+  `third_party/flybody/` and copied into the generated
+  `frontend/public/models/flybody/` build path. The supplied street-city GLB is
+  loaded as the surrounding scene; no unrelated prop bundle is required.
 
 ## Quality presets
 
@@ -40,25 +41,29 @@ agent bodies, sensors, brains, and trajectories remain unchanged.
 
 ## Habitats and particles
 
-The world contains up to 128 dynamically keyed market habitats. Their column,
-ring, semantic food/rot/trash/market props, and particle intensity are derived
-from the existing provider-neutral
+The world contains up to 128 dynamically keyed market habitats. Their compact
+token marker, neon label, floor glow, semantic food/rot/trash/market props, and
+particle intensity are derived from the existing provider-neutral
 `HabitatProperties` (`brightness`, `particleActivity`, `chaos`, and motion),
 not from a hidden target or scripted path. All particles are instances of one
 pooled `InstancedMesh`; fly trails are one dynamic `LineSegments` buffer.
 
-The market scene is intentionally restrained and uses only the physical market
-habitats as semantic objects; unrelated trash and cardboard props are not
-rendered. A failed market-data request cannot turn a missing habitat into a
-fake prop or target. In live mode the frontend starts empty and waits for the
-authoritative market snapshot; fixture habitats exist only when a local test
-scenario is explicitly selected.
+The market scene uses physical market habitats as semantic objects placed on
+the street-city floor. Food habitats use fruit/banana props, rot habitats use
+spoiled scraps, trash habitats use cans and bags, and quieter markets use
+crates. The city GLB is tinted for night, the Canva sky is assigned to
+`scene.background`, and a restrained teal fog reduces the distant hard edge.
+Perimeter set dressing is presentation-only. A failed
+market-data request cannot turn a missing habitat into a fake prop or target.
+In live mode the frontend starts empty and waits for the authoritative market
+snapshot; fixture habitats exist only when a local test scenario is explicitly
+selected.
 
 ## Presentation and debug modes
 
 The initial view is `DEMO`: product title, agent count, CNS-active count, and a
-compact pressure status. The camera starts in the swarm overview phase of the
-auto director so the biological agents are visible immediately. Press `` ` `` or click the top-right toggle to enter
+compact pressure status. The camera starts in the user-controlled free street
+view; cinematic views are opt-in from developer controls. Press `` ` `` or click the top-right toggle to enter
 `DEBUG`, which exposes socket state, causal telemetry, population state,
 camera targeting, scenarios, and render metrics.
 

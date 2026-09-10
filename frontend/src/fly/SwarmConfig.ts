@@ -25,7 +25,10 @@ export const VISUAL_FLY_COUNT = SWARM_SIZE * BODIES_PER_BRAIN
  * from spawning on top of one another while keeping the swarm visibly far
  * from the coin piles.
  */
-export const SWARM_LAUNCH_CENTER = new Vector3(0, 0.66, 0.84)
+// Launch in the middle of the actual city floor. The previous z=0.84 launch
+// put most bodies beside the arena boundary, where a neural turn could look
+// like a frozen swarm after the wall clamp engaged.
+export const SWARM_LAUNCH_CENTER = new Vector3(0, 0.66, 0)
 
 export function swarmFlyId(index: number) {
   return `fly-${String(index + 1).padStart(3, '0')}`

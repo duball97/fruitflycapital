@@ -43,17 +43,21 @@ driving it, so the UI and this report keep those claims separate.
 
 - The renderer targets TuragaLab Flybody's canonical XML/OBJ body hierarchy.
 - This checkout contains the upstream Flybody XML and its 85 referenced OBJ
-  meshes under `third_party/flybody`; the browser-facing path is a deliberate
-  symlink at `frontend/public/models/flybody`. The frontend prebuild check
-  verifies the XML and every referenced mesh.
-- The room has an explicit 2 m × 2 m × 1 m physical volume, a floor, up to 128
-  dynamically instantiated token habitats, simple odor fields, visual
-  sampling, contact sampling, and pooled habitat particles.
+  meshes under `third_party/flybody`; the frontend prebuild script copies them
+  into a real browser-facing directory and verifies every referenced mesh.
+- The room has an explicit 2 m × 2 m × 1 m physical volume, a full-screen
+  presentation floor, the supplied street-city GLB surrounding the arena, up
+  to 128 dynamically instantiated token habitats, simple odor fields, visual
+  sampling, contact sampling, and pooled habitat particles. The default camera
+  is the user-controlled free street view, framed around the city floor.
 - Each habitat is a compact semantic smell source: food, rot, trash, or market
-  crate. The category is a deterministic visual metaphor derived from encoded
-  activity/liquidity/risk; it is not a direct navigation rule. Brightness,
-  motion, odor, risk, and particles come from the provider-neutral
-  `TokenState`/signal model or the documented fixture.
+  crate. Live habitats show food, bananas, rot, trash cans/bags, or crates
+  instead of abstract floating signal columns. The category is a deterministic
+  visual metaphor derived from encoded activity/liquidity/risk; it is not a
+  direct navigation rule. Brightness, motion, odor, risk, and particles come
+  from the provider-neutral `TokenState`/signal model or the documented
+  fixture. Live labels include the token symbol and full coin name where the
+  provider supplies both.
 
 ### Market and fund boundary
 
@@ -114,10 +118,9 @@ The strongest practical audit is a source-ablation test:
   prove database connectivity.
 5. A persistent production database and authenticated backend deployment for
   fund ledger/NAV data.
-6. Redeploy the vault as the new transparent proxy (the first testnet address
-  was a legacy direct deployment), then configure its proxy address, ProxyAdmin
-  owner, Privy wallet/policy, and a human-approved live execution run.
-  Quote/calldata is not a filled trade.
+6. Configure the deployed transparent proxy's ProxyAdmin owner, Privy
+  wallet/policy, and a human-approved live execution run. Quote/calldata is
+  not a filled trade.
 7. More market providers and rolling signal windows in production, with clear
   provenance and freshness handling.
 8. Fly-to-fly sensory coupling through the environment, social experiments,
@@ -132,7 +135,8 @@ The strongest practical audit is a source-ablation test:
 - Third, benchmark 16, 32, and 100 runtime schedules before choosing the final
   independent-brain count.
 - Fourth, deploy and verify the canonical Flybody assets after committing the
-  symlink and `third_party/flybody` directory.
+  build script and `third_party/flybody` source. The browser-facing directory
+  is generated and intentionally is not a symlink.
 - Fifth, run the Supabase migration and confirm cached candidates survive a
   backend restart.
 - Sixth, make swarm observations durable before enabling
@@ -159,16 +163,19 @@ cd frontend && npm run check && npm run build
 cd ../contracts && forge test --offline -vvv
 ```
 
-## Git/deployment note for the Flybody symlink
+## Git/deployment note for the Flybody asset
 
-`frontend/public/models/flybody` is a directory symlink into the vendored
-upstream checkout. Do not stage a path below it such as
-`frontend/public/models/flybody/README.txt`; Git resolves that as a path
-outside the symlink target and reports “beyond a symbolic link”. Stage the
-link and its real target instead:
+The old `frontend/public/models/flybody` directory symlink caused Git's
+“beyond a symbolic link” error when a path such as
+`frontend/public/models/flybody/README.txt` was staged. That symlink has been
+removed. The checked-in source remains under `third_party/flybody`, and the
+frontend `prebuild` script copies only the XML and referenced OBJ meshes into
+the ignored browser-facing directory:
 
 ```bash
-git add frontend/public/models/flybody third_party/flybody
+git add frontend/scripts/prepare-flybody-assets.mjs third_party/flybody
 ```
 
-The symlink target must be committed for Vercel to build the canonical body.
+Vercel rebuilds the real browser asset directory from those sources, so a
+nested `README.txt` under `frontend/public/models/flybody` is neither needed
+nor staged.

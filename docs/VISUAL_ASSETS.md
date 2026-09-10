@@ -16,6 +16,15 @@ colored tops identify the encoded sensory parameters assigned to each habitat.
 The world can render up to 128 market identities without downloading one
 large prop pack per token.
 
+The supplied `street_city_7_for_games_free.glb` is copied to
+`frontend/public/models/city/street_city.glb` and loaded by
+`frontend/src/world/CityBackdrop.ts`. It is fitted around the presentation
+floor while the physical fly bounds stay unchanged and receives a cool night
+grade. Lightweight street details add barrels, trash bags, crates, safety
+lines, oil stains, raised platforms, fog, and colored floor glow. Live habitats
+are placed on the city floor and display neon token symbol/name labels plus
+physical food, rot, trash-can, bag, or crate props.
+
 The scene no longer uses unrelated bundled context props; only the coin/market
 habitats are rendered as semantic objects.
 

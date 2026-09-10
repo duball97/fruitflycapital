@@ -239,7 +239,6 @@ let previous = clock
 let nextLogAt = 0
 let nextCausalUiAt = 0
 let nextSwarmTelemetryAt = 0
-let startupElapsed = 0
 let startupReleased = false
 let nextPerfUiAt = 0
 function animate(now: number) {
@@ -349,12 +348,11 @@ function animate(now: number) {
 
 function updateStartupGate(delta: number) {
   if (startupReleased) return
-  startupElapsed += Math.min(delta, 0.1)
-  const allBodiesMoving = agents.every((agent) => agent.body.velocity.lengthSq() > 1e-10)
+  const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
   if (!canonicalBodiesReady) {
     startupMessage.textContent = 'LOADING CANONICAL FLYBODY'
     startupProgress.style.width = '42%'
-  } else if (!allBodiesMoving) {
+  } else if (movingAgents < Math.max(1, Math.ceil(SWARM_SIZE * 0.5))) {
     startupMessage.textContent = 'STARTING SWARM MOTION'
     startupProgress.style.width = '78%'
   } else {
@@ -362,10 +360,9 @@ function updateStartupGate(delta: number) {
     startupProgress.style.width = '100%'
   }
 
-  // The timeout prevents a neutral/off experiment or a paused tab from
-  // leaving the user behind the splash forever. Normal startup releases as
-  // soon as all canonical bodies have produced a motion sample.
-  if (canonicalBodiesReady && (allBodiesMoving || startupElapsed >= 4)) {
+  // There is deliberately no preview timeout. The public scene opens only
+  // after the live MaleCNS path has produced real physical movement.
+  if (canonicalBodiesReady && brainSocket.getStatus() === 'connected' && movingAgents >= Math.max(1, Math.ceil(SWARM_SIZE * 0.5))) {
     startupReleased = true
     startupScreen.classList.add('is-ready')
     window.setTimeout(() => startupScreen.remove(), 500)

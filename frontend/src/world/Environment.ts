@@ -1,5 +1,6 @@
-import { AmbientLight, Color, DirectionalLight, Fog, Group, HemisphereLight, Scene, SRGBColorSpace, TextureLoader, Vector3 } from 'three'
+import { AmbientLight, Color, DirectionalLight, Fog, Group, HemisphereLight, PointLight, Scene, SRGBColorSpace, TextureLoader, Vector3 } from 'three'
 import { Arena } from './Arena'
+import { CityBackdrop } from './CityBackdrop'
 import { MOCK_HABITAT_COLORS, MOCK_HABITAT_POSITIONS, MOCK_TOKEN_STATES } from './tokenFixtures'
 import { TokenHabitat, type HabitatScenario } from './TokenHabitat'
 import type { OdorFieldSample } from '../fly/FlySensors'
@@ -13,6 +14,7 @@ const HABITAT_PALETTE = [0x4bd6a0, 0x6ca8ff, 0xff6e80, 0xf5c84c, 0xa980ff, 0xff9
 export class Environment {
   readonly group = new Group()
   readonly arena = new Arena()
+  readonly city = new CityBackdrop()
   readonly bounds = this.arena.bounds
   private readonly habitatsById = new Map<string, TokenHabitat>()
   private readonly habitatList: TokenHabitat[] = []
@@ -26,6 +28,7 @@ export class Environment {
 
   constructor() {
     this.group.name = 'Environment'
+    this.group.add(this.city.group)
     this.group.add(this.arena.group)
     this.particles = new ParticleField(this.habitatList, 24, WORLD_HABITAT_CAPACITY)
     this.group.add(this.particles.mesh)
@@ -153,22 +156,31 @@ export class Environment {
   }
 
   setupLighting(scene: Scene) {
-    scene.background = new Color(0x7e8d87)
+    // The image is a Three.js scene background, not a UI overlay. Keep a
+    // dark fallback while it loads so the city never flashes pale gray.
+    scene.background = new Color(0x061017)
     const background = new TextureLoader().load('/design/fruit-fly-capital-canva-background.png', (texture) => {
       texture.colorSpace = SRGBColorSpace
       scene.background = texture
     })
     background.colorSpace = SRGBColorSpace
-    scene.fog = new Fog(0x7e8d87, 3.2, 6.5)
-    scene.add(new HemisphereLight(0xe8f4ed, 0x5e6962, 2.1))
-    scene.add(new AmbientLight(0xc6d5cf, 0.52))
-    const key = new DirectionalLight(0xffe8c5, 3.2)
+    scene.fog = new Fog(0x102b2b, 1.35, 4.8)
+    scene.add(new HemisphereLight(0x476d78, 0x081318, 0.72))
+    scene.add(new AmbientLight(0x17333a, 0.32))
+    const key = new DirectionalLight(0xffc77d, 1.35)
     key.position.set(-1.5, 2.2, 1.1)
     key.castShadow = false
     scene.add(key)
-    const fill = new DirectionalLight(0xbad5ff, 1.15)
+    const fill = new DirectionalLight(0x61b9d6, 0.72)
     fill.position.set(1.2, 1.1, -1.3)
     scene.add(fill)
+    // Low-intensity street pools sell the night scene without turning every
+    // habitat into an overexposed glowing disk.
+    for (const [x, z, color] of [[-1.8, -1.4, 0x37b8ff], [1.65, 0.9, 0xff8c48], [0.2, 1.75, 0x72f0bf]] as const) {
+      const streetLight = new PointLight(color, 0.42, 1.3, 2)
+      streetLight.position.set(x, 0.46, z)
+      scene.add(streetLight)
+    }
   }
 
 }

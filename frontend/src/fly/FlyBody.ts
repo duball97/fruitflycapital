@@ -33,9 +33,9 @@ export class FlyBody {
   // A 6 rad/s hard cap made a held yaw command spin the body like a
   // turntable. This lower physical rate limit keeps heading changes visible
   // while preserving the same actuator interface for every controller.
-  readonly maxAngularSpeedRadS = 2.4
+  readonly maxAngularSpeedRadS = 1.35
   readonly linearDrag = 0.0032
-  readonly angularDrag = 3.8
+  readonly angularDrag = 5.4
   // Approximate adult-fly collision radius in metres; the rendered mesh uses
   // the same physical scale rather than an arbitrary room-sized avatar.
   readonly collisionRadius = 0.0025
@@ -46,12 +46,29 @@ export class FlyBody {
   private readonly angularAcceleration = new Vector3()
   private readonly rotationAxis = new Vector3()
   private readonly rotationDelta = new Quaternion()
+  private readonly smoothedCommand: ActuatorCommand = {
+    forwardThrust: 0,
+    verticalThrust: 0.5,
+    yawTorque: 0,
+    pitchTorque: 0,
+    rollTorque: 0,
+  }
 
   step(dt: number, command: ActuatorCommand, bounds: WorldBounds) {
+    // Brain responses arrive at a much lower cadence than the render/physics
+    // loop. Blend the motor command in the body, so each new neural window
+    // produces continuous acceleration instead of visible 2 Hz jolts.
+    const commandAlpha = 1 - Math.exp(-14 * dt)
+    this.smoothedCommand.forwardThrust += (command.forwardThrust - this.smoothedCommand.forwardThrust) * commandAlpha
+    this.smoothedCommand.verticalThrust += (command.verticalThrust - this.smoothedCommand.verticalThrust) * commandAlpha
+    this.smoothedCommand.yawTorque += (command.yawTorque - this.smoothedCommand.yawTorque) * commandAlpha
+    this.smoothedCommand.pitchTorque += (command.pitchTorque - this.smoothedCommand.pitchTorque) * commandAlpha
+    this.smoothedCommand.rollTorque += (command.rollTorque - this.smoothedCommand.rollTorque) * commandAlpha
+
     const forward = this.forward.set(0, 0, -1).applyQuaternion(this.quaternion).normalize()
     const up = this.up.set(0, 1, 0).applyQuaternion(this.quaternion).normalize()
-    const force = this.force.copy(forward).multiplyScalar(command.forwardThrust * this.maxForwardForceN)
-    force.addScaledVector(up, command.verticalThrust * this.maxVerticalForceN)
+    const force = this.force.copy(forward).multiplyScalar(this.smoothedCommand.forwardThrust * this.maxForwardForceN)
+    force.addScaledVector(up, this.smoothedCommand.verticalThrust * this.maxVerticalForceN)
     force.y -= this.gravityN
     this.removeOutwardBoundaryForce(force, bounds)
     force.addScaledVector(this.velocity, -this.linearDrag)
@@ -65,7 +82,7 @@ export class FlyBody {
     // local -Z -> world +X. This keeps the keyboard D command, the decoder's
     // documented positive-right sign, the heading arrow, and the canonical
     // Flybody head direction consistent.
-    const localTorque = this.localTorque.set(command.pitchTorque, -command.yawTorque, command.rollTorque)
+    const localTorque = this.localTorque.set(this.smoothedCommand.pitchTorque, -this.smoothedCommand.yawTorque, this.smoothedCommand.rollTorque)
     const angularAcceleration = this.angularAcceleration.set(
       (localTorque.x * this.maxTorqueNm) / this.inertia.x,
       (localTorque.y * this.maxTorqueNm) / this.inertia.y,

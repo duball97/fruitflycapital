@@ -1,4 +1,4 @@
-import { CanvasTexture, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
+import { BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, SphereGeometry, Vector3 } from 'three'
 import type { WorldBounds } from '../fly/FlyBody'
 
 export const ARENA_BOUNDS: WorldBounds = {
@@ -25,6 +25,59 @@ export class Arena {
     floor.rotation.x = -Math.PI / 2
     floor.name = 'Floor'
     this.group.add(floor)
+    this.addStreetDetails()
+  }
+
+  private addStreetDetails() {
+    const details = new Group()
+    details.name = 'StreetDetails'
+    const lineMaterial = new MeshStandardMaterial({ color: 0xe0bd55, emissive: 0x3f2e0c, emissiveIntensity: 0.22, roughness: 0.62 })
+    for (const z of [-1.9, 1.9]) {
+      const line = new Mesh(new BoxGeometry(4.8, 0.006, 0.018), lineMaterial)
+      line.position.set(0, 0.006, z)
+      details.add(line)
+    }
+    const oilMaterial = new MeshStandardMaterial({ color: 0x171b1d, transparent: true, opacity: 0.55, roughness: 0.98 })
+    for (const [x, z, sx, sz] of [[-1.8, -0.9, 0.42, 0.16], [1.6, 0.7, 0.31, 0.12], [-0.7, 1.65, 0.25, 0.1]] as const) {
+      const stain = new Mesh(new CircleGeometry(1, 24), oilMaterial)
+      stain.rotation.x = -Math.PI / 2
+      stain.position.set(x, 0.007, z)
+      stain.scale.set(sx, sz, 1)
+      details.add(stain)
+    }
+    const platformMaterial = new MeshStandardMaterial({ color: 0x3f4b4a, roughness: 0.82, metalness: 0.12 })
+    for (const [x, y, z, sx, sy, sz] of [[-2.05, 0.055, 1.25, 0.45, 0.11, 0.32], [1.95, 0.035, -1.45, 0.38, 0.07, 0.28]] as const) {
+      const platform = new Mesh(new BoxGeometry(sx, sy, sz), platformMaterial)
+      platform.position.set(x, y, z)
+      platform.castShadow = true
+      platform.receiveShadow = true
+      details.add(platform)
+    }
+    const crateMaterial = new MeshStandardMaterial({ color: 0x76553d, roughness: 0.88 })
+    for (const [x, z, rotation] of [[-2.25, -1.6, 0.12], [2.25, 1.35, -0.2], [1.6, 1.8, 0.08]] as const) {
+      const crate = new Mesh(new BoxGeometry(0.28, 0.2, 0.24), crateMaterial)
+      crate.position.set(x, 0.1, z)
+      crate.rotation.y = rotation
+      crate.castShadow = true
+      details.add(crate)
+    }
+    const barrelMaterial = new MeshStandardMaterial({ color: 0x3e4647, metalness: 0.58, roughness: 0.58 })
+    for (const [x, z] of [[-2.35, -1.2], [2.35, -0.7], [-1.85, 1.7]] as const) {
+      const barrel = new Mesh(new CylinderGeometry(0.1, 0.1, 0.28, 12), barrelMaterial)
+      barrel.position.set(x, 0.14, z)
+      barrel.rotation.z = 0.04
+      barrel.castShadow = true
+      details.add(barrel)
+    }
+    const bagMaterial = new MeshStandardMaterial({ color: 0x15191b, roughness: 0.96 })
+    for (const [x, z, sx] of [[-2.1, -1.35, 1.2], [2.15, -0.95, 0.9], [1.9, 1.55, 1.1]] as const) {
+      const bag = new Mesh(new SphereGeometry(0.13, 10, 7), bagMaterial)
+      bag.position.set(x, 0.1, z)
+      bag.scale.set(sx, 0.8, 0.75)
+      bag.castShadow = true
+      details.add(bag)
+    }
+    this.group.add(details)
   }
 }
 
