@@ -98,19 +98,33 @@ class SupabaseMarketCache:
 
     def load_active(self, now_ms: int) -> tuple[MarketUniverse, MarketRound] | None:
         """Load the newest non-expired arena round, if one is available."""
-        from .universe import MarketRound, MarketUniverse
-
-        rows = self._request(
-            "GET",
-            self.config.round_table,
-            query={
+        return self._load_round(
+            {
                 "select": "*",
                 "expires_at_ms": f"gt.{int(now_ms)}",
                 "order": "started_at_ms.desc",
                 "limit": "1",
             },
-            write=False,
+            now_ms,
         )
+
+    def load_latest(self, now_ms: int, *, max_age_ms: int) -> tuple[MarketUniverse, MarketRound] | None:
+        """Load a bounded stale round for outages/rate limits."""
+        lower_bound = max(0, int(now_ms) - max(0, int(max_age_ms)))
+        return self._load_round(
+            {
+                "select": "*",
+                "started_at_ms": f"gte.{lower_bound}",
+                "order": "started_at_ms.desc",
+                "limit": "1",
+            },
+            now_ms,
+        )
+
+    def _load_round(self, query: Mapping[str, str], now_ms: int) -> tuple[MarketUniverse, MarketRound] | None:
+        from .universe import MarketRound, MarketUniverse
+
+        rows = self._request("GET", self.config.round_table, query=query, write=False)
         if not isinstance(rows, list) or not rows:
             return None
         row = rows[0]

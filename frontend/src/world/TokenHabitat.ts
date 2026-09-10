@@ -82,7 +82,7 @@ export class TokenHabitat {
     this.logo.name = 'TokenLogo'
     this.logo.userData.tokenHabitatId = state.id
     this.logo.position.y = 0.17
-    this.logo.scale.set(0.102, 0.102, 1)
+    this.logo.scale.set(0.076, 0.076, 1)
     this.group.add(this.logo)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0x6d654f, metalness: 0.4, roughness: 0.58 }))

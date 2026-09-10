@@ -8,9 +8,10 @@ import { FlyRenderer } from '../rendering/FlyRenderer'
  *
  * The primary FlyAgent remains the only body that senses, runs a controller,
  * owns a brain runtime, and contributes to swarm statistics. Followers share
- * that agent's actuator intent for presentation, with small deterministic
- * spacing, lag, orientation, speed, and wingbeat differences so five bodies
- * do not look like exact clones.
+ * that agent's actuator intent for presentation, with deterministic formation
+ * spacing, lag, orientation, speed, and wingbeat differences so the enlarged
+ * presentation bodies remain visibly distinct without changing the
+ * underlying agent or trading behavior.
  */
 export class VisualFlyFollower {
   readonly renderer: FlyRenderer
@@ -42,11 +43,17 @@ export class VisualFlyFollower {
     this.speedScale = 0.95 + ((cohortIndex * 7 + slot * 11) % 11) / 100
     this.renderer = new FlyRenderer((this.phase / (Math.PI * 2)) % 1)
 
+    // The renderer magnifies the millimetre-scale fly mesh by 12x. The old
+    // centimetre-scale offsets therefore put several silhouettes through one
+    // another. Fan the render-only bodies into a broad diamond around their
+    // primary instead of letting them occupy nearly the same screen-space
+    // footprint. The spacing is visual only; it does not change the primary's
+    // physics, sensing, or trading decisions.
     const layouts = [
-      [-0.018, 0.010, 0.014],
-      [0.018, 0.014, 0.010],
-      [-0.022, -0.006, -0.010],
-      [0.022, -0.004, -0.014],
+      [-0.11, 0.024, 0.075],
+      [0.11, 0.030, 0.065],
+      [-0.12, -0.018, -0.085],
+      [0.12, -0.012, -0.095],
     ] as const
     const layout = layouts[slot % layouts.length]!
     this.localOffset = new Vector3(layout[0], layout[1], layout[2])

@@ -11,7 +11,11 @@ export type HabitatContactSampler = (position: Vector3) => boolean
 // These are local sensory thresholds, not token-specific navigation commands.
 // The former onset was high enough that a fly could pass through the readable
 // part of the field without ever entering the approach state.
-const LANDING_ODOR_ONSET = 0.02
+// Background plumes overlap across the large scene, but the live habitats
+// currently peak around 0.39-0.40 at approach distance. The previous 0.48
+// threshold was therefore unreachable: flies stayed in CRUISE forever and
+// could never produce contact, dwell, BUY, or departure SELL events.
+const LANDING_ODOR_ONSET = 0.34
 
 export class FlyAgent {
   readonly body = new FlyBody()
@@ -42,6 +46,18 @@ export class FlyAgent {
 
   get mode() {
     return this.controller.mode
+  }
+
+  snapshot() {
+    return this.body.snapshot()
+  }
+
+  restore(snapshot: ReturnType<FlyBody['snapshot']>) {
+    this.body.restore(snapshot)
+    // A browser reload cannot restore the exact controller accumulator. Start
+    // the body in cruise so a stale landed state cannot freeze the swarm.
+    this.landingState = 'cruise'
+    this.habitatContact = false
   }
 
   updateFixed(

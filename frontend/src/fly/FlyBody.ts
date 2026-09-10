@@ -12,6 +12,13 @@ export interface BodyContact {
   wall: boolean
 }
 
+export interface FlyBodySnapshot {
+  position: { x: number; y: number; z: number }
+  velocity: { x: number; y: number; z: number }
+  quaternion: { x: number; y: number; z: number; w: number }
+  angularVelocity: { x: number; y: number; z: number }
+}
+
 export class FlyBody {
   readonly position = new Vector3(0, 0.48, 0)
   readonly velocity = new Vector3()
@@ -45,6 +52,22 @@ export class FlyBody {
   // Approximate adult-fly collision radius in metres; the rendered mesh uses
   // the same physical scale rather than an arbitrary room-sized avatar.
   readonly collisionRadius = 0.0025
+
+  snapshot(): FlyBodySnapshot {
+    return {
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      velocity: { x: this.velocity.x, y: this.velocity.y, z: this.velocity.z },
+      quaternion: { x: this.quaternion.x, y: this.quaternion.y, z: this.quaternion.z, w: this.quaternion.w },
+      angularVelocity: { x: this.angularVelocity.x, y: this.angularVelocity.y, z: this.angularVelocity.z },
+    }
+  }
+
+  restore(snapshot: FlyBodySnapshot) {
+    this.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z)
+    this.velocity.set(snapshot.velocity.x, snapshot.velocity.y, snapshot.velocity.z)
+    this.quaternion.set(snapshot.quaternion.x, snapshot.quaternion.y, snapshot.quaternion.z, snapshot.quaternion.w).normalize()
+    this.angularVelocity.set(snapshot.angularVelocity.x, snapshot.angularVelocity.y, snapshot.angularVelocity.z)
+  }
   private readonly forward = new Vector3()
   private readonly up = new Vector3()
   private readonly force = new Vector3()

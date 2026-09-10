@@ -62,6 +62,18 @@ def test_dexscreener_client_batches_token_lookup_at_thirty_addresses():
     assert requested[1] == "/tokens/v1/ethereum/0xtoken30"
 
 
+def test_dexscreener_client_search_encodes_query():
+    requested: list[str] = []
+
+    def fetch(url: str, _timeout: float):
+        requested.append(urlparse(url).path + "?" + urlparse(url).query)
+        return {"pairs": []}
+
+    client = DexScreenerClient(fetcher=fetch)
+    assert client.search("USDG / ETH") == []
+    assert requested == ["/latest/dex/search?q=USDG%20%2F%20ETH"]
+
+
 def test_coinmarketcap_client_caches_classic_top_listings():
     calls = 0
 
@@ -188,6 +200,27 @@ def test_universe_uses_profiles_as_seed_universe_and_filters_dex():
     assert universe.as_dict()["candidateCount"] == 1
 
 
+def test_universe_adds_chain_filtered_search_results_to_world_directory():
+    pair = {**_pair("0xsearch-pair", token="0xsearch-token"), "chainId": "robinhood", "dexId": "uniswap-v4"}
+
+    def fetch(url: str, _timeout: float):
+        path = urlparse(url).path
+        if path == "/token-profiles/latest/v1" or path == "/token-profiles/recent-updates/v1":
+            return []
+        if path == "/latest/dex/search":
+            return {"pairs": [pair]}
+        raise AssertionError(path)
+
+    provider = DexScreenerUniverseProvider(
+        DexScreenerClient(fetcher=fetch),
+        chains=("robinhood",),
+        search_queries=("WETH",),
+    )
+    universe = provider.refresh(now_ms=1_700_010_000_000)
+
+    assert [item.market_id for item in universe.core_markets] == ["robinhood:0xsearch-pair"]
+
+
 def test_universe_accepts_native_base_venue_when_dex_filter_is_empty():
     pair = {**_pair(), "chainId": "base", "dexId": "aerodrome"}
 
@@ -286,6 +319,39 @@ def test_round_separates_physical_world_capacity_from_deep_observers():
     assert len(round_state.markets) == 2
     assert len(round_state.deep_markets) == 1
     assert round_state.deep_markets[0].market_id in {item.market_id for item in round_state.markets}
+
+
+def test_discovery_replays_partial_cached_round_during_provider_rate_limit():
+    from malecns.market.universe import MarketRound, MarketUniverse
+
+    candidate = candidate_from_pair(_pair("0xcached", token="0xcached-token"), observed_at_ms=1_700_010_000_000)
+    assert candidate is not None
+    universe = MarketUniverse((candidate,), (), 1_700_010_000_000)
+    cached_round = MarketRound(
+        round_number=4,
+        started_at_ms=1_700_010_000_000,
+        expires_at_ms=1_700_010_600_000,
+        markets=(candidate,),
+        deep_markets=(),
+    )
+
+    class Cache:
+        def load_active(self, _now_ms):
+            return universe, cached_round
+
+    provider = DexScreenerUniverseProvider(
+        DexScreenerClient(fetcher=lambda *_: (_ for _ in ()).throw(AssertionError("refresh should not run"))),
+        chains=("ethereum",),
+    )
+    discovery = DexScreenerMarketDiscovery(
+        provider,
+        MarketRoundManager(MarketSelector(world_capacity=100)),
+        cache=Cache(),
+    )
+
+    round_state = discovery.active_round(now_ms=1_700_010_100_000)
+
+    assert [item.market_id for item in round_state.markets] == ["ethereum:0xcached"]
 
 
 def test_world_directory_keeps_tracked_low_liquidity_markets_outside_deep_shortlist():

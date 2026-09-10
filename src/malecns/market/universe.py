@@ -64,6 +64,10 @@ class DexScreenerUniverseProvider:
     pool_bootstrap: Callable[..., list[dict[str, Any]]] | None = None
     cmc_client: CoinMarketCapClient | None = None
     cmc_limit: int = 100
+    # Search is an additive directory feed. Keep it opt-in for direct callers
+    # and tests; the environment-backed production provider supplies the
+    # Robinhood quote/asset queries below.
+    search_queries: tuple[str, ...] = ()
     # CMC's ranked listings are global. Keep that enrichment scoped to the
     # chain we actually want to seed from CMC instead of importing unrelated
     # networks from the same table. This is intentionally separate from
@@ -175,6 +179,31 @@ class DexScreenerUniverseProvider:
                 current = target.get(candidate.market_id)
                 if current is None or _candidate_quality(candidate) > _candidate_quality(current):
                     target[candidate.market_id] = candidate
+
+        # Profile feeds are intentionally small and do not enumerate every
+        # active pair. Search common quote/asset names to widen the public
+        # directory, then retain only exact pairs on the allowed chain(s).
+        # Search results are discovery inputs only; they do not influence fly
+        # movement or make a token execution-eligible.
+        for query in _unique_strings(self.search_queries):
+            try:
+                search_pairs = self.client.search(query, force=force)
+            except Exception:
+                continue
+            for pair in search_pairs:
+                if _norm(pair.get("chainId")) not in allowed_chains:
+                    continue
+                candidate = candidate_from_pair(
+                    pair,
+                    profile_class=profile_class,
+                    observed_at_ms=observed_at_ms,
+                    cmc_context=cmc_context,
+                )
+                if candidate is None or (allowed_dexes and _norm(candidate.identity.dex_id) not in allowed_dexes):
+                    continue
+                current = core_pairs.get(candidate.market_id)
+                if current is None or _candidate_quality(candidate) > _candidate_quality(current):
+                    core_pairs[candidate.market_id] = candidate
 
         core = tuple(sorted(core_pairs.values(), key=_universe_sort_key)[: max(0, self.core_target)])
         recent = tuple(sorted(recent_pairs.values(), key=_universe_sort_key)[: max(0, self.recent_target)])
@@ -382,19 +411,23 @@ class DexScreenerMarketDiscovery:
             client,
             chains=chains,
             dex_ids=dex_ids,
-            core_target=int(os.getenv("NEUROSWARM_MARKET_CORE_TARGET", "100")),
-            recent_target=int(os.getenv("NEUROSWARM_MARKET_RECENT_TARGET", "20")),
-            profile_limit=int(os.getenv("NEUROSWARM_MARKET_PROFILE_LIMIT", "60")),
+            core_target=int(os.getenv("NEUROSWARM_MARKET_CORE_TARGET", "150")),
+            recent_target=int(os.getenv("NEUROSWARM_MARKET_RECENT_TARGET", "50")),
+            profile_limit=int(os.getenv("NEUROSWARM_MARKET_PROFILE_LIMIT", "100")),
             seed_tokens=seeds,
             pool_bootstrap=graph_client.top_pools if graph_client is not None else None,
             cmc_client=CoinMarketCapClient.from_env(),
             cmc_limit=int(os.getenv("CMC_LISTINGS_LIMIT", "100")),
             cmc_chains=_csv(os.getenv("CMC_ALLOWED_CHAINS", "robinhood")) or ("robinhood",),
+            search_queries=_csv(os.getenv(
+                "NEUROSWARM_MARKET_SEARCH_QUERIES",
+                "WETH,ETH,USDG,USDC,USDT,NVDA,AAPL,cbBTC,SPCX,ROBINHOOD,ROBIN,FLY,COIN,STOCK,SWAP,AI,BTC,WBTC,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z",
+            )),
         )
         selector = MarketSelector(
             eligibility,
             active_count=int(os.getenv("NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT", "12")),
-            world_capacity=int(os.getenv("NEUROSWARM_MARKET_WORLD_CAPACITY", "100")),
+            world_capacity=int(os.getenv("NEUROSWARM_MARKET_WORLD_CAPACITY", "150")),
         )
         from .supabase_cache import SupabaseMarketCache
 
@@ -409,23 +442,33 @@ class DexScreenerMarketDiscovery:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         now_monotonic = time.monotonic()
         if force or self._universe is None or now_monotonic - self._last_refresh_monotonic >= self.refresh_seconds:
+            cached_is_stale = False
             if not force and self._universe is None and self.cache is not None:
                 try:
                     cached = self.cache.load_active(current_ms)
                 except Exception as exc:
                     cached = None
                     self.last_error = f"cache read: {exc}"
+                if cached is None:
+                    load_latest = getattr(self.cache, "load_latest", None)
+                    if callable(load_latest):
+                        try:
+                            cached = load_latest(
+                                current_ms,
+                                max_age_ms=int(float(os.getenv("NEUROSWARM_MARKET_STALE_CACHE_MAX_SECONDS", "86400")) * 1000),
+                            )
+                            cached_is_stale = cached is not None
+                        except Exception as exc:
+                            self.last_error = f"stale cache read: {exc}"
                 if cached is not None:
                     self._universe, cached_round = cached
-                    # A previous deployment may have persisted a small round
-                    # (for example the old five-habitat prototype). Do not
-                    # reuse that snapshot after the configured city capacity
-                    # has increased; perform a fresh discovery instead.
-                    desired_world = min(
-                        max(0, self.rounds.selector.world_capacity),
-                        max(0, self.universe_provider.core_target),
-                    )
-                    if desired_world > 0 and len(cached_round.markets) < desired_world:
+                    # A cached round may be smaller than the current city
+                    # capacity because it was written by an earlier deploy,
+                    # a provider response was partial, or DexScreener is
+                    # temporarily rate-limiting refreshes. A valid non-empty
+                    # round is still preferable to an empty scene; the next
+                    # successful refresh can grow it to the new capacity.
+                    if not cached_round.markets:
                         self._universe = None
                     elif any(
                         _norm(market.identity.chain_id) not in {
@@ -441,7 +484,19 @@ class DexScreenerMarketDiscovery:
                         self.rounds._round_counter = max(self.rounds._round_counter, cached_round.round_number)
                         self._last_refresh_monotonic = now_monotonic
                         self._last_cached_round_started_ms = cached_round.started_at_ms
-                        return cached_round
+                        # A round written before the broad search directory
+                        # was enabled can be valid but underfilled. Refresh
+                        # it once on startup so deployments do not stay at an
+                        # old 39/40-place snapshot until the round expires.
+                        # The cached round remains installed as the fallback
+                        # if the provider is unavailable.
+                        needs_directory_expansion = bool(self.universe_provider.search_queries) and len(cached_round.markets) < self.rounds.selector.world_capacity
+                        if needs_directory_expansion:
+                            self.last_error = "refreshing underfilled cached market round"
+                        else:
+                            if cached_is_stale:
+                                self.last_error = "serving stale cached market round"
+                            return cached_round
             try:
                 self._universe = self.universe_provider.refresh(now_ms=current_ms, force=force)
                 self._last_refresh_monotonic = now_monotonic
@@ -812,6 +867,18 @@ def _unique_addresses(values: Iterable[str]) -> list[str]:
             result.append(normalized)
             seen.add(normalized.lower())
     return result
+
+
+def _unique_strings(values: Iterable[str]) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value or "").strip()
+        key = normalized.casefold()
+        if normalized and key not in seen:
+            result.append(normalized)
+            seen.add(key)
+    return tuple(result)
 
 
 def _csv(value: str) -> tuple[str, ...]:

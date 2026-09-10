@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
@@ -63,6 +64,13 @@ class DexScreenerClient:
 
     def pair(self, chain_id: str, pair_address: str, *, force: bool = False) -> list[dict[str, Any]]:
         path = f"/latest/dex/pairs/{_path_part(chain_id)}/{_path_part(pair_address)}"
+        return _pair_list(self.get_json(path, force=force))
+
+    def search(self, query: str, *, force: bool = False) -> list[dict[str, Any]]:
+        normalized = str(query or "").strip()
+        if not normalized:
+            return []
+        path = f"/latest/dex/search?q={quote(normalized, safe='')}"
         return _pair_list(self.get_json(path, force=force))
 
     def tokens(self, chain_id: str, token_addresses: list[str] | tuple[str, ...], *, force: bool = False) -> list[dict[str, Any]]:

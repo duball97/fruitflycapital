@@ -7,9 +7,9 @@ import type { EnvironmentUpdateMessage } from '../networking/protocol'
 import { ParticleField } from './ParticleField'
 import type { TokenState } from './TokenState'
 
-// The city is a directory of the first 100 tracked markets. This is separate
+// The city is a directory of the first 150 tracked markets. This is separate
 // from the smaller deep-observer tier on the backend.
-const WORLD_HABITAT_CAPACITY = 100
+const WORLD_HABITAT_CAPACITY = 150
 const HABITAT_PALETTE = [0x4bd6a0, 0x6ca8ff, 0xff6e80, 0xf5c84c, 0xa980ff, 0xff9b5c, 0x56d9d0, 0xff80b8]
 const HABITAT_SCALE_STORAGE_KEY = 'ffc.habitatVisualScale.v2'
 

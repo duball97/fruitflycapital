@@ -106,12 +106,15 @@ body { background: #050d13; }
 .debug-panel { position: fixed; right: 25px; bottom: 22px; z-index: 2; width: calc(50vw - 45px); min-width: 320px; max-height: 43vh; overflow: hidden; padding: 11px 13px; border: 1px solid #294158; border-radius: 9px; background: #091725d9; color: #a8bfd2; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 8px 30px #0006; pointer-events: none; }
 .debug-panel strong { color: #62d8ff; letter-spacing: .08em; }
 .performance-status { position: fixed; right: 25px; bottom: 22px; z-index: 2; padding: 7px 10px; border: 1px solid #2c455d; border-radius: 8px; background: #091725d9; color: #9fb8ca; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; box-shadow: 0 8px 30px #0006; }
-.brain-activity-panel { position: fixed; left: 25px; bottom: 22px; z-index: 3; width: min(430px, calc(50vw - 45px)); min-width: 320px; padding: 11px 13px 10px; border: 1px solid #34556a; border-radius: 9px; background: linear-gradient(145deg, #071521ee, #0d2430e8); color: #aec5d2; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; box-shadow: 0 10px 34px #0007; }
+.brain-activity-panel { position: fixed; right: 25px; bottom: 22px; z-index: 3; width: min(470px, calc(50vw - 45px)); min-width: 320px; padding: 11px 13px 10px; border: 1px solid #34556a; border-radius: 9px; background: linear-gradient(145deg, #071521ee, #0d2430e8); color: #aec5d2; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; box-shadow: 0 10px 34px #0007; }
 .brain-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #9fb8ca; }
 .brain-panel-heading strong { color: #78d7ff; letter-spacing: .12em; }
 .brain-source { color: #f0c976; font-size: 9px; white-space: nowrap; }
 .brain-source[data-state="live"] { color: #6bf0ae; }
 .brain-panel-agent { margin-top: 4px; color: #e3edf2; }
+.brain-map-heading { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; color: #6f9aa9; font-size: 8px; letter-spacing: .1em; }
+.brain-neural-map { display: block; width: 100%; height: 126px; margin-top: 5px; border: 1px solid #213f52; border-radius: 6px; }
+.brain-map-labels { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 4px; color: #6f9aa9; font-size: 7px; letter-spacing: .07em; text-align: center; }
 .brain-flow-row { display: grid; grid-template-columns: 62px 1fr 68px 1fr; align-items: center; gap: 7px; margin-top: 7px; color: #7592a4; font-size: 9px; }
 .brain-flow-track { display: block; height: 6px; overflow: hidden; border: 1px solid #315168; border-radius: 99px; background: #0a1823; }
 .brain-flow-track b { display: block; width: 100%; height: 100%; transform: scaleX(.02); transform-origin: left center; border-radius: inherit; background: linear-gradient(90deg, #4aa8d3, #71efb0); transition: transform .18s ease, background .18s ease; }

@@ -102,7 +102,7 @@ function updateTokenLogoOverlay() {
     const centerX = (logoWorldPosition.x * 0.5 + 0.5) * viewportWidth
     const centerY = (-logoWorldPosition.y * 0.5 + 0.5) * viewportHeight
     const projectedRadius = Math.abs(logoEdgePosition.x - logoWorldPosition.x) * 0.5 * viewportWidth
-    const size = clamp(projectedRadius * 2, 22, 74)
+    const size = clamp(projectedRadius * 1.35 * environment.getHabitatVisualScale(), 16, 46)
     entry.element.hidden = false
     entry.element.style.width = `${size}px`
     entry.element.style.height = `${size}px`
@@ -144,10 +144,9 @@ const startupScreen = document.createElement('div')
 startupScreen.className = 'startup-screen'
 startupScreen.innerHTML = `
   <div class="startup-card">
-    <div class="startup-kicker">FRUIT FLY CAPITAL</div>
-    <div class="startup-title">FRUITFLY CAPITAL</div>
+    <div class="startup-title">Fruit Fly Capital</div>
     <div class="startup-message">LOADING CANONICAL FLYBODY</div>
-    <div class="startup-detail">Preparing the independent agents and first motion sample…</div>
+    <div class="startup-detail">Preparing the fly bodies and first motion sample…</div>
     <div class="startup-progress"><span></span></div>
   </div>
 `
@@ -160,7 +159,7 @@ const hud = document.createElement('div')
 hud.className = 'hud'
 hud.innerHTML = `
   <div class="brand"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></div>
-  <div class="hud-links"><a class="portfolio-link" href="./portfolio.html">VIEW FUND PORTFOLIO →</a><a class="social-link" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></div>
+  <div class="hud-links"><a class="portfolio-link" href="/portfolio/">VIEW FUND PORTFOLIO →</a><a class="social-link" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></div>
 `
 app.append(hud)
 
@@ -257,7 +256,7 @@ app.append(causalStatus)
 
 const populationStatus = document.createElement('div')
 populationStatus.className = 'population-status debug-only'
-populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}`
+populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · PRIMARY SIGNALS ${SWARM_SIZE} · BODIES / SIGNAL ${BODIES_PER_BRAIN}`
 app.append(populationStatus)
 
 const brainUrl = import.meta.env.VITE_BRAIN_WS_URL ?? 'ws://127.0.0.1:8765'
@@ -275,6 +274,29 @@ const population = new FlyPopulation({ brainSocket, brainUpdateHz, size: SWARM_S
 const { agents, renderers: flyRenderers, followers } = population
 const followerRenderers = followers.map((follower) => follower.renderer)
 const visualRenderers = [...flyRenderers, ...followerRenderers]
+
+const flyStateStorageKey = 'ffc.primaryFlyState.v1'
+type StoredFlyState = Record<string, ReturnType<(typeof agents)[number]['snapshot']>>
+
+function restorePrimaryFlyState() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(flyStateStorageKey) ?? 'null') as StoredFlyState | null
+    if (!saved || typeof saved !== 'object') return
+    agents.forEach((agent) => {
+      const snapshot = saved[agent.id]
+      if (snapshot?.position && snapshot?.quaternion && snapshot?.velocity && snapshot?.angularVelocity) agent.restore(snapshot)
+    })
+  } catch {
+    // A corrupt browser snapshot must never prevent the scene from starting.
+  }
+}
+
+function persistPrimaryFlyState() {
+  const saved = Object.fromEntries(agents.map((agent) => [agent.id, agent.snapshot()]))
+  window.localStorage.setItem(flyStateStorageKey, JSON.stringify(saved))
+}
+
+restorePrimaryFlyState()
 
 const world = new World(scene, agents, environment)
 visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
@@ -323,7 +345,7 @@ visualRenderers.forEach((flyRenderer) => {
     }
     if (canonicalFinishedCount === visualRenderers.length) {
       const allCanonical = canonicalReadyCount === visualRenderers.length
-      bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'canonical Flybody asset error · see console'} · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
+      bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'canonical Flybody asset error · see console'} · ${SWARM_SIZE} primary signals · ${BODIES_PER_BRAIN} bodies/signal`
     }
   })
 })
@@ -333,7 +355,7 @@ visualRenderers.forEach((flyRenderer) => {
 window.setTimeout(() => {
   if (canonicalBodiesReady) return
   canonicalBodiesReady = true
-  bodyStatus.textContent = `BODY · loading canonical Flybody in background · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
+  bodyStatus.textContent = `BODY · loading canonical Flybody in background · ${SWARM_SIZE} primary signals · ${BODIES_PER_BRAIN} bodies/signal`
 }, 3500)
 
 const debug = new DebugRenderer(app, 'FLY #001', 'right')
@@ -887,12 +909,17 @@ let nextLogAt = 0
 let nextCausalUiAt = 0
 let nextSwarmTelemetryAt = 0
 let nextIntentMotionUiAt = 0
+let nextFlyPersistenceAt = 0
 let startupReleased = false
 let nextPerfUiAt = 0
 function animate(now: number) {
   const delta = (now - previous) / 1000
   previous = now
   world.update(delta, (position) => environment.habitatContactAt(position).contact)
+  if (world.elapsedSeconds >= nextFlyPersistenceAt) {
+    persistPrimaryFlyState()
+    nextFlyPersistenceAt = world.elapsedSeconds + 0.5
+  }
   followers.forEach((follower) => follower.update(delta, world.elapsedSeconds))
   environment.updateVisuals(world.elapsedSeconds)
   updateStartupGate()
@@ -956,9 +983,8 @@ function animate(now: number) {
   if (debugPanelVisible || debugVectorsVisible) {
     debug.update(selectedAgent, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(selectedAgent.id), brainSocket.activityFor(selectedAgent.id))
   }
-  if (debugPanelVisible) {
-    brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
-  }
+  brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
+  brainActivityPanel.animate(world.elapsedSeconds)
   if (debugPanelVisible && world.elapsedSeconds >= nextCausalUiAt) {
     updateCausalStatus(selectedAgent)
     nextCausalUiAt += 0.25
@@ -977,7 +1003,7 @@ function animate(now: number) {
       return count + (isLiveBrainSource(activity?.source) && nonNeutral ? 1 : 0)
     }, 0)
     const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
-    populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISIBLE FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>MALECNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE}`
+    populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISIBLE FLIES ${VISUAL_FLY_COUNT} · PRIMARY SIGNALS ${SWARM_SIZE} · BODIES / SIGNAL ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>MALECNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE}`
   }
   activeCamera = cameras[cameraIndex] ?? cameras[0]!
   if (cameraIndex === 0) free.update()
@@ -999,7 +1025,7 @@ function animate(now: number) {
     ? `${marketEnvironment.habitats.length} TOKEN PLACES`
     : 'WAITING FOR TOKEN DATA'
   const brainLabel = brainSocket.getStatus() === 'connected' ? 'AUTONOMOUS FLY BRAINS' : 'CONNECTING TO FLY BRAINS'
-  demoStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS</span><span>${marketLabel} · ${brainLabel}</span>`
+  demoStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><span>${VISUAL_FLY_COUNT} FLIES</span><span>${marketLabel} · ${brainLabel}</span>`
   updateTokenLogoOverlay()
   pipeline.render(delta, activeCamera)
   if (debugPanelVisible && world.elapsedSeconds >= nextPerfUiAt) {
@@ -1020,7 +1046,7 @@ function updateStartupGate() {
   const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
   if (!canonicalBodiesReady) {
     startupMessage.textContent = 'LOADING CANONICAL FLYBODY'
-    startupDetail.textContent = 'Preparing the independent agents…'
+    startupDetail.textContent = 'Preparing the fly bodies…'
     startupProgress.style.width = '42%'
   } else if (brainSocket.getStatus() !== 'connected') {
     startupMessage.textContent = 'SCENE READY'
