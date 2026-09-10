@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+from malecns.fund import SwarmDecisionPipeline
+from malecns.swarm.observer import FlyObservation, HabitatObservation
+
+
+def _frame(timestamp_ms: int, positions: dict[str, tuple[float, float, float]], distances: dict[str, dict[str, float]]):
+    return tuple(
+        FlyObservation(
+            fly_id=fly_id,
+            timestamp_ms=timestamp_ms,
+            position=position,
+            habitats=tuple(
+                HabitatObservation(habitat_id, distance, 0.05)
+                for habitat_id, distance in habitat_distances.items()
+            ),
+        )
+        for fly_id, position in positions.items()
+        for habitat_distances in (distances[fly_id],)
+    )
+
+
+def test_temporal_consensus_prefers_sustained_behavior_over_one_frame_headcount():
+    pipeline = SwarmDecisionPipeline(expected_agents=4)
+    positions = {f"fly-{index}": (index * 0.02, 0.5, 0.0) for index in range(4)}
+    for timestamp in range(0, 31_000, 1_000):
+        distances = {
+            "fly-0": {"ETH": 0.03, "TOKEN-X": 0.30},
+            "fly-1": {"ETH": 0.03, "TOKEN-X": 0.30},
+            "fly-2": {"ETH": 0.03, "TOKEN-X": 0.03 if timestamp == 30_000 else 0.30},
+            "fly-3": {"ETH": 0.30, "TOKEN-X": 0.30},
+        }
+        decision = pipeline.ingest(_frame(timestamp, positions, distances))
+
+    convictions = {item.habitat_id: item for item in decision.convictions}
+    targets = {item.habitat_id: item.target_weight for item in decision.targets}
+    assert convictions["ETH"].conviction > convictions["TOKEN-X"].conviction
+    assert targets["ETH"] > targets["TOKEN-X"]
+    assert decision.execution_status == "proposal_only"
+    assert all(item.allowed for item in decision.risk)
+
+
+def test_observer_keeps_each_primary_agent_in_the_evidence():
+    pipeline = SwarmDecisionPipeline(expected_agents=2)
+    decision = pipeline.ingest(
+        [
+            FlyObservation("fly-001", 0, (0, 0, 0), (HabitatObservation("ETH", 0.03, 0.05),)),
+            FlyObservation("fly-002", 0, (1, 0, 0), (HabitatObservation("ETH", 0.30, 0.05),)),
+        ]
+    )
+    summary = decision.behavior[0]
+    assert summary.observed_agents == 2
+    assert {item.fly_id for item in summary.agent_behaviors} == {"fly-001", "fly-002"}

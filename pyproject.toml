@@ -24,6 +24,7 @@ dependencies = [
 dev = ["pytest>=8.0"]
 physics = ["mujoco>=3.2"]
 speed = ["Cython>=3.0"]
+fund = ["web3>=7.0"]
 
 [project.scripts]
 malecns-report = "malecns.cli:main"
@@ -32,6 +33,7 @@ malecns-brain-server = "malecns.brain_server:main"
 malecns-market-report = "malecns.market_cli:main"
 malecns-market-discovery = "malecns.market_discovery_cli:main"
 malecns-realtime-cache = "malecns.realtime_cache:main"
+malecns-bootstrap-privy = "malecns.fund.bootstrap_privy:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -27,7 +27,8 @@ const NEUTRAL_PROPERTIES: HabitatProperties = {
 
 export class TokenHabitat {
   readonly group = new Group()
-  readonly state: TokenState
+  state: TokenState
+  private readonly initialState: TokenState
   readonly basePosition = new Vector3()
   properties: HabitatProperties = { ...NEUTRAL_PROPERTIES }
   private readonly pile: Mesh
@@ -39,6 +40,7 @@ export class TokenHabitat {
 
   constructor(state: TokenState, position: Vector3, color: number) {
     this.state = state
+    this.initialState = state
     this.basePosition.copy(position)
     this.group.name = `TokenHabitat:${state.id}`
     this.group.position.copy(position)
@@ -125,6 +127,16 @@ export class TokenHabitat {
 
   setPosition(position: Vector3) {
     this.group.position.copy(position)
+  }
+
+  setIdentity(id: string, label: string) {
+    this.state = { ...this.state, id, label }
+    this.group.name = `TokenHabitat:${id}`
+  }
+
+  resetIdentity() {
+    this.state = this.initialState
+    this.group.name = `TokenHabitat:${this.state.id}`
   }
 
   resetPosition() {

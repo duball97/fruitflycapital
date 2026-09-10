@@ -22,6 +22,7 @@ body { background: #aab8b2; }
 .brand { letter-spacing: .17em; font-size: 13px; font-weight: 750; color: #e7f5ff; }
 .brand-mark { color: #58d5ff; margin-right: 7px; }
 .neuroswarm { margin-top: 5px; letter-spacing: .29em; font-size: 20px; font-weight: 800; color: #f3fbf5; }
+.portfolio-link { display: inline-block; margin-top: 12px; color: #7fe0b3; pointer-events: auto; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-decoration: none; }
 .demo-status { position: fixed; left: 50%; top: 24px; z-index: 2; display: flex; gap: 16px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid #d7ebe1aa; border-radius: 999px; background: #15302ccc; color: #e8f6ee; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; box-shadow: 0 10px 35px #18352b42; white-space: nowrap; }
 .demo-status strong { color: #63e2ad; }
 .presentation-toggle { position: fixed; right: 25px; top: 23px; z-index: 4; padding: 8px 11px; border: 1px solid #d7ebe1aa; border-radius: 8px; background: #15302cdd; color: #d8f5e5; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; cursor: pointer; box-shadow: 0 8px 30px #18352b38; }

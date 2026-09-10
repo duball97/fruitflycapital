@@ -97,6 +97,31 @@ export interface BrainInputMessage {
   spikeCounts?: Record<string, number>
 }
 
+export interface SwarmTelemetryMessage {
+  type: 'swarm_telemetry'
+  timestampMs: number
+  agents: Array<{
+    flyId: string
+    timestampMs: number
+    position: { x: number; y: number; z: number }
+    habitats: Array<{
+      habitatId: string
+      distanceM: number
+      radiusM: number
+      contact?: boolean
+    }>
+  }>
+}
+
+export interface SwarmUpdateMessage {
+  type: 'swarm_update'
+  decision: Record<string, unknown>
+}
+
+export interface FundStatusUpdateMessage { type: 'fund_status_update'; fund: Record<string, unknown>; demoData: boolean }
+export interface PortfolioUpdateMessage { type: 'portfolio_update'; fund: Record<string, unknown>; demoData: boolean }
+export interface TradeHistoryUpdateMessage { type: 'trade_history_update'; trades: Record<string, unknown>[]; demoData: boolean }
+
 export interface BrainOutputMessage {
   type: 'brain_output'
   flyId: string
@@ -157,7 +182,7 @@ export interface BrainHelloMessage {
   version: 1
 }
 
-export type BrainMessage = BrainInputMessage | BrainOutputMessage | BrainHelloMessage | EnvironmentUpdateMessage
+export type BrainMessage = BrainInputMessage | BrainOutputMessage | BrainHelloMessage | EnvironmentUpdateMessage | SwarmTelemetryMessage | SwarmUpdateMessage | FundStatusUpdateMessage | PortfolioUpdateMessage | TradeHistoryUpdateMessage
 
 export function vectorToWire(vector: Vector3) {
   return { x: vector.x, y: vector.y, z: vector.z }
@@ -187,4 +212,10 @@ export function isEnvironmentUpdateMessage(value: unknown): value is Environment
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<EnvironmentUpdateMessage>
   return candidate.type === 'environment_update' && !!candidate.environment && typeof candidate.environment === 'object'
+}
+
+export function isSwarmUpdateMessage(value: unknown): value is SwarmUpdateMessage {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<SwarmUpdateMessage>
+  return candidate.type === 'swarm_update' && !!candidate.decision && typeof candidate.decision === 'object'
 }

@@ -105,6 +105,23 @@ server to Vercel would require a Function/WebSocket entrypoint, externalized
 runtime state, and a separate capacity plan. Keep Graph and Uniswap credentials
 on that server; never expose them as `VITE_` variables.
 
+## Fund / treasury layer
+
+Fruit Fly Capital includes a safe fund boundary under `contracts/` and
+`src/malecns/fund/`. The Foundry vault uses explicit USDC/FFC share accounting,
+authorized external NAV reporting, and asynchronous withdrawals. The Python
+ledger and portfolio engine keep book state distinct from on-chain state; the
+Privy client is server-side and execution defaults to dry-run. See
+[docs/FUND_ARCHITECTURE.md](docs/FUND_ARCHITECTURE.md).
+
+```bash
+PYTHONPATH=src python -m malecns.fund.bootstrap_privy
+cd contracts && forge test --offline -vvv
+```
+
+No frontend control can sign or broadcast a transaction, and no mainnet
+deployment is automated.
+
 Bootstrap for a biologically grounded MaleCNS *Drosophila* swarm project. The
 product is Fruit Fly Capital / NeuroSwarm: biological agents in an onchain
 market ecology.
@@ -353,6 +370,24 @@ only physical proxies—visual brightness/motion, attractive odor, and aversive
 danger. They do not call APIs or represent real tokens. Switch among
 `NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` in the scene to inspect
 the sensory changes.
+
+## Swarm behavior and fund boundary
+
+The browser sends throttled behavior telemetry for the sixteen primary bodies
+to the Python server. `malecns.swarm.SwarmObserver` measures per-agent,
+per-habitat visits, approach episodes, departures, dwell, repeat visits,
+distance history, contact, congregation, and persistence. The
+`TemporalConsensusEngine` converts those time-dependent summaries into
+evidence-bearing habitat convictions; `PortfolioAllocator` converts qualified
+convictions into capped target weights; and `RiskGuard` checks the fund-policy
+limits. The server returns this as a `swarm_update` message.
+
+This is a proposal-only boundary. It does not count render-only followers as
+votes, it does not send token recommendations into MaleCNS, and it does not
+contain a Privy signer or transaction broadcaster. Uniswap remains limited to
+quotes and unsigned calldata until a separate, explicitly approved custody
+milestone is implemented. See
+[docs/SWARM_INTELLIGENCE.md](docs/SWARM_INTELLIGENCE.md).
 
 Run the deterministic headless sensory audit with:
 

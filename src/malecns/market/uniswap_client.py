@@ -58,7 +58,10 @@ class UniswapTradingClient:
         return self._post("/quote", request_body)
 
     def create_unsigned_swap(self, quote: dict[str, Any], *, permit_data: dict[str, Any] | None = None, deadline: int | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"quote": quote}
+        # Trading API /swap consumes the quote response fields at the top
+        # level; wrapping them under {"quote": ...} is not the documented
+        # request shape.
+        body: dict[str, Any] = dict(quote)
         if permit_data is not None:
             body["permitData"] = permit_data
         if deadline is not None:
@@ -69,7 +72,15 @@ class UniswapTradingClient:
         request = Request(
             f"{self.base_url.rstrip('/')}{path}",
             data=json.dumps(body).encode("utf-8"),
-            headers={"x-api-key": self.api_key, "Accept": "application/json", "Content-Type": "application/json"},
+            headers={
+                "x-api-key": self.api_key,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "x-universal-router-version": "2.0",
+                # The current fund boundary always requires a human review;
+                # it is not an autonomous transaction agent.
+                "x-agent-info": '{"integration_name":"swap-integration","decision_origin":"human_mediated","version":"1.5.0"}',
+            },
             method="POST",
         )
         try:

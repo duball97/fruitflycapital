@@ -42,7 +42,10 @@ export class Environment {
     // the backend is disabled, waiting, or returning an error; otherwise a
     // failed live feed looks like real market data in the scene.
     const appearanceScenario = scenario === 'live' ? 'off' : scenario
-    this.habitats.forEach((habitat) => habitat.setScenario(appearanceScenario))
+    this.habitats.forEach((habitat) => {
+      habitat.resetIdentity()
+      habitat.setScenario(appearanceScenario)
+    })
     if (scenario === 'swapped') {
       this.habitats.forEach((habitat, index) => habitat.setPosition(MOCK_HABITAT_POSITIONS[(index + 1) % MOCK_HABITAT_POSITIONS.length]!))
     } else {
@@ -63,6 +66,7 @@ export class Environment {
       // discovered markets into those slots deterministically.
       const habitat = this.habitats.find((candidate) => candidate.state.id === state.id) ?? this.habitats[index]
       if (!habitat) continue
+      habitat.setIdentity(state.id, state.label)
       habitat.setPhysicalProperties({
         physicalRadiusM: state.physicalRadiusM,
         resourcePileRadiusM: state.resourcePileRadiusM,

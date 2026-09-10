@@ -16,6 +16,7 @@ import { BODIES_PER_BRAIN, SWARM_SIZE, VISUAL_FLY_COUNT } from './fly/SwarmConfi
 import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProcessing'
 import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
+import { vectorToWire } from './networking/protocol'
 
 const configuredFlightDriver = import.meta.env.VITE_FLIGHT_DRIVER
 const flightDriver: 'malecns' | 'preview' = configuredFlightDriver === 'malecns' ? 'malecns' : 'preview'
@@ -50,6 +51,7 @@ hud.className = 'hud'
 hud.innerHTML = `
   <div class="brand"><span class="brand-mark">✦</span> FRUIT FLY CAPITAL</div>
   <div class="neuroswarm">NEUROSWARM</div>
+  <a class="portfolio-link" href="./portfolio.html">VIEW FUND PORTFOLIO →</a>
 `
 app.append(hud)
 
@@ -312,6 +314,7 @@ const clock = performance.now()
 let previous = clock
 let nextLogAt = 0
 let nextCausalUiAt = 0
+let nextSwarmTelemetryAt = 0
 let startupElapsed = 0
 let startupReleased = false
 let nextPerfUiAt = 0
@@ -326,6 +329,25 @@ function animate(now: number) {
   const marketEnvironment = brainSocket.environmentUpdate()
   if (environment.scenario === 'live' && marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
   updateMarketStatus(marketEnvironment)
+
+  if (world.elapsedSeconds >= nextSwarmTelemetryAt) {
+    brainSocket.sendSwarmTelemetry({
+      type: 'swarm_telemetry',
+      timestampMs: Date.now(),
+      agents: agents.map((agent) => ({
+        flyId: agent.id,
+        timestampMs: Date.now(),
+        position: vectorToWire(agent.body.position),
+        habitats: environment.habitats.map((habitat) => ({
+          habitatId: habitat.state.id,
+          distanceM: agent.body.position.distanceTo(habitat.group.position),
+          radiusM: habitat.properties.physicalRadiusM,
+          contact: false,
+        })),
+      })),
+    })
+    nextSwarmTelemetryAt += 0.25
+  }
 
   if (world.elapsedSeconds >= nextLogAt) {
     flightLog.record(agents[selectedIndex]!, brainSocket, world.elapsedSeconds)

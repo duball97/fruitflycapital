@@ -24,6 +24,9 @@ from .brain.realtime import LiveMaleCNSRuntime, RealtimeRuntimeUnavailable, defa
 from .brain.sensory_encoding import default_encoder
 from .motor.flight_decoder import FlightMotorDecoder
 from .market.signal_engine import MarketSignalEngine
+from .swarm.observer import FlyObservation, HabitatObservation
+from .fund.pipeline import SwarmDecisionPipeline
+from .fund.service import FundService
 
 
 load_project_env()
@@ -35,6 +38,9 @@ MARKET_ENGINE = MarketSignalEngine.from_env()
 REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_cache())))
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
+SWARM_SIZE = int(os.getenv("NEUROSWARM_SWARM_SIZE", "16"))
+SWARM_DECISIONS = SwarmDecisionPipeline(max(1, SWARM_SIZE))
+FUND_SERVICE = FundService.from_env()
 
 
 def _stable_fly_seed(fly_id: str, base_seed: int = REALTIME_SEED) -> int:
@@ -128,6 +134,28 @@ async def handle_client(websocket: Any) -> None:
             message = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             continue
+        if isinstance(message, dict) and message.get("type") == "swarm_telemetry":
+            observations = _parse_swarm_telemetry(message)
+            if observations:
+                decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
+                try:
+                    await websocket.send(json.dumps({"type": "swarm_update", "decision": decision.as_dict()}))
+                except (ConnectionError, ConnectionClosed):
+                    break
+            continue
+        if isinstance(message, dict) and message.get("type") in {"fund_status_request", "portfolio_request", "trade_history_request"}:
+            request_type = message["type"]
+            if request_type == "fund_status_request":
+                response = {"type": "fund_status_update", "fund": FUND_SERVICE.status(), "demoData": False}
+            elif request_type == "portfolio_request":
+                response = {"type": "portfolio_update", **FUND_SERVICE.portfolio_update()}
+            else:
+                response = {"type": "trade_history_update", **FUND_SERVICE.trade_history()}
+            try:
+                await websocket.send(json.dumps(response))
+            except (ConnectionError, ConnectionClosed):
+                break
+            continue
         if not isinstance(message, dict) or message.get("type") != "brain_input":
             if isinstance(message, dict) and message.get("type") == "environment_request":
                 if MARKET_ENGINE is None:
@@ -166,6 +194,71 @@ async def handle_client(websocket: Any) -> None:
             await websocket.send(json.dumps(output))
         except (ConnectionError, ConnectionClosed):
             break
+
+
+def _parse_swarm_telemetry(message: Mapping[str, Any]) -> tuple[FlyObservation, ...]:
+    """Parse browser telemetry without forwarding it to any CNS runtime."""
+
+    raw_agents = message.get("agents")
+    if not isinstance(raw_agents, list):
+        return ()
+    observations: list[FlyObservation] = []
+    timestamp_ms = _int_value(message.get("timestampMs"), 0)
+    for raw_agent in raw_agents:
+        if not isinstance(raw_agent, Mapping) or not isinstance(raw_agent.get("flyId"), str):
+            continue
+        position = _wire_position(raw_agent.get("position"))
+        raw_habitats = raw_agent.get("habitats")
+        if position is None or not isinstance(raw_habitats, list):
+            continue
+        habitats: list[HabitatObservation] = []
+        for raw_habitat in raw_habitats:
+            if not isinstance(raw_habitat, Mapping) or not isinstance(raw_habitat.get("habitatId"), str):
+                continue
+            habitats.append(
+                HabitatObservation(
+                    habitat_id=raw_habitat["habitatId"],
+                    distance_m=max(0.0, _float_value(raw_habitat.get("distanceM"), 0.0)),
+                    radius_m=max(0.0, _float_value(raw_habitat.get("radiusM"), 0.0)),
+                    contact=bool(raw_habitat.get("contact", False)),
+                )
+            )
+        if habitats:
+            observations.append(
+                FlyObservation(
+                    fly_id=raw_agent["flyId"],
+                    timestamp_ms=_int_value(raw_agent.get("timestampMs"), timestamp_ms),
+                    position=position,
+                    habitats=tuple(habitats),
+                )
+            )
+    return tuple(observations)
+
+
+def _wire_position(value: Any) -> tuple[float, float, float] | None:
+    if isinstance(value, Mapping):
+        return (
+            _float_value(value.get("x"), 0.0),
+            _float_value(value.get("y"), 0.0),
+            _float_value(value.get("z"), 0.0),
+        )
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        return tuple(_float_value(item, 0.0) for item in value)  # type: ignore[return-value]
+    return None
+
+
+def _float_value(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _int_value(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 async def serve_forever(host: str, port: int) -> None:

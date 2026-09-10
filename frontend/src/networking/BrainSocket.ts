@@ -1,5 +1,5 @@
-import type { ActuatorCommand, BrainActivity, BrainInputMessage, EnvironmentUpdateMessage, MaleCNSSensoryStimulation } from './protocol'
-import { isBrainOutputMessage, isEnvironmentUpdateMessage } from './protocol'
+import type { ActuatorCommand, BrainActivity, BrainInputMessage, EnvironmentUpdateMessage, MaleCNSSensoryStimulation, SwarmTelemetryMessage, FundStatusUpdateMessage, PortfolioUpdateMessage, TradeHistoryUpdateMessage } from './protocol'
+import { isBrainOutputMessage, isEnvironmentUpdateMessage, isSwarmUpdateMessage } from './protocol'
 
 export type BrainSocketStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -18,6 +18,10 @@ export class BrainSocket {
   private latestActivity = new Map<string, BrainActivity>()
   private readonly pendingInputs = new Set<string>()
   private latestEnvironment: EnvironmentUpdateMessage['environment'] | null = null
+  private latestSwarmDecision: Record<string, unknown> | null = null
+  private latestFundStatus: FundStatusUpdateMessage['fund'] | null = null
+  private latestPortfolio: PortfolioUpdateMessage['fund'] | null = null
+  private latestTrades: TradeHistoryUpdateMessage['trades'] = []
   private status: BrainSocketStatus = 'disconnected'
   private readonly listeners = new Set<(status: BrainSocketStatus) => void>()
   private reconnectTimer: number | null = null
@@ -79,6 +83,23 @@ export class BrainSocket {
     return true
   }
 
+  sendSwarmTelemetry(message: SwarmTelemetryMessage) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    this.socket.send(JSON.stringify(message))
+    return true
+  }
+
+  swarmDecision() {
+    return this.latestSwarmDecision
+  }
+
+  requestFundStatus() { return this.request({ type: 'fund_status_request' }) }
+  requestPortfolio() { return this.request({ type: 'portfolio_request' }) }
+  requestTradeHistory() { return this.request({ type: 'trade_history_request' }) }
+  fundStatus() { return this.latestFundStatus }
+  portfolio() { return this.latestPortfolio }
+  tradeHistory() { return this.latestTrades }
+
   environmentUpdate() {
     return this.latestEnvironment
   }
@@ -117,10 +138,23 @@ export class BrainSocket {
         }
       } else if (isEnvironmentUpdateMessage(message)) {
         this.latestEnvironment = message.environment
+      } else if (isSwarmUpdateMessage(message)) {
+        this.latestSwarmDecision = message.decision
+      } else if (message && typeof message === 'object' && (message as { type?: string }).type === 'fund_status_update') {
+        this.latestFundStatus = (message as FundStatusUpdateMessage).fund
+      } else if (message && typeof message === 'object' && (message as { type?: string }).type === 'portfolio_update') {
+        this.latestPortfolio = (message as PortfolioUpdateMessage).fund
+      } else if (message && typeof message === 'object' && (message as { type?: string }).type === 'trade_history_update') {
+        this.latestTrades = (message as TradeHistoryUpdateMessage).trades
       }
     } catch {
       this.setStatus('error')
     }
+  }
+
+  private request(message: Record<string, unknown>) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    this.socket.send(JSON.stringify(message)); return true
   }
 
   private setStatus(status: BrainSocketStatus) {
