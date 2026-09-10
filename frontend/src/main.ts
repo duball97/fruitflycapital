@@ -386,6 +386,7 @@ const renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: 
 renderer.setPixelRatio(1)
 renderer.setSize(window.innerWidth, window.innerHeight)
 renderer.shadowMap.enabled = false
+let mobileViewport = window.matchMedia?.('(max-width: 600px)').matches ?? false
 
 const environment = new Environment()
 environment.setupLighting(scene)
@@ -1044,6 +1045,11 @@ debug.setVectorsVisible(debugVectorsVisible)
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight)
   pipeline.resize(window.innerWidth, window.innerHeight)
+  const nextMobileViewport = window.matchMedia?.('(max-width: 600px)').matches ?? false
+  if (nextMobileViewport !== mobileViewport) {
+    mobileViewport = nextMobileViewport
+    pipeline.setQuality(renderQuality)
+  }
   for (const camera of cameras) {
     camera.aspect = window.innerWidth / window.innerHeight
     camera.updateProjectionMatrix()
@@ -1198,7 +1204,9 @@ function animate(now: number) {
     const distance = flyRenderer.group.position.distanceTo(activeCamera.position)
     const selectedPrimary = index < flyRenderers.length && index === selectedIndex
     flyRenderer.setSelected(selectedPrimary)
-    const lod = selectedPrimary || distance < 0.42 ? 'full' : distance < 1.15 ? 'medium' : 'low'
+    const lod = selectedPrimary || (!mobileViewport && distance < 0.42)
+      ? 'full'
+      : distance < (mobileViewport ? 0.8 : 1.15) ? 'medium' : 'low'
     flyRenderer.setLod(lod)
   })
 

@@ -503,3 +503,137 @@ body:has(#portfolio-app) { min-height: 100vh; overflow: auto; background: #050d1
   #portfolio-app .wallet-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #portfolio-app .wallet-summary > div:first-child, #portfolio-app .wallet-summary p { grid-column: 1 / -1; }
 }
+
+/* Small-screen game pass. Keep the play space visible and make the camera
+   controls comfortable to use with a thumb; secondary telemetry remains
+   available through the portfolio and fly-vision view. */
+@media (max-width: 600px) {
+  html, body, #app { min-height: 100dvh; }
+
+  .hud {
+    inset: 10px 12px auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .brand { font-size: 11px; letter-spacing: .1em; }
+  .brand-logo { width: 22px; height: 22px; }
+  .hud .site-nav {
+    display: none;
+  }
+  .hud .header-social {
+    display: flex;
+    align-items: center;
+    margin-top: 3px;
+    font-size: 9px;
+  }
+  .header-social svg { width: 15px; height: 15px; }
+  .portfolio-link { margin-top: 7px; font-size: 9px; }
+
+  .presentation-demo .demo-status {
+    top: 47px;
+    left: 12px;
+    right: 12px;
+    min-height: 25px;
+    padding: 6px 9px;
+    gap: 6px;
+    font-size: 8px;
+    letter-spacing: .04em;
+  }
+  .presentation-demo .demo-status span:last-child { display: none; }
+  .presentation-toggle { display: none; }
+
+  .camera-target-panel {
+    top: 82px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 7px 8px;
+    border-radius: 10px;
+  }
+  .camera-target-panel select,
+  .camera-target-panel button {
+    min-height: 40px;
+  }
+  .camera-target-panel select {
+    min-width: 0;
+    width: 100%;
+    padding: 7px 22px 7px 8px;
+    font-size: 10px;
+  }
+  .camera-target-panel button {
+    padding: 7px 9px;
+    font-size: 9px;
+    white-space: nowrap;
+  }
+
+  /* The full telemetry card competes with the game on a phone. Selecting
+     FLY VISION still provides the focused brain view when it is wanted. */
+  .brain-activity-panel { display: none; }
+  .scene-footer { display: none; }
+
+  .intent-log-panel {
+    left: 12px;
+    right: 12px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 33dvh;
+    padding: 10px 11px 9px;
+    border-radius: 10px;
+  }
+  .intent-log-header { gap: 8px; }
+  .intent-log-kicker { font-size: 8px; }
+  .intent-log-title { font-size: 9px; }
+  .intent-log-mode { font-size: 7px; }
+  .intent-log-summary { margin-top: 7px; padding-bottom: 6px; }
+  .intent-log-motion { margin-top: 6px; font-size: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .intent-log-holdings { margin-top: 7px; padding: 6px 0; }
+  .intent-log-search { margin-top: 6px; }
+  .intent-log-search input { min-height: 34px; }
+  .intent-log-list { max-height: 15dvh; margin-top: 6px; }
+  .intent-log-row { padding: 6px 7px; }
+  .intent-log-token { font-size: 9px; }
+
+  .portfolio-summary { display: none; }
+
+  .token-popup-backdrop {
+    align-items: start;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+  .token-popup {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+    padding: 19px 14px 15px;
+    border-radius: 14px;
+  }
+  .token-popup-close { top: 12px; right: 12px; min-height: 38px; padding: 8px 10px; }
+  .token-popup-title { margin-top: 8px; font-size: 20px; line-height: 1.15; }
+  .token-popup-grid { gap: 8px; margin-top: 14px; }
+  .token-popup-grid article { min-height: 66px; padding: 10px; }
+  .token-popup-grid strong { font-size: 13px; }
+  .token-popup-footnote { margin-top: 13px; font-size: 9px; }
+
+  .mainnet-execution-toast {
+    left: 12px;
+    right: 12px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    transform: none;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 11px;
+    font-size: 8px;
+  }
+}
+
+@media (max-width: 380px) {
+  .camera-target-panel > span { font-size: 8px; }
+  .camera-target-panel button { padding-inline: 7px; font-size: 8px; }
+  .camera-target-panel select { font-size: 9px; }
+  .intent-log-panel { max-height: 30dvh; }
+  .intent-log-list { max-height: 12dvh; }
+}

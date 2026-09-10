@@ -84,7 +84,13 @@ export class PostProcessingPipeline {
   setQuality(quality: RenderQuality) {
     this.quality = quality
     const demo = quality === 'demo'
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, demo ? 1.25 : 1))
+    // Mobile GPUs tend to report a high device pixel ratio, which can make a
+    // full-screen WebGL scene disproportionately expensive. Keep the scene
+    // crisp enough for the game while capping the backing buffer below CSS
+    // pixels on small screens.
+    const mobile = window.matchMedia?.('(max-width: 600px)').matches ?? false
+    const pixelRatioCap = mobile ? 0.85 : demo ? 1.25 : 1
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap))
     // SMAA's preset is immutable after construction, so its LOW preset is
     // intentionally retained for both presets. The quality switch controls
     // the costly lighting effects and pixel ratio instead.
