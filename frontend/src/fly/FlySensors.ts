@@ -16,6 +16,7 @@ const EYE_AZIMUTH = [-0.85, -0.42, 0, 0.42, 0.85]
 const EYE_ELEVATION = [-0.3, 0.3]
 const WORLD_UP = new Vector3(0, 1, 0)
 const AMBIENT_LUMINANCE = 0.12
+const raycastTargetCache = new WeakMap<Object3D, { targets: Mesh[]; refreshedAt: number }>()
 
 export class FlySensors {
   readonly forward = new Vector3(0, 0, -1)
@@ -35,7 +36,7 @@ export class FlySensors {
   }
   readonly contact: ContactObservation = { ground: false, obstacle: false, wall: false }
   private readonly raycaster = new Raycaster()
-  private readonly raycastTargets: Mesh[] = []
+  private raycastTargets: Mesh[] = []
   private readonly inverseQuaternion = new Quaternion()
   private readonly localDirection = new Vector3()
   private readonly worldDirection = new Vector3()
@@ -135,12 +136,21 @@ export class FlySensors {
 
   private collectRaycastTargets(visualRoot: Object3D, timeSeconds: number) {
     if (visualRoot === this.lastRaycastRoot && timeSeconds - this.lastRaycastRefresh < 1) return
+    const cached = raycastTargetCache.get(visualRoot)
+    if (cached && timeSeconds - cached.refreshedAt < 1) {
+      this.raycastTargets = cached.targets
+      this.lastRaycastRoot = visualRoot
+      this.lastRaycastRefresh = cached.refreshedAt
+      return
+    }
     this.lastRaycastRoot = visualRoot
     this.lastRaycastRefresh = timeSeconds
-    this.raycastTargets.length = 0
+    const targets: Mesh[] = []
     visualRoot.traverse((object) => {
-      if (object instanceof Mesh && object.userData.sensorVisible !== false) this.raycastTargets.push(object)
+      if (object instanceof Mesh && object.userData.sensorVisible !== false) targets.push(object)
     })
+    this.raycastTargets = targets
+    raycastTargetCache.set(visualRoot, { targets, refreshedAt: timeSeconds })
   }
 
   private updateOdor(body: FlyBody, odorSampler: OdorSampler) {

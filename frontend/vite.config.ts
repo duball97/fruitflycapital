@@ -12,6 +12,12 @@ export default defineConfig({
         main: 'index.html',
         portfolio: 'portfolio/index.html',
       },
+      output: {
+        manualChunks: {
+          three: ['three'],
+          postprocessing: ['postprocessing'],
+        },
+      },
     },
   },
 })

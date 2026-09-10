@@ -1,4 +1,4 @@
-import { BoxGeometry, CanvasTexture, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
+import { BufferGeometry, CanvasTexture, DoubleSide, Group, LineBasicMaterial, LineLoop, Mesh, MeshBasicMaterial, MeshStandardMaterial, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace, Vector3 } from 'three'
 import type { WorldBounds } from '../fly/FlyBody'
 
 const FLOOR_Y = 0
@@ -24,7 +24,7 @@ export class Arena {
     const floor = new Mesh(
       // The floor covers the same 6m x 6m presentation volume as the default
       // physics bounds, so the manual game-scene editor has no hidden area.
-      new PlaneGeometry(6.2, 6.2),
+      new ShapeGeometry(roundedRectangle(6.2, 6.2, 0.44)),
       new MeshStandardMaterial({ color: 0x65776f, map: floorTexture, roughness: 0.78, metalness: 0.14 }),
     )
     floor.rotation.x = -Math.PI / 2
@@ -34,25 +34,40 @@ export class Arena {
     floor.name = 'StreetFloor'
     this.group.add(floor)
 
-    // A low visual curb makes the playable plate legible and gives the scene
-    // a clear edge. The authoritative collision boundary remains ARENA_BOUNDS
-    // in FlyBody, so this never depends on mesh collision accuracy.
-    const wallMaterial = new MeshStandardMaterial({ color: 0x71837a, roughness: 0.84, metalness: 0.08 })
-    const wallHeight = 0.075
-    const wallThickness = 0.035
-    const halfExtent = 3.1
-    const walls = [
-      [6.2, wallHeight, wallThickness, 0, wallHeight / 2, -halfExtent],
-      [6.2, wallHeight, wallThickness, 0, wallHeight / 2, halfExtent],
-      [wallThickness, wallHeight, 6.2, -halfExtent, wallHeight / 2, 0],
-      [wallThickness, wallHeight, 6.2, halfExtent, wallHeight / 2, 0],
-    ] as const
-    walls.forEach(([width, height, depth, x, y, z], index) => {
-      const wall = new Mesh(new BoxGeometry(width, height, depth), wallMaterial)
-      wall.name = `ArenaEdge:${index}`
-      wall.position.set(x, y, z)
-      this.group.add(wall)
-    })
+    // A rounded rim makes the playable surface read as one plate instead of
+    // four unrelated wall bars. The authoritative collision boundary remains
+    // ARENA_BOUNDS in FlyBody, so this never depends on mesh collision accuracy.
+    const rimShape = roundedRectangle(6.34, 6.34, 0.56)
+    rimShape.holes.push(roundedRectangle(6.08, 6.08, 0.42, true))
+    const rim = new Mesh(
+      new ShapeGeometry(rimShape),
+      new MeshStandardMaterial({ color: 0x526761, roughness: 0.66, metalness: 0.24, side: DoubleSide }),
+    )
+    rim.rotation.x = -Math.PI / 2
+    rim.position.y = 0.012
+    rim.name = 'RoundedArenaRim'
+    this.group.add(rim)
+
+    // Gold is used as a shallow “sea” around the plate: visible in the camera
+    // view, but transparent enough that it does not compete with habitats.
+    const goldSeaShape = roundedRectangle(6.29, 6.29, 0.53)
+    goldSeaShape.holes.push(roundedRectangle(6.13, 6.13, 0.45, true))
+    const goldSea = new Mesh(
+      new ShapeGeometry(goldSeaShape),
+      new MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.2, side: DoubleSide, depthWrite: false }),
+    )
+    goldSea.rotation.x = -Math.PI / 2
+    goldSea.position.y = 0.027
+    goldSea.name = 'GoldArenaSea'
+    this.group.add(goldSea)
+
+    const borderPoints = roundedRectanglePoints(6.29, 6.29, 0.53).map(([x, z]) => new Vector3(x, 0.034, z))
+    const borderLine = new LineLoop(
+      new BufferGeometry().setFromPoints(borderPoints),
+      new LineBasicMaterial({ color: 0xffe09a, transparent: true, opacity: 0.72 }),
+    )
+    borderLine.name = 'GoldArenaBorder'
+    this.group.add(borderLine)
   }
 
   /** Kept for compatibility with older callers; the floor is always visible. */
@@ -61,6 +76,38 @@ export class Arena {
     if (floor) floor.visible = visible
   }
 
+}
+
+function roundedRectangle(width: number, height: number, radius: number, clockwise = false) {
+  const shape = new Shape()
+  const points = roundedRectanglePoints(width, height, radius)
+  if (clockwise) points.reverse()
+  const [firstX, firstZ] = points[0]!
+  shape.moveTo(firstX, firstZ)
+  for (const [x, z] of points.slice(1)) shape.lineTo(x, z)
+  shape.lineTo(firstX, firstZ)
+  return shape
+}
+
+function roundedRectanglePoints(width: number, height: number, radius: number) {
+  const halfWidth = width / 2
+  const halfHeight = height / 2
+  const clampedRadius = Math.min(radius, halfWidth, halfHeight)
+  const corners = [
+    [halfWidth - clampedRadius, -halfHeight + clampedRadius, -Math.PI / 2, 0],
+    [halfWidth - clampedRadius, halfHeight - clampedRadius, 0, Math.PI / 2],
+    [-halfWidth + clampedRadius, halfHeight - clampedRadius, Math.PI / 2, Math.PI],
+    [-halfWidth + clampedRadius, -halfHeight + clampedRadius, Math.PI, Math.PI * 1.5],
+  ] as const
+  const points: Array<[number, number]> = []
+  const cornerSegments = 10
+  for (const [centerX, centerZ, startAngle, endAngle] of corners) {
+    for (let segment = 0; segment < cornerSegments; segment += 1) {
+      const angle = startAngle + (endAngle - startAngle) * (segment / cornerSegments)
+      points.push([centerX + Math.cos(angle) * clampedRadius, centerZ + Math.sin(angle) * clampedRadius])
+    }
+  }
+  return points
 }
 
 function createFloorTexture() {

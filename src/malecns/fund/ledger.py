@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS chain_balances (chain_id INTEGER NOT NULL, wallet_add
 CREATE TABLE IF NOT EXISTS asset_metadata (chain_id INTEGER NOT NULL, token_address TEXT NOT NULL, symbol TEXT, name TEXT, asset_class TEXT NOT NULL DEFAULT 'crypto', decimals INTEGER, source TEXT NOT NULL, PRIMARY KEY(chain_id, token_address));
 CREATE TABLE IF NOT EXISTS fly_positions (fly_id TEXT PRIMARY KEY, state TEXT NOT NULL, chain_id INTEGER, token_address TEXT, token_symbol TEXT, allocation_fraction REAL NOT NULL, entry_timestamp_ms INTEGER, entry_price_usd REAL, current_value_usd REAL NOT NULL DEFAULT 0, realized_pnl_usd REAL NOT NULL DEFAULT 0, unrealized_pnl_usd REAL NOT NULL DEFAULT 0, departure_reason TEXT, held_amount REAL NOT NULL DEFAULT 0, updated_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS execution_attempts (attempt_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, side TEXT NOT NULL, chain_id INTEGER NOT NULL, token_in TEXT NOT NULL, token_out TEXT NOT NULL, amount_in TEXT NOT NULL, amount_out TEXT, fly_ids_json TEXT NOT NULL, execution_price TEXT, gas TEXT, slippage REAL, tx_hash TEXT, nonce TEXT, error TEXT, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS mainnet_executions (execution_id TEXT PRIMARY KEY, biological_event_id TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, fly_ids_json TEXT NOT NULL, side TEXT NOT NULL, token_symbol TEXT NOT NULL, token_address TEXT NOT NULL, input_token TEXT NOT NULL, input_amount TEXT NOT NULL, expected_output TEXT, tx_hash TEXT NOT NULL UNIQUE, chain_id INTEGER NOT NULL, status TEXT NOT NULL, explorer_url TEXT NOT NULL, block_number INTEGER, transaction_index INTEGER, sender TEXT, recipient TEXT, gas_used TEXT, effective_gas_price TEXT, transaction_fee TEXT, receipt_status TEXT, actual_input_amount TEXT, actual_output_amount TEXT, actual_token_received_json TEXT, transfer_events_json TEXT, blockscout_json TEXT, wallet_before_native_wei TEXT, error TEXT, last_checked_ms INTEGER NOT NULL);
 """
 
 
@@ -94,7 +95,7 @@ class FundLedger:
         self.connection.commit()
 
     def rows(self, table: str, *, limit: int = 100) -> list[dict[str, Any]]:
-        if table not in {"fund_events", "deposits", "withdrawals", "trades", "positions", "nav_snapshots", "chain_balances", "asset_metadata", "fly_positions", "execution_attempts"}:
+        if table not in {"fund_events", "deposits", "withdrawals", "trades", "positions", "nav_snapshots", "chain_balances", "asset_metadata", "fly_positions", "execution_attempts", "mainnet_executions"}:
             raise ValueError("unknown ledger table")
         return [dict(row) for row in self.connection.execute(f"SELECT * FROM {table} ORDER BY rowid DESC LIMIT ?", (limit,))]
 
@@ -118,5 +119,38 @@ class FundLedger:
             execution_price=excluded.execution_price, gas=excluded.gas, slippage=excluded.slippage,
             tx_hash=excluded.tx_hash, nonce=excluded.nonce, error=excluded.error, updated_ms=excluded.updated_ms""",
             tuple(attempt.get(key) for key in ("attempt_id", "idempotency_key", "status", "side", "chain_id", "token_in", "token_out", "amount_in", "amount_out", "fly_ids_json", "execution_price", "gas", "slippage", "tx_hash", "nonce", "error", "created_ms", "updated_ms")),
+        )
+        self.connection.commit()
+
+    def record_mainnet_execution(self, execution: Mapping[str, Any]) -> None:
+        """Persist a real-hash execution and every later receipt transition."""
+        fields = (
+            "execution_id", "biological_event_id", "timestamp_ms", "fly_ids_json", "side", "token_symbol",
+            "token_address", "input_token", "input_amount", "expected_output", "tx_hash", "chain_id", "status",
+            "explorer_url", "block_number", "transaction_index", "sender", "recipient", "gas_used",
+            "effective_gas_price", "transaction_fee", "receipt_status", "actual_input_amount", "actual_output_amount",
+            "actual_token_received_json", "transfer_events_json", "blockscout_json", "wallet_before_native_wei",
+            "error", "last_checked_ms",
+        )
+        values = tuple(execution.get(key) for key in fields)
+        self.connection.execute(
+            """INSERT INTO mainnet_executions (execution_id, biological_event_id, timestamp_ms, fly_ids_json, side, token_symbol, token_address, input_token, input_amount, expected_output, tx_hash, chain_id, status, explorer_url, block_number, transaction_index, sender, recipient, gas_used, effective_gas_price, transaction_fee, receipt_status, actual_input_amount, actual_output_amount, actual_token_received_json, transfer_events_json, blockscout_json, wallet_before_native_wei, error, last_checked_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(execution_id) DO UPDATE SET status=excluded.status, explorer_url=excluded.explorer_url,
+            block_number=excluded.block_number, transaction_index=excluded.transaction_index, sender=excluded.sender,
+            recipient=excluded.recipient, gas_used=excluded.gas_used, effective_gas_price=excluded.effective_gas_price,
+            transaction_fee=excluded.transaction_fee, receipt_status=excluded.receipt_status,
+            actual_input_amount=excluded.actual_input_amount, actual_output_amount=excluded.actual_output_amount,
+            actual_token_received_json=excluded.actual_token_received_json, transfer_events_json=excluded.transfer_events_json,
+            blockscout_json=excluded.blockscout_json, error=excluded.error, last_checked_ms=excluded.last_checked_ms""",
+            values,
+        )
+        self.connection.commit()
+
+    def update_trade_execution(self, trade_id: str, observation: Any) -> None:
+        """Keep the legacy trade index aligned with canonical receipt state."""
+        self.connection.execute(
+            "UPDATE trades SET status=?, amount_out=?, gas_usd=? WHERE trade_id=?",
+            (str(getattr(observation, "status", "PENDING")), getattr(observation, "actual_output_amount", None), None, trade_id),
         )
         self.connection.commit()

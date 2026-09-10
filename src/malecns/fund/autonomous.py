@@ -15,6 +15,7 @@ from malecns.swarm.observer import BehaviorTradeIntent
 
 from ..market.uniswap_client import UniswapTradingClient
 from .ledger import FundLedger
+from .receipts import BlockscoutClient, ReceiptStatus, explorer_url, observe_receipt
 from .wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
 
 
@@ -234,6 +235,9 @@ class AutonomousTradingRuntime:
         self.expected_agents = max(1, int(expected_agents))
         self.wallet = wallet
         self.adapter = adapter or SimulationExecutionAdapter()
+        self.receipt_poll_seconds = max(0.5, float(os.getenv("FUND_RECEIPT_POLL_SECONDS", "3")))
+        self.blockscout = BlockscoutClient.from_env()
+        self._last_receipt_poll = 0.0
         self.departure_debounce_ms = max(0, int(departure_debounce_ms))
         self.min_liquidity_usd = max(0.0, float(min_liquidity_usd))
         self.risk_guard = MarketRiskGuard(self.min_liquidity_usd)
@@ -274,6 +278,26 @@ class AutonomousTradingRuntime:
                         basis = (position.entry_price_usd or 0.0) * position.held_amount
                         self._save(replace(position, current_value_usd=current, unrealized_pnl_usd=current - basis, updated_ms=int(time.time() * 1000)))
 
+    def register_broadcast(self, execution_id: str, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None) -> bool:
+        """Attach a real externally-broadcast hash to an existing intent.
+
+        The signer/authorization layer calls this after it has broadcast the
+        prepared transaction. This method only records and observes the hash;
+        it cannot sign, submit, or create a transaction.
+        """
+        existing = next((row for row in self.ledger.rows("mainnet_executions", limit=100000) if str(row.get("tx_hash", "")).lower() == str(tx_hash).lower()), None)
+        if existing is not None:
+            return True
+        attempt = next((row for row in self.ledger.rows("execution_attempts", limit=100000) if str(row.get("idempotency_key")) == execution_id or str(row.get("attempt_id")) == execution_id), None)
+        if attempt is None or not _is_real_tx_hash(tx_hash):
+            return False
+        token_address = str(attempt.get("token_out") if str(attempt.get("token_in")).lower() == ZERO_ADDRESS.lower() else attempt.get("token_in") or "")
+        token = self.tokens_by_address.get(_token_key(int(attempt["chain_id"]), token_address)) or TokenRef(int(attempt["chain_id"]), token_address, token_address[:8])
+        fly_ids = _json_list(attempt.get("fly_ids_json"))
+        intent = ExecutionIntent(execution_id, str(attempt["side"]), int(attempt["chain_id"]), str(attempt["token_in"]), str(attempt["token_out"]), str(attempt["amount_in"]), tuple(fly_ids), float(attempt.get("slippage") or self.slippage_tolerance), int(attempt.get("created_ms") or time.time() * 1000))
+        self._persist_broadcast(intent, token, tx_hash, expected_output=expected_output, biological_event_id=biological_event_id)
+        return True
+
     def ingest(self, intents: Iterable[BehaviorTradeIntent], *, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
         actions: list[AllocationIntent] = []
@@ -308,6 +332,7 @@ class AutonomousTradingRuntime:
 
     def snapshot(self, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
+        self._poll_mainnet_receipts(timestamp)
         wallet: dict[str, Any] = {"configured": self.wallet is not None}
         if self.wallet is not None:
             try:
@@ -329,6 +354,13 @@ class AutonomousTradingRuntime:
             item["intendedAmount"] += position.held_amount
             item["intendedValueUsd"] += position.current_value_usd
             item["flyIds"].append(position.fly_id)
+        for execution in self.ledger.rows("mainnet_executions", limit=100000):
+            token_address = str(execution.get("token_address") or "")
+            if not token_address or token_address.lower() == ZERO_ADDRESS.lower():
+                continue
+            key = f"{execution.get('chain_id')}:{token_address.lower()}"
+            item = actual_by_token.setdefault(key, {"chainId": execution.get("chain_id"), "tokenAddress": token_address, "tokenSymbol": execution.get("token_symbol"), "intendedAmount": 0.0, "intendedValueUsd": 0.0, "flyIds": []})
+            item["tokenSymbol"] = item.get("tokenSymbol") or execution.get("token_symbol")
         actual = []
         if self.wallet is not None and wallet.get("nativeBalance") is not None:
             actual.append({
@@ -353,12 +385,14 @@ class AutonomousTradingRuntime:
                 except Exception as exc:
                     item["observationError"] = str(exc)
             actual.append(item)
+        mainnet_executions = [_execution_payload(row) for row in self.ledger.rows("mainnet_executions", limit=100)]
+        pending_execution = [item for item in mainnet_executions if item["status"] in {ReceiptStatus.BROADCAST, ReceiptStatus.PENDING}]
         return {
             "observedAtMs": timestamp,
             "flyCount": self.expected_agents,
             "executionAdapter": type(self.adapter).__name__,
             "executionBoundary": "simulation-fill" if isinstance(self.adapter, SimulationExecutionAdapter) else "transaction-preparation-only",
-            "externalBroadcast": False,
+            "externalBroadcast": bool(mainnet_executions),
             "perFlyAllocationFraction": 1.0 / self.expected_agents,
             "perFlyAllocationPercent": 100.0 / self.expected_agents,
             "perFlyBudgetWei": str(deployable // self.expected_agents),
@@ -367,6 +401,8 @@ class AutonomousTradingRuntime:
             "biologicalTargetPortfolio": [{"chainId": chain_id, "tokenAddress": token, "allocationFraction": fraction, "allocationPercent": fraction * 100.0} for (chain_id, token), fraction in biological.items()],
             "actualWalletPortfolio": actual,
             "pendingRebalance": list(self.pending_rebalance[-100:]),
+            "pendingExecution": pending_execution,
+            "mainnetExecutions": mainnet_executions,
             "events": list(self.events[-100:]),
         }
 
@@ -378,6 +414,113 @@ class AutonomousTradingRuntime:
             if position.state == FlyBehaviorState.DEPARTING.value and position.held_amount > 0:
                 actions.append(AllocationIntent(fly_id, "sell", token, position.allocation_fraction, reason, timestamp))
             self.pending_departures.pop(fly_id, None)
+
+    def _persist_broadcast(self, intent: ExecutionIntent, token: TokenRef, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None) -> None:
+        if not _is_real_tx_hash(tx_hash):
+            return
+        wallet_before_native_wei: int | None = None
+        if self.wallet is not None:
+            try:
+                wallet_before_native_wei = self.wallet.snapshot().native_balance_wei
+            except Exception:
+                wallet_before_native_wei = None
+        now = int(time.time() * 1000)
+        self.ledger.record_mainnet_execution({
+            "execution_id": intent.idempotency_key,
+            "biological_event_id": biological_event_id or ",".join(intent.fly_ids) or intent.idempotency_key,
+            "timestamp_ms": intent.created_at_ms,
+            "fly_ids_json": json.dumps(list(intent.fly_ids)),
+            "side": intent.side,
+            "token_symbol": token.symbol,
+            "token_address": token.address,
+            "input_token": intent.token_in,
+            "input_amount": intent.amount_in,
+            "expected_output": expected_output,
+            "tx_hash": tx_hash,
+            "chain_id": intent.chain_id,
+            "status": ReceiptStatus.BROADCAST,
+            "explorer_url": explorer_url(tx_hash),
+            "wallet_before_native_wei": str(wallet_before_native_wei) if wallet_before_native_wei is not None else None,
+            "last_checked_ms": now,
+        })
+        self.ledger.record_execution_attempt({
+            "attempt_id": intent.idempotency_key,
+            "idempotency_key": intent.idempotency_key,
+            "status": ReceiptStatus.BROADCAST,
+            "side": intent.side,
+            "chain_id": intent.chain_id,
+            "token_in": intent.token_in,
+            "token_out": intent.token_out,
+            "amount_in": intent.amount_in,
+            "amount_out": expected_output,
+            "fly_ids_json": json.dumps(list(intent.fly_ids)),
+            "execution_price": None,
+            "gas": None,
+            "slippage": intent.slippage_tolerance,
+            "tx_hash": tx_hash,
+            "nonce": None,
+            "error": None,
+            "created_ms": intent.created_at_ms,
+            "updated_ms": now,
+        })
+
+    def _poll_mainnet_receipts(self, timestamp: int) -> None:
+        if self.wallet is None or isinstance(self.adapter, SimulationExecutionAdapter):
+            return
+        now = time.monotonic()
+        if now - self._last_receipt_poll < self.receipt_poll_seconds:
+            return
+        self._last_receipt_poll = now
+        for row in self.ledger.rows("mainnet_executions", limit=100000):
+            if row.get("status") not in {ReceiptStatus.BROADCAST, ReceiptStatus.PENDING}:
+                continue
+            tx_hash = str(row.get("tx_hash") or "")
+            if not _is_real_tx_hash(tx_hash):
+                continue
+            try:
+                observation = observe_receipt(
+                    self.wallet,
+                    tx_hash,
+                    side=str(row.get("side") or "buy"),
+                    token_address=str(row.get("token_address") or ""),
+                    token_symbol=str(row.get("token_symbol") or "TOKEN"),
+                    input_token=str(row.get("input_token") or ZERO_ADDRESS),
+                    input_amount=str(row.get("input_amount") or "0"),
+                    blockscout=self.blockscout,
+                    wallet_before_native_wei=int(row["wallet_before_native_wei"]) if row.get("wallet_before_native_wei") else None,
+                    output_decimals=self._token_decimals(str(row.get("token_address") or "")),
+                )
+            except Exception as exc:
+                self.ledger.record_mainnet_execution({**row, "last_checked_ms": timestamp, "error": str(exc)})
+                continue
+            payload = {**row, "status": observation.status, "explorer_url": observation.explorer_url, "block_number": observation.block_number, "transaction_index": observation.transaction_index, "sender": observation.sender, "recipient": observation.recipient, "gas_used": observation.gas_used, "effective_gas_price": observation.effective_gas_price, "transaction_fee": observation.transaction_fee, "receipt_status": observation.receipt_status, "actual_input_amount": observation.actual_input_amount, "actual_output_amount": observation.actual_output_amount, "actual_token_received_json": json.dumps(observation.actual_token_received) if observation.actual_token_received is not None else None, "transfer_events_json": json.dumps(list(observation.transfer_events)), "blockscout_json": json.dumps(observation.blockscout) if observation.blockscout is not None else row.get("blockscout_json"), "error": observation.error, "last_checked_ms": timestamp}
+            self.ledger.record_mainnet_execution(payload)
+            self.ledger.update_trade_execution(row["execution_id"], observation)
+            if observation.status == ReceiptStatus.CONFIRMED and row.get("status") != ReceiptStatus.CONFIRMED:
+                self._apply_confirmed_execution(row, observation, timestamp)
+
+    def _apply_confirmed_execution(self, row: Mapping[str, Any], observation: Any, timestamp: int) -> None:
+        token_address = str(row.get("token_address") or "")
+        chain_id = int(row.get("chain_id") or 4663)
+        token = self.tokens_by_address.get(_token_key(chain_id, token_address)) or TokenRef(chain_id, token_address, str(row.get("token_symbol") or token_address[:8]))
+        fly_ids = _json_list(row.get("fly_ids_json"))
+        group = [(fly_id, token, "confirmed onchain") for fly_id in fly_ids if fly_id in self.positions]
+        if not group:
+            return
+        if str(row.get("side")) == "buy":
+            if observation.actual_output_amount is None:
+                return
+            self._apply_fill("buy", group, float(observation.actual_output_amount), token, timestamp)
+        else:
+            self._apply_fill("sell", group, float(observation.actual_output_amount or 0.0), token, timestamp)
+
+    def _token_decimals(self, token_address: str) -> int | None:
+        if not token_address or token_address.lower() == ZERO_ADDRESS.lower() or self.wallet is None:
+            return 18 if token_address and token_address.lower() == ZERO_ADDRESS.lower() else None
+        try:
+            return self.wallet.erc20_decimals(token_address)
+        except Exception:
+            return None
 
     def _execute_netted(self, actions: list[AllocationIntent], timestamp: int) -> None:
         grouped: dict[tuple[str, int, str], list[tuple[str, TokenRef, str]]] = {}
@@ -417,6 +560,10 @@ class AutonomousTradingRuntime:
                 result = self.adapter.execute(intent, token)
                 status = str(result.get("status", "prepared"))
                 amount_out = float(result.get("amountOut") or 0)
+                tx_hash = str(result.get("txHash") or "")
+                if _is_real_tx_hash(tx_hash):
+                    self._persist_broadcast(intent, token, tx_hash, expected_output=str(result.get("amountOut")) if result.get("amountOut") is not None else None)
+                    status = ReceiptStatus.BROADCAST
                 attempt.update({"status": status, "amount_out": str(amount_out), "execution_price": result.get("executionPrice"), "gas": result.get("gas"), "tx_hash": result.get("txHash"), "nonce": result.get("nonce"), "updated_ms": int(time.time() * 1000)})
                 if status in {"filled", "simulated"}:
                     self._apply_fill(side, group, amount_out, token, timestamp)
@@ -464,6 +611,73 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _is_real_tx_hash(value: str) -> bool:
+    return bool(re.fullmatch(r"0x[a-fA-F0-9]{64}", str(value or "")))
+
+
+def _json_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _execution_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    actual_received = row.get("actual_token_received_json")
+    transfers = row.get("transfer_events_json")
+    try:
+        actual_received = json.loads(actual_received) if actual_received else None
+    except (TypeError, json.JSONDecodeError):
+        actual_received = None
+    try:
+        transfers = json.loads(transfers) if transfers else []
+    except (TypeError, json.JSONDecodeError):
+        transfers = []
+    return {
+        "executionId": row.get("execution_id"),
+        "biologicalEventId": row.get("biological_event_id"),
+        "timestamp": row.get("timestamp_ms"),
+        "flyIds": _json_list(row.get("fly_ids_json")),
+        "side": row.get("side"),
+        "tokenSymbol": row.get("token_symbol"),
+        "tokenAddress": row.get("token_address"),
+        "inputToken": row.get("input_token"),
+        "inputAmount": row.get("input_amount"),
+        "expectedOutput": row.get("expected_output"),
+        "txHash": row.get("tx_hash"),
+        "chainId": row.get("chain_id"),
+        "status": row.get("status"),
+        "explorerUrl": row.get("explorer_url"),
+        "blockNumber": row.get("block_number"),
+        "transactionIndex": row.get("transaction_index"),
+        "from": row.get("sender"),
+        "to": row.get("recipient"),
+        "gasUsed": row.get("gas_used"),
+        "effectiveGasPrice": row.get("effective_gas_price"),
+        "transactionFee": row.get("transaction_fee"),
+        "receiptStatus": row.get("receipt_status"),
+        "actualInputAmount": row.get("actual_input_amount"),
+        "actualOutputAmount": row.get("actual_output_amount"),
+        "actualTokenReceived": actual_received,
+        "transferEvents": transfers,
+        "blockscout": _json_object(row.get("blockscout_json")),
+        "error": row.get("error"),
+    }
+
+
+def _json_object(value: Any) -> dict[str, Any] | None:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _token_key(chain_id: int, address: str) -> str:

@@ -41,7 +41,7 @@ app.append(canvas)
 const tokenLogoOverlay = document.createElement('div')
 tokenLogoOverlay.className = 'token-logo-overlay'
 app.append(tokenLogoOverlay)
-const tokenLogoElements = new Map<string, { element: HTMLImageElement; source: string }>()
+const tokenLogoElements = new Map<string, { element: HTMLImageElement; link: HTMLAnchorElement; source: string; failed: boolean }>()
 const logoWorldPosition = new Vector3()
 const logoEdgePosition = new Vector3()
 const drawOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -69,25 +69,43 @@ function updateTokenLogoOverlay() {
     const source = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
     if (!source) continue
     const id = habitat.state.id
+    const dexscreenerUrl = habitat.state.dexscreenerUrl ?? buildDexscreenerUrl(habitat.state)
     visibleIds.add(id)
     let entry = tokenLogoElements.get(id)
     if (!entry) {
+      const link = document.createElement('a')
+      link.className = 'token-logo-link'
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
       const element = document.createElement('img')
       element.className = 'token-logo-image'
       element.alt = `${habitat.state.label} logo`
       element.draggable = false
       element.loading = 'eager'
       element.referrerPolicy = 'no-referrer'
-      element.addEventListener('error', () => { element.hidden = true })
-      tokenLogoOverlay.append(element)
-      entry = { element, source: '' }
+      const nextEntry = { element, link, source: '', failed: false }
+      element.addEventListener('error', () => { nextEntry.failed = true; link.hidden = true })
+      link.append(element)
+      tokenLogoOverlay.append(link)
+      entry = nextEntry
       tokenLogoElements.set(id, entry)
     }
     if (entry.source !== source) {
       entry.source = source
-      entry.element.hidden = false
+      entry.failed = false
+      entry.link.hidden = false
       entry.element.src = normalizeImageUrl(source)
     }
+    if (dexscreenerUrl) {
+      entry.link.href = dexscreenerUrl
+      entry.link.setAttribute('aria-label', `Open ${habitat.state.label} in Dexscreener`)
+      entry.link.tabIndex = 0
+    } else {
+      entry.link.removeAttribute('href')
+      entry.link.removeAttribute('aria-label')
+      entry.link.tabIndex = -1
+    }
+    if (entry.failed) continue
     logoWorldPosition.copy(habitat.group.position).y += 0.19
     logoEdgePosition.copy(logoWorldPosition).x += Math.max(0.04, habitat.properties.physicalRadiusM * 0.62)
     logoWorldPosition.project(activeCamera)
@@ -103,14 +121,14 @@ function updateTokenLogoOverlay() {
     const centerY = (-logoWorldPosition.y * 0.5 + 0.5) * viewportHeight
     const projectedRadius = Math.abs(logoEdgePosition.x - logoWorldPosition.x) * 0.5 * viewportWidth
     const size = clamp(projectedRadius * 1.35 * environment.getHabitatVisualScale(), 16, 46)
-    entry.element.hidden = false
-    entry.element.style.width = `${size}px`
-    entry.element.style.height = `${size}px`
-    entry.element.style.left = `${centerX}px`
-    entry.element.style.top = `${centerY}px`
+    entry.link.hidden = false
+    entry.link.style.width = `${size}px`
+    entry.link.style.height = `${size}px`
+    entry.link.style.left = `${centerX}px`
+    entry.link.style.top = `${centerY}px`
   }
   for (const [id, entry] of tokenLogoElements) {
-    if (!visibleIds.has(id)) entry.element.hidden = true
+    if (!visibleIds.has(id)) entry.link.hidden = true
   }
 }
 
@@ -166,6 +184,54 @@ app.append(hud)
 const demoStatus = document.createElement('div')
 demoStatus.className = 'demo-status'
 app.append(demoStatus)
+
+const portfolioSummary = document.createElement('section')
+portfolioSummary.className = 'portfolio-summary'
+portfolioSummary.setAttribute('aria-label', 'Live portfolio summary')
+portfolioSummary.innerHTML = `
+  <div class="portfolio-summary-heading"><span>FRUITFLY CAPITAL · PORTFOLIO</span><a href="/portfolio/">OPEN FULL PORTFOLIO →</a></div>
+  <div class="portfolio-summary-values"><div><small>WALLET</small><strong data-portfolio-summary="wallet">CONNECTING</strong></div><div><small>AVAILABLE</small><strong data-portfolio-summary="available">—</strong></div><div><small>POSITIONS</small><strong data-portfolio-summary="positions">—</strong></div><div><small>RETURN</small><strong data-portfolio-summary="return">—</strong></div></div>
+  <div class="portfolio-summary-holdings" data-portfolio-summary="holdings">Waiting for live portfolio data…</div>
+`
+app.append(portfolioSummary)
+const portfolioSummaryFields = {
+  wallet: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="wallet"]')!,
+  available: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="available"]')!,
+  positions: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="positions"]')!,
+  return: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="return"]')!,
+  holdings: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="holdings"]')!,
+}
+
+const executionToast = document.createElement('aside')
+executionToast.className = 'mainnet-execution-toast'
+executionToast.setAttribute('aria-live', 'polite')
+executionToast.hidden = true
+app.append(executionToast)
+const confirmedExecutionIds = new Set<string>()
+let executionToastInitialized = false
+let executionToastTimer: number | null = null
+
+function updateExecutionToast() {
+  const fund = brainSocket.portfolio()
+  const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
+  const executions = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
+  if (!executionToastInitialized) {
+    executions.filter((item) => item.status === 'CONFIRMED').forEach((item) => confirmedExecutionIds.add(String(item.executionId || item.txHash || '')))
+    executionToastInitialized = true
+    return
+  }
+  const confirmed = executions.find((item) => item.status === 'CONFIRMED' && !confirmedExecutionIds.has(String(item.executionId || item.txHash || '')))
+  executions.filter((item) => item.status === 'CONFIRMED').forEach((item) => confirmedExecutionIds.add(String(item.executionId || item.txHash || '')))
+  if (!confirmed) return
+  const flyIds = Array.isArray(confirmed.flyIds) ? confirmed.flyIds.map(String).join(' · ') : 'FLY'
+  const token = String(confirmed.tokenSymbol || 'TOKEN')
+  const verb = String(confirmed.side || 'buy').toLowerCase() === 'sell' ? 'SOLD' : 'BOUGHT'
+  const hash = typeof confirmed.txHash === 'string' && /^0x[a-fA-F0-9]{64}$/.test(confirmed.txHash) ? confirmed.txHash : null
+  executionToast.innerHTML = `<strong>🪰 ${flyIds} ${verb} ${token}</strong><span>CONFIRMED ON ROBINHOOD CHAIN</span>${hash ? `<a href="https://robinhoodchain.blockscout.com/tx/${hash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a>` : ''}`
+  executionToast.hidden = false
+  if (executionToastTimer !== null) window.clearTimeout(executionToastTimer)
+  executionToastTimer = window.setTimeout(() => { executionToast.hidden = true }, 5500)
+}
 
 const intentLogPanel = document.createElement('section')
 intentLogPanel.className = 'intent-log-panel'
@@ -267,6 +333,24 @@ renderIntentLog()
 const brainUpdateHz = Math.max(1, Number(import.meta.env.VITE_BRAIN_UPDATE_HZ ?? 2) || 2)
 let selectedIndex = 0
 let lastMarketUiStatus = ''
+
+function updatePortfolioSummary() {
+  const fund = brainSocket.portfolio()
+  if (!fund) return
+  const wallet = (fund.wallet || {}) as Record<string, unknown>
+  const positions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
+  const available = typeof wallet.availableToTrade === 'number' ? `${wallet.availableToTrade.toFixed(6)} ETH` : '—'
+  const walletTotal = typeof wallet.nativeBalance === 'number' ? `${wallet.nativeBalance.toFixed(6)} ETH` : '—'
+  const returnPct = typeof fund.returnPct === 'number' ? `${fund.returnPct >= 0 ? '+' : ''}${fund.returnPct.toFixed(2)}%` : '—'
+  portfolioSummaryFields.wallet.textContent = walletTotal
+  portfolioSummaryFields.available.textContent = available
+  portfolioSummaryFields.positions.textContent = `${positions.length}`
+  portfolioSummaryFields.return.textContent = returnPct
+  portfolioSummaryFields.holdings.textContent = positions.length
+    ? positions.slice(0, 4).map((position) => String(position.symbol || position.token_address || 'TOKEN')).join(' · ')
+    : 'No token positions yet · proposals remain visible in the behavior log'
+  updateExecutionToast()
+}
 
 // The pilot population is deliberately a numbered set of real CNS agents.
 // Additional bodies are explicitly render-only followers of these primaries.
@@ -440,7 +524,7 @@ cameraTargetPanel.append(freeButton)
 app.append(cameraTargetPanel)
 
 const sceneControls = document.createElement('aside')
-sceneControls.className = 'scene-controls'
+sceneControls.className = 'scene-controls debug-only'
 sceneControls.setAttribute('aria-label', 'Scene position controls')
 sceneControls.innerHTML = `
   <div class="scene-controls-heading">PLAY SPACE</div>
@@ -896,10 +980,14 @@ window.addEventListener('resize', resize)
 brainSocket.onStatusChange((next) => {
   status.innerHTML = `<span class="status-dot ${next}"></span> brain socket ${next} <span class="socket-url">${brainUrl}</span>`
   intentLogLive.textContent = next === 'connected' ? 'LIVE' : 'WAITING'
-  if (next === 'connected') brainSocket.requestEnvironment()
+  if (next === 'connected') {
+    brainSocket.requestEnvironment()
+    brainSocket.requestPortfolio()
+  }
 })
 brainSocket.connect()
 window.setInterval(() => brainSocket.requestEnvironment(), 15000)
+window.setInterval(() => brainSocket.requestPortfolio(), 10000)
 
 logButton.addEventListener('click', () => flightLog.download())
 
@@ -910,6 +998,9 @@ let nextCausalUiAt = 0
 let nextSwarmTelemetryAt = 0
 let nextIntentMotionUiAt = 0
 let nextFlyPersistenceAt = 0
+let nextPortfolioUiAt = 0
+let nextTraceRotationAt = 0
+let traceIndex = 0
 let startupReleased = false
 let nextPerfUiAt = 0
 function animate(now: number) {
@@ -930,6 +1021,10 @@ function animate(now: number) {
   const marketEnvironment = brainSocket.environmentUpdate()
   if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
   updateMarketStatus(marketEnvironment)
+  if (world.elapsedSeconds >= nextPortfolioUiAt) {
+    updatePortfolioSummary()
+    nextPortfolioUiAt = world.elapsedSeconds + 1
+  }
 
   swarmObserver.observe(
     Date.now(),
@@ -983,7 +1078,20 @@ function animate(now: number) {
   if (debugPanelVisible || debugVectorsVisible) {
     debug.update(selectedAgent, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(selectedAgent.id), brainSocket.activityFor(selectedAgent.id))
   }
-  brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
+  // Rotate the detailed trace across all independent brains so the product
+  // view does not imply that fly-001 is the whole swarm. Prefer live agents;
+  // if a backend is late, keep the panel useful by showing the next primary.
+  if (world.elapsedSeconds >= nextTraceRotationAt) {
+    traceIndex = (traceIndex + 1) % agents.length
+    nextTraceRotationAt = world.elapsedSeconds + 4
+  }
+  const liveTraceIndices = agents
+    .map((agent, index) => isLiveBrainSource(brainSocket.activityFor(agent.id)?.source) ? index : -1)
+    .filter((index) => index >= 0)
+  const tracePool = liveTraceIndices.length > 0 ? liveTraceIndices : agents.map((_, index) => index)
+  const traceAgentIndex = tracePool[traceIndex % tracePool.length] ?? 0
+  const traceAgent = agents[traceAgentIndex] ?? agents[0]!
+  brainActivityPanel.update(traceAgent, brainSocket.activityFor(traceAgent.id), brainSocket.stimulationFor(traceAgent.id), world.elapsedSeconds)
   brainActivityPanel.animate(world.elapsedSeconds)
   if (debugPanelVisible && world.elapsedSeconds >= nextCausalUiAt) {
     updateCausalStatus(selectedAgent)

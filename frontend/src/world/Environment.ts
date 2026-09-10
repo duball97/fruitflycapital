@@ -20,6 +20,7 @@ export class Environment {
   private readonly habitatsById = new Map<string, TokenHabitat>()
   private readonly habitatList: TokenHabitat[] = []
   private readonly slotsById = new Map<string, number>()
+  private lastVisualUpdateSeconds = Number.NEGATIVE_INFINITY
   private habitatVisualScale = readHabitatVisualScale()
   private worldBoundary: Vector3[] | null = null
   readonly particles: ParticleField
@@ -136,6 +137,11 @@ export class Environment {
   }
 
   updateVisuals(timeSeconds: number) {
+    // Physics and neural sampling run on their own fixed/update cadences.
+    // Habitat glows and pooled particles do not need a full recalculation at
+    // the display refresh rate, especially with up to 100 token places.
+    if (timeSeconds - this.lastVisualUpdateSeconds < 1 / 30) return
+    this.lastVisualUpdateSeconds = timeSeconds
     this.habitatList.forEach((habitat) => habitat.update(timeSeconds))
     this.particles.update(timeSeconds)
   }

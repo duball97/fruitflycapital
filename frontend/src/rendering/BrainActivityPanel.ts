@@ -39,6 +39,7 @@ export class BrainActivityPanel {
   readonly element: HTMLDivElement
   private readonly sourceBadge: HTMLSpanElement
   private readonly agentLabel: HTMLSpanElement
+  private readonly mapAgentLabel: HTMLSpanElement
   private readonly inputBar: HTMLSpanElement
   private readonly spikeBar: HTMLSpanElement
   private readonly dnBar: HTMLSpanElement
@@ -62,7 +63,7 @@ export class BrainActivityPanel {
     this.element.innerHTML = `
       <div class="brain-panel-heading"><strong>NEURAL TRACE</strong><span class="brain-source"></span></div>
       <div class="brain-panel-agent"></div>
-      <div class="brain-map-heading"><span>MALECNS ACTIVITY MAP</span><span>SELECTED FLY</span></div>
+      <div class="brain-map-heading"><span>MALECNS ACTIVITY MAP</span><span class="brain-map-agent">SWARM</span></div>
       <canvas class="brain-neural-map" aria-label="Animated MaleCNS activity map"></canvas>
       <div class="brain-map-labels"><span>SENSORY</span><span>INTEGRATION</span><span>MOTOR / DN</span><span>FLIGHT</span></div>
       <div class="brain-flow-row"><span>INPUT</span><i class="brain-flow-track"><b class="brain-input-bar"></b></i><span>SPIKES</span><i class="brain-flow-track"><b class="brain-spike-bar"></b></i></div>
@@ -73,6 +74,7 @@ export class BrainActivityPanel {
     uiRoot.append(this.element)
     this.sourceBadge = this.element.querySelector<HTMLSpanElement>('.brain-source')!
     this.agentLabel = this.element.querySelector<HTMLSpanElement>('.brain-panel-agent')!
+    this.mapAgentLabel = this.element.querySelector<HTMLSpanElement>('.brain-map-agent')!
     this.inputBar = this.element.querySelector<HTMLSpanElement>('.brain-input-bar')!
     this.spikeBar = this.element.querySelector<HTMLSpanElement>('.brain-spike-bar')!
     this.dnBar = this.element.querySelector<HTMLSpanElement>('.brain-dn-bar')!
@@ -116,6 +118,7 @@ export class BrainActivityPanel {
         : 'WAITING FOR BRAIN OUTPUT'
     this.sourceBadge.dataset.state = live ? 'live' : 'waiting'
     this.agentLabel.textContent = `${agent.id} · ${agent.mode.toUpperCase()} · ${live ? 'measured neural window' : 'interpretation unavailable'}`
+    this.mapAgentLabel.textContent = `${agent.id.toUpperCase()} · SWARM TRACE`
     setBar(this.inputBar, input)
     setBar(this.spikeBar, spikeLevel)
     setBar(this.dnBar, dnLevel)
