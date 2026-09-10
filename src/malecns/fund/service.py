@@ -7,8 +7,6 @@ from .ledger import FundLedger
 from .portfolio import PortfolioEngine
 from .valuation import FakeValuationProvider
 from .wallet import RpcWalletClient, WalletRpcError
-from .wallet_execution import DirectWalletUniswapAdapter
-from ..market.uniswap_client import UniswapTradingClient
 
 class FundService:
     def __init__(self, ledger: FundLedger, portfolio: PortfolioEngine, execution: ExecutionEngine, wallet: RpcWalletClient | None = None) -> None: self.ledger, self.portfolio, self.execution, self.wallet = ledger, portfolio, execution, wallet
@@ -16,10 +14,9 @@ class FundService:
     def from_env(cls) -> "FundService":
         ledger = FundLedger(os.getenv("FUND_DB_PATH", "data/fund/fund.db"))
         wallet = RpcWalletClient.from_env()
-        api = UniswapTradingClient.from_env()
-        private_key = os.getenv("PRIVATE_KEY", "").strip()
-        adapter = DirectWalletUniswapAdapter(wallet, api, private_key) if wallet is not None and api is not None and private_key else None
-        return cls(ledger, PortfolioEngine(ledger, FakeValuationProvider()), ExecutionEngine(adapter=adapter), wallet)
+        # The autonomous runtime owns strategy execution. Keep this legacy
+        # service read-only/guarded so no hidden route reaches a signer.
+        return cls(ledger, PortfolioEngine(ledger, FakeValuationProvider()), ExecutionEngine(), wallet)
     def status(self) -> dict[str, Any]:
         wallet_payload: dict[str, Any] = {"configured": self.wallet is not None, "source": "rpc"}
         if self.wallet is not None:
@@ -27,12 +24,12 @@ class FundService:
                 wallet_payload = {"configured": True, **self.wallet.snapshot().as_dict()}
             except (WalletRpcError, ValueError) as exc:
                 wallet_payload = {"configured": True, "status": "error", "error": str(exc), "address": self.wallet.wallet_address, "source": "rpc"}
-        fly_count = max(1, int(os.getenv("NEUROSWARM_SWARM_SIZE", "16")))
+        fly_count = 16
         fly_weight = 1.0 / fly_count
         allocation: dict[str, Any] = {"flyCount": fly_count, "perFlyWeight": fly_weight, "perFlyPercent": fly_weight * 100.0, "basis": "tradeable wallet balance after gas reserve"}
         if wallet_payload.get("availableToTrade") is not None:
             allocation["perFlyBudget"] = float(wallet_payload["availableToTrade"]) * fly_weight
             allocation["perFlyBudgetSymbol"] = wallet_payload.get("nativeSymbol", "ETH")
-        return {"name": "Fruit Fly Capital", "mode": os.getenv("FUND_EXECUTION_MODE", "dry-run"), "chainId": int(os.getenv("FUND_CHAIN_ID") or "4663"), "rpcUrl": os.getenv("FUND_RPC_URL"), "explorerUrl": os.getenv("FUND_EXPLORER_URL") or "https://robinhoodchain.blockscout.com", "wallet": wallet_payload, "allocation": allocation, "contractAddress": os.getenv("FUND_CONTRACT_ADDRESS"), "treasuryAddress": os.getenv("FUND_WALLET_ADDRESS") or os.getenv("PRIVY_WALLET_ADDRESS"), "accountingAsset": os.getenv("FUND_ACCOUNTING_ASSET", "ETH"), "wethAddress": os.getenv("FUND_WETH_ADDRESS"), "security": {"walletProvider": "private-key-server", "policyConfigured": False, "autonomousTradeLimitUsd": float(os.getenv("FUND_MAX_TRADE_USD", "10"))}, "executionBoundary": "proposal-only" if self.execution.mode.value == "dry-run" else "guarded", "contracts": {"retained": True, "active": False}}
+        return {"name": "Fruit Fly Capital", "mode": os.getenv("FUND_EXECUTION_MODE", "dry-run"), "chainId": int(os.getenv("FUND_CHAIN_ID") or "4663"), "rpcUrl": os.getenv("FUND_RPC_URL"), "explorerUrl": os.getenv("FUND_EXPLORER_URL") or "https://robinhoodchain.blockscout.com", "wallet": wallet_payload, "allocation": allocation, "contractAddress": os.getenv("FUND_CONTRACT_ADDRESS"), "treasuryAddress": os.getenv("FUND_WALLET_ADDRESS") or os.getenv("PRIVY_WALLET_ADDRESS"), "accountingAsset": os.getenv("FUND_ACCOUNTING_ASSET", "ETH"), "wethAddress": os.getenv("FUND_WETH_ADDRESS"), "security": {"walletProvider": "private-key-server", "policyConfigured": False, "autonomousTradeLimitUsd": float(os.getenv("FUND_MAX_TRADE_USD", "10"))}, "executionBoundary": "read-only-compatibility" if self.execution.mode.value == "dry-run" else "guarded", "contracts": {"retained": True, "active": False}}
     def portfolio_update(self) -> dict[str, Any]: return {"fund": {**self.status(), **self.portfolio.snapshot().as_dict()}, "demoData": False}
     def trade_history(self) -> dict[str, Any]: return {"trades": self.ledger.rows("trades", limit=50), "demoData": False}

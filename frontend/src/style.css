@@ -302,6 +302,8 @@ input:focus-visible {
   text-shadow: 0 2px 15px rgba(0, 0, 0, 0.72);
 }
 .brand { font-weight: 700; letter-spacing: 0.14em; }
+.brand { display: inline-flex; align-items: center; gap: 9px; }
+.brand-logo { width: 25px; height: 25px; object-fit: contain; border-radius: 50%; filter: drop-shadow(0 2px 8px rgba(255, 255, 255, 0.18)); }
 .brand-mark { color: var(--sage-bright); }
 .neuroswarm { font-weight: 800; letter-spacing: 0.25em; }
 .portfolio-link { color: var(--sage-bright); }
@@ -326,7 +328,7 @@ input:focus-visible {
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .startup-kicker { color: var(--sage); font-family: inherit; font-weight: 650; letter-spacing: 0.2em; }
-.startup-title { color: #fff; font-weight: 750; letter-spacing: 0.22em; }
+.startup-title { color: #fff; font-size: 21px; font-weight: 750; letter-spacing: 0.14em; }
 .startup-message { color: var(--sage-bright); font-family: inherit; font-weight: 650; letter-spacing: 0.09em; }
 .startup-detail { color: var(--ink-muted); }
 .startup-progress { background: rgba(214, 231, 222, 0.16); }
@@ -381,6 +383,8 @@ body:has(#portfolio-app) { min-height: 100vh; overflow: auto; background: #050d1
 }
 #portfolio-app header a,
 #portfolio-app footer a { color: var(--sage-bright); text-decoration: none; font-weight: 700; letter-spacing: 0.08em; }
+#portfolio-app .portfolio-brand { display: inline-flex; align-items: center; gap: 9px; }
+#portfolio-app .portfolio-brand img { width: 25px; height: 25px; border-radius: 50%; object-fit: contain; vertical-align: middle; }
 #portfolio-app h1 { margin: 13px 0 5px; color: #fff; font-size: clamp(25px, 4vw, 40px); letter-spacing: 0.08em; }
 #portfolio-app header p { margin: 0; color: var(--ink-faint); font-size: 11px; letter-spacing: 0.16em; }
 #portfolio-app .badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

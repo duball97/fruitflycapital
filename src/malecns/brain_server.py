@@ -27,6 +27,7 @@ from .market.signal_engine import MarketSignalEngine
 from .swarm.observer import FlyObservation, HabitatObservation
 from .fund.pipeline import SwarmDecisionPipeline
 from .fund.service import FundService
+from .fund.autonomous import AutonomousTradingRuntime
 
 
 load_project_env()
@@ -38,9 +39,10 @@ MARKET_ENGINE = MarketSignalEngine.from_env()
 REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_cache())))
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
-SWARM_SIZE = int(os.getenv("NEUROSWARM_SWARM_SIZE", "16"))
+SWARM_SIZE = 16
 SWARM_DECISIONS = SwarmDecisionPipeline(max(1, SWARM_SIZE))
 FUND_SERVICE = FundService.from_env()
+AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)
 
 
 def _stable_fly_seed(fly_id: str, base_seed: int = REALTIME_SEED) -> int:
@@ -144,17 +146,26 @@ async def handle_client(websocket: Any) -> None:
                 observations = _parse_swarm_telemetry(message)
                 if observations:
                     decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
+                    autonomous = await asyncio.to_thread(
+                        AUTONOMOUS_RUNTIME.ingest,
+                        decision.behavior_intents,
+                        observed_at_ms=decision.observed_at_ms,
+                    )
+                    decision_payload = decision.as_dict()
+                    decision_payload["autonomousTrading"] = autonomous
                     try:
-                        await websocket.send(json.dumps({"type": "swarm_update", "decision": decision.as_dict()}))
+                        await websocket.send(json.dumps({"type": "swarm_update", "decision": decision_payload}))
                     except (ConnectionError, ConnectionClosed):
                         break
                 continue
             if isinstance(message, dict) and message.get("type") in {"fund_status_request", "portfolio_request", "trade_history_request"}:
                 request_type = message["type"]
                 if request_type == "fund_status_request":
-                    response = {"type": "fund_status_update", "fund": FUND_SERVICE.status(), "demoData": False}
+                        response = {"type": "fund_status_update", "fund": {**FUND_SERVICE.status(), "autonomous": AUTONOMOUS_RUNTIME.snapshot()}, "demoData": False}
                 elif request_type == "portfolio_request":
-                    response = {"type": "portfolio_update", **FUND_SERVICE.portfolio_update()}
+                    portfolio = FUND_SERVICE.portfolio_update()
+                    portfolio["fund"]["autonomous"] = AUTONOMOUS_RUNTIME.snapshot()
+                    response = {"type": "portfolio_update", **portfolio}
                 else:
                     response = {"type": "trade_history_update", **FUND_SERVICE.trade_history()}
                 try:
@@ -175,6 +186,7 @@ async def handle_client(websocket: Any) -> None:
                         }
                     else:
                         environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
+                    AUTONOMOUS_RUNTIME.update_habitats(environment.get("habitats", []))
                     try:
                         await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
                     except (ConnectionError, ConnectionClosed):

@@ -65,7 +65,6 @@ export class SwarmObserver {
           ? 0
           : Math.min(2, Math.max(0, (timestampMs - track.lastTimestampMs) / 1000))
         const previousInside = track.inside
-        const previousContact = track.contact
         const previousLandingState = track.lastLandingState
 
         if (inside && !previousInside) {
@@ -102,14 +101,10 @@ export class SwarmObserver {
         ) {
           this.emitIntent(track, 'buy', 'dwell', timestampMs, distanceM, true)
           track.buyIssuedForVisit = true
-        } else if (previousContact && !contact && track.buyIssuedForVisit) {
-          this.emitIntent(track, 'sell', 'departure', timestampMs, distanceM, false)
-          track.buyIssuedForVisit = false
         } else if (previousLandingState === 'landed' && agent.landingState === 'departing' && track.buyIssuedForVisit) {
-          // The landing controller marks departure as soon as its dwell timer
-          // expires. Emit here even if the next contact sample still overlaps
-          // the habitat radius, so the sell means “left the place”, not merely
-          // “one frame happened outside the radius”.
+          // A neural/aversive departure is a genuine sell signal even if the
+          // next contact sample still overlaps the habitat radius. Losing a
+          // single contact ray is not enough to sell.
           this.emitIntent(track, 'sell', 'departure', timestampMs, distanceM, contact)
           track.buyIssuedForVisit = false
         }

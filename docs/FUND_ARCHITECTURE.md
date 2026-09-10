@@ -16,6 +16,14 @@ the repository for later use, but are inactive in wallet mode. The configured
 wallet owns the funds directly, and trades keep `FUND_GAS_RESERVE_WEI`
 (default `0.002 ETH`) untouched.
 
+The autonomous runtime gives every primary brain exactly `1 / 16 = 6.25%`
+of deployable capital. It persists each fly's state and position, debounces
+departure events, aggregates same-token orders, and records every execution
+attempt. Simulation mode fills automatically for end-to-end demos. The
+mainnet adapter performs identity, allowance, quote, slippage, liquidity, gas,
+nonce, and calldata checks, then hands the transaction to the configured
+external authorization boundary.
+
 ## Contract
 
 `contracts/src/FruitFlyFundVault.sol` is an explicit share-accounting vault:

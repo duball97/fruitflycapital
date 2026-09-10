@@ -135,3 +135,13 @@ class RpcWalletClient:
         if not isinstance(result, str) or not result.startswith("0x"):
             raise WalletRpcError("wallet RPC did not return a transaction hash")
         return result
+
+    def erc20_balance_raw(self, token_address: str) -> int:
+        token = _address(token_address)
+        owner = self.wallet_address[2:].lower().rjust(64, "0")
+        result = self.call("eth_call", [{"to": token, "data": f"0x70a08231{owner}"}, "latest"])
+        return _int_hex(result)
+
+    def erc20_decimals(self, token_address: str) -> int:
+        result = self.call("eth_call", [{"to": _address(token_address), "data": "0x313ce567"}, "latest"])
+        return _int_hex(result)

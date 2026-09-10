@@ -13,6 +13,7 @@ from .service import FundService
 from .valuation import CMCValuationProvider, FakeValuationProvider, PriceQuote, ValuationProvider
 from .wallet import RpcWalletClient, WalletSnapshot, WalletRpcError
 from .wallet_execution import DirectWalletUniswapAdapter, WalletExecutionUnavailable
+from .autonomous import AllocationIntent, AutonomousTradingRuntime, ExecutionIntent, FlyBehaviorState, FlyCapitalPosition, MainnetExecutionAdapter, PortfolioDelta, SimulationExecutionAdapter, TokenRef
 
 __all__ = [
     "CMCValuationProvider", "ExecutionEngine", "ExecutionRecord", "FakeExecutionAdapter",
@@ -20,7 +21,7 @@ __all__ = [
     "FundLedger", "FundNavReporter", "FundService", "NavReportResult",
     "PortfolioAllocator", "PortfolioEngine", "PortfolioSnapshot", "PortfolioTarget",
     "PositionValue", "PriceQuote", "PrivyClient", "PrivyConfig", "RiskGuard",
-    "RiskResult", "RpcWalletClient", "SwarmDecisionPipeline", "TradeIntent", "TradeRoute",
+    "AllocationIntent", "AutonomousTradingRuntime", "ExecutionIntent", "FlyBehaviorState", "FlyCapitalPosition", "MainnetExecutionAdapter", "PortfolioDelta", "RiskResult", "RpcWalletClient", "SimulationExecutionAdapter", "SwarmDecisionPipeline", "TokenRef", "TradeIntent", "TradeRoute",
     "WalletExecutionUnavailable", "WalletRpcError", "WalletSnapshot",
     "UniswapQuoteAdapter", "ValuationProvider",
 ]

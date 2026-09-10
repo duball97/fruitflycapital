@@ -1,4 +1,4 @@
-import { CanvasTexture, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
+import { BoxGeometry, CanvasTexture, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
 import type { WorldBounds } from '../fly/FlyBody'
 
 const FLOOR_Y = 0
@@ -33,6 +33,26 @@ export class Arena {
     floor.position.y = FLOOR_Y
     floor.name = 'StreetFloor'
     this.group.add(floor)
+
+    // A low visual curb makes the playable plate legible and gives the scene
+    // a clear edge. The authoritative collision boundary remains ARENA_BOUNDS
+    // in FlyBody, so this never depends on mesh collision accuracy.
+    const wallMaterial = new MeshStandardMaterial({ color: 0x71837a, roughness: 0.84, metalness: 0.08 })
+    const wallHeight = 0.075
+    const wallThickness = 0.035
+    const halfExtent = 3.1
+    const walls = [
+      [6.2, wallHeight, wallThickness, 0, wallHeight / 2, -halfExtent],
+      [6.2, wallHeight, wallThickness, 0, wallHeight / 2, halfExtent],
+      [wallThickness, wallHeight, 6.2, -halfExtent, wallHeight / 2, 0],
+      [wallThickness, wallHeight, 6.2, halfExtent, wallHeight / 2, 0],
+    ] as const
+    walls.forEach(([width, height, depth, x, y, z], index) => {
+      const wall = new Mesh(new BoxGeometry(width, height, depth), wallMaterial)
+      wall.name = `ArenaEdge:${index}`
+      wall.position.set(x, y, z)
+      this.group.add(wall)
+    })
   }
 
   /** Kept for compatibility with older callers; the floor is always visible. */

@@ -10,22 +10,22 @@ export interface TradeProposal {
 }
 
 /**
- * The future custody seam for fly-generated proposals.
+ * The browser seam for fly-generated proposals.
  *
  * This deliberately does not connect a wallet, request a quote, sign, or
- * broadcast. A later adapter can take the proposal through market-route
- * validation, RiskGuard, Uniswap calldata, and an explicitly approved Privy
- * signer without changing the biological observer.
+ * broadcast. The server runtime takes the proposal through market-route
+ * validation, RiskGuard, Uniswap calldata, and the configured adapter without
+ * changing the biological observer.
  */
 export class TradeExecutionBoundary {
-  readonly mode: TradeExecutionMode = 'proposal-only'
+  readonly mode: TradeExecutionMode = 'wallet-ready'
 
   prepare(intent: BehaviorTradeIntent): TradeProposal {
     return {
       intent,
       status: 'proposal_only',
       executionMode: this.mode,
-      reason: 'behavior event captured; wallet execution is not enabled',
+      reason: 'behavior event captured; server autonomous runtime owns execution',
     }
   }
 }

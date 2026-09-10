@@ -145,7 +145,7 @@ startupScreen.className = 'startup-screen'
 startupScreen.innerHTML = `
   <div class="startup-card">
     <div class="startup-kicker">FRUIT FLY CAPITAL</div>
-    <div class="startup-title">NEUROSWARM</div>
+    <div class="startup-title">FRUITFLY CAPITAL</div>
     <div class="startup-message">LOADING CANONICAL FLYBODY</div>
     <div class="startup-detail">Preparing the independent agents and first motion sample…</div>
     <div class="startup-progress"><span></span></div>
@@ -159,8 +159,7 @@ const startupProgress = startupScreen.querySelector<HTMLSpanElement>('.startup-p
 const hud = document.createElement('div')
 hud.className = 'hud'
 hud.innerHTML = `
-  <div class="brand"><span class="brand-mark">✦</span> FRUIT FLY CAPITAL</div>
-  <div class="neuroswarm">NEUROSWARM</div>
+  <div class="brand"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></div>
   <a class="portfolio-link" href="./portfolio.html">VIEW FUND PORTFOLIO →</a>
 `
 app.append(hud)
@@ -175,7 +174,7 @@ intentLogPanel.setAttribute('aria-label', 'Fly buy and sell intent log')
 intentLogPanel.innerHTML = `
   <div class="intent-log-header">
     <div>
-      <div class="intent-log-kicker">NEUROSWARM · BEHAVIOR LOG</div>
+      <div class="intent-log-kicker">FRUITFLY CAPITAL · BEHAVIOR LOG</div>
       <div class="intent-log-title">BUY / SELL INTENTS</div>
     </div>
     <div class="intent-log-mode">PROPOSAL ONLY<br>NO EXECUTION</div>
@@ -258,7 +257,7 @@ app.append(causalStatus)
 
 const populationStatus = document.createElement('div')
 populationStatus.className = 'population-status debug-only'
-populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}`
+populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}`
 app.append(populationStatus)
 
 const brainUrl = import.meta.env.VITE_BRAIN_WS_URL ?? 'ws://127.0.0.1:8765'
@@ -978,7 +977,7 @@ function animate(now: number) {
       return count + (isLiveBrainSource(activity?.source) && nonNeutral ? 1 : 0)
     }, 0)
     const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
-    populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>VISIBLE FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>MALECNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE}`
+    populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISIBLE FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>MALECNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE}`
   }
   activeCamera = cameras[cameraIndex] ?? cameras[0]!
   if (cameraIndex === 0) free.update()
@@ -1000,7 +999,7 @@ function animate(now: number) {
     ? `${marketEnvironment.habitats.length} TOKEN PLACES`
     : 'WAITING FOR TOKEN DATA'
   const brainLabel = brainSocket.getStatus() === 'connected' ? 'AUTONOMOUS FLY BRAINS' : 'CONNECTING TO FLY BRAINS'
-  demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS</span><span>${marketLabel} · ${brainLabel}</span>`
+  demoStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS</span><span>${marketLabel} · ${brainLabel}</span>`
   updateTokenLogoOverlay()
   pipeline.render(delta, activeCamera)
   if (debugPanelVisible && world.elapsedSeconds >= nextPerfUiAt) {

@@ -73,7 +73,9 @@ export class Environment {
   }
 
   applyMarketHabitats(update: EnvironmentUpdateMessage['environment']) {
-    if (update.observedAtMs <= this.lastAppliedMarketObservedAtMs) return
+    // Some discovery-only/live adapters use 0 for the first observation. Do
+    // not discard that initial non-empty snapshot before any habitats exist.
+    if (this.habitatList.length > 0 && update.observedAtMs <= this.lastAppliedMarketObservedAtMs) return
     this.lastAppliedMarketObservedAtMs = update.observedAtMs
     // The market snapshot is authoritative. New IDs create new habitats,
     // existing IDs retain their position, and departed IDs are retired.
@@ -81,7 +83,15 @@ export class Environment {
     const wasEmpty = this.habitatList.length === 0
     // The public world is Robinhood-only. Keep this client-side guard as a
     // safety net for an old/cached server snapshot during deployment rollout.
-    for (const state of update.habitats.filter(isRobinhoodHabitat).slice(0, WORLD_HABITAT_CAPACITY)) {
+    const robinhoodHabitats = update.habitats.filter(isRobinhoodHabitat)
+    // Older server snapshots were already restricted to Robinhood but did
+    // not serialize chain metadata on each habitat. Keep the client-side
+    // whitelist when metadata exists; otherwise preserve that server-filtered
+    // snapshot rather than showing a token count with zero rendered places.
+    const renderableHabitats = robinhoodHabitats.length > 0
+      ? robinhoodHabitats
+      : update.habitats.filter((state) => !hasChainMetadata(state))
+    for (const state of renderableHabitats.slice(0, WORLD_HABITAT_CAPACITY)) {
       incomingIds.add(state.id)
       const nextState = tokenStateFromEnvironment(state)
       let habitat = this.habitatsById.get(state.id)
@@ -355,7 +365,19 @@ function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment'
 
 function isRobinhoodHabitat(state: EnvironmentUpdateMessage['environment']['habitats'][number]) {
   const chainId = state.chainId ?? provenanceString(state.provenance, 'chainId')
-  return typeof chainId === 'string' && chainId.trim().toLowerCase() === 'robinhood'
+  const network = provenanceString(state.provenance, 'network')
+  const chain = provenanceString(state.provenance, 'chain')
+  const identifiers = [chainId, network, chain]
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => String(value).trim().toLowerCase())
+  return identifiers.some((value) => value === '46630' || value.includes('robinhood'))
+}
+
+function hasChainMetadata(state: EnvironmentUpdateMessage['environment']['habitats'][number]) {
+  return state.chainId !== null && state.chainId !== undefined
+    || provenanceString(state.provenance, 'chainId') !== undefined
+    || provenanceString(state.provenance, 'network') !== undefined
+    || provenanceString(state.provenance, 'chain') !== undefined
 }
 
 function provenanceString(provenance: Array<Record<string, unknown>> | undefined, key: string) {

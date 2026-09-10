@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS positions (chain_id INTEGER NOT NULL, token_address T
 CREATE TABLE IF NOT EXISTS nav_snapshots (snapshot_id TEXT PRIMARY KEY, timestamp_ms INTEGER NOT NULL, nav_usd REAL NOT NULL, nav_per_share_usd REAL, shares_outstanding REAL, source TEXT NOT NULL, provenance_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS chain_balances (chain_id INTEGER NOT NULL, wallet_address TEXT NOT NULL, token_address TEXT NOT NULL, symbol TEXT, asset_class TEXT NOT NULL DEFAULT 'crypto', amount REAL NOT NULL, observed_ms INTEGER NOT NULL, source TEXT NOT NULL, PRIMARY KEY(chain_id, wallet_address, token_address));
 CREATE TABLE IF NOT EXISTS asset_metadata (chain_id INTEGER NOT NULL, token_address TEXT NOT NULL, symbol TEXT, name TEXT, asset_class TEXT NOT NULL DEFAULT 'crypto', decimals INTEGER, source TEXT NOT NULL, PRIMARY KEY(chain_id, token_address));
+CREATE TABLE IF NOT EXISTS fly_positions (fly_id TEXT PRIMARY KEY, state TEXT NOT NULL, chain_id INTEGER, token_address TEXT, token_symbol TEXT, allocation_fraction REAL NOT NULL, entry_timestamp_ms INTEGER, entry_price_usd REAL, current_value_usd REAL NOT NULL DEFAULT 0, realized_pnl_usd REAL NOT NULL DEFAULT 0, unrealized_pnl_usd REAL NOT NULL DEFAULT 0, departure_reason TEXT, held_amount REAL NOT NULL DEFAULT 0, updated_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS execution_attempts (attempt_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, side TEXT NOT NULL, chain_id INTEGER NOT NULL, token_in TEXT NOT NULL, token_out TEXT NOT NULL, amount_in TEXT NOT NULL, amount_out TEXT, fly_ids_json TEXT NOT NULL, execution_price TEXT, gas TEXT, slippage REAL, tx_hash TEXT, nonce TEXT, error TEXT, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);
 """
 
 
@@ -37,6 +39,12 @@ class FundLedger:
         existing_trade_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(trades)")}
         if "realized_pnl_usd" not in existing_trade_columns:
             self.connection.execute("ALTER TABLE trades ADD COLUMN realized_pnl_usd REAL")
+        existing_fly_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(fly_positions)")}
+        if "held_amount" not in existing_fly_columns:
+            self.connection.execute("ALTER TABLE fly_positions ADD COLUMN held_amount REAL NOT NULL DEFAULT 0")
+        existing_attempt_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(execution_attempts)")}
+        if "nonce" not in existing_attempt_columns:
+            self.connection.execute("ALTER TABLE execution_attempts ADD COLUMN nonce TEXT")
         self.connection.commit()
 
     def close(self) -> None:
@@ -86,6 +94,29 @@ class FundLedger:
         self.connection.commit()
 
     def rows(self, table: str, *, limit: int = 100) -> list[dict[str, Any]]:
-        if table not in {"fund_events", "deposits", "withdrawals", "trades", "positions", "nav_snapshots", "chain_balances", "asset_metadata"}:
+        if table not in {"fund_events", "deposits", "withdrawals", "trades", "positions", "nav_snapshots", "chain_balances", "asset_metadata", "fly_positions", "execution_attempts"}:
             raise ValueError("unknown ledger table")
         return [dict(row) for row in self.connection.execute(f"SELECT * FROM {table} ORDER BY rowid DESC LIMIT ?", (limit,))]
+
+    def upsert_fly_position(self, position: Mapping[str, Any]) -> None:
+        self.connection.execute(
+            """INSERT INTO fly_positions (fly_id, state, chain_id, token_address, token_symbol, allocation_fraction, entry_timestamp_ms, entry_price_usd, current_value_usd, realized_pnl_usd, unrealized_pnl_usd, departure_reason, held_amount, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(fly_id) DO UPDATE SET state=excluded.state, chain_id=excluded.chain_id,
+            token_address=excluded.token_address, token_symbol=excluded.token_symbol,
+            allocation_fraction=excluded.allocation_fraction, entry_timestamp_ms=excluded.entry_timestamp_ms,
+            entry_price_usd=excluded.entry_price_usd, current_value_usd=excluded.current_value_usd,
+            realized_pnl_usd=excluded.realized_pnl_usd, unrealized_pnl_usd=excluded.unrealized_pnl_usd,
+            departure_reason=excluded.departure_reason, held_amount=excluded.held_amount, updated_ms=excluded.updated_ms""",
+            tuple(position.get(key) for key in ("fly_id", "state", "chain_id", "token_address", "token_symbol", "allocation_fraction", "entry_timestamp_ms", "entry_price_usd", "current_value_usd", "realized_pnl_usd", "unrealized_pnl_usd", "departure_reason", "held_amount", "updated_ms")),
+        )
+        self.connection.commit()
+
+    def record_execution_attempt(self, attempt: Mapping[str, Any]) -> None:
+        self.connection.execute(
+            """INSERT INTO execution_attempts (attempt_id, idempotency_key, status, side, chain_id, token_in, token_out, amount_in, amount_out, fly_ids_json, execution_price, gas, slippage, tx_hash, nonce, error, created_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status, amount_out=excluded.amount_out,
+            execution_price=excluded.execution_price, gas=excluded.gas, slippage=excluded.slippage,
+            tx_hash=excluded.tx_hash, nonce=excluded.nonce, error=excluded.error, updated_ms=excluded.updated_ms""",
+            tuple(attempt.get(key) for key in ("attempt_id", "idempotency_key", "status", "side", "chain_id", "token_in", "token_out", "amount_in", "amount_out", "fly_ids_json", "execution_price", "gas", "slippage", "tx_hash", "nonce", "error", "created_ms", "updated_ms")),
+        )
+        self.connection.commit()

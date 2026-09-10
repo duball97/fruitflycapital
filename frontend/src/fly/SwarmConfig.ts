@@ -1,14 +1,7 @@
 import { Vector3 } from 'three'
 
-/**
- * Sixteen is the current independent MaleCNS pilot target. A larger value can
- * be selected explicitly with VITE_SWARM_SIZE after benchmarking the per-fly
- * brain scheduler; the UI caps this experiment at 100 brains.
- */
-const configuredSize = Number(import.meta.env.VITE_SWARM_SIZE)
-export const SWARM_SIZE = Number.isInteger(configuredSize) && configuredSize >= 1 && configuredSize <= 100
-  ? configuredSize
-  : 16
+/** The strategy has exactly sixteen independent capital-bearing brains. */
+export const SWARM_SIZE = 16
 
 // One canonical CNS controls one primary body plus this many render-only
 // followers. Followers never sense, create brain runtimes, or cast consensus
