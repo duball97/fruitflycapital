@@ -13,7 +13,7 @@ import { SideCamera } from './camera/SideCamera'
 import { FlightLogger } from './networking/FlightLog'
 import { BODIES_PER_BRAIN, SWARM_SIZE, VISUAL_FLY_COUNT } from './fly/SwarmConfig'
 import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProcessing'
-import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
+import { PresentationCamera } from './camera/PresentationCamera'
 import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 import type { TokenState } from './world/TokenState'
@@ -176,14 +176,11 @@ const startupProgress = startupScreen.querySelector<HTMLSpanElement>('.startup-p
 const hud = document.createElement('div')
 hud.className = 'hud'
 hud.innerHTML = `
-  <div class="brand"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></div>
-  <div class="hud-links"><a class="portfolio-link" href="/portfolio/">VIEW FUND PORTFOLIO →</a><a class="social-link" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></div>
+  <a class="brand site-brand" href="/" aria-label="FruitFly Capital home"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></a>
+  <nav class="site-nav" aria-label="Primary navigation"><a class="is-active" href="/">Simulation</a><a href="/about/">About</a><a href="/portfolio/">Portfolio</a><a href="/#buy">Buy</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav>
+  <a class="social-link header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a>
 `
 app.append(hud)
-
-const demoStatus = document.createElement('div')
-demoStatus.className = 'demo-status'
-app.append(demoStatus)
 
 const portfolioSummary = document.createElement('section')
 portfolioSummary.className = 'portfolio-summary'
@@ -271,6 +268,26 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
   }
 }
 
+function currentFlyHolding(flyId: string) {
+  const sources = [
+    brainSocket.portfolio()?.autonomous,
+    brainSocket.swarmDecision()?.autonomousTrading,
+  ]
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    const flies = (source as Record<string, unknown>).flies
+    if (!Array.isArray(flies)) continue
+    const fly = flies.find((candidate) => candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).flyId === flyId) as Record<string, unknown> | undefined
+    if (fly) return fly
+  }
+  return null
+}
+
+function formatTokenAmount(value: unknown) {
+  const amount = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(amount) ? amount.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : '—'
+}
+
 function renderIntentLog() {
   intentBuyCount.textContent = `BUY ${buyIntentCount}`
   intentSellCount.textContent = `SELL ${sellIntentCount}`
@@ -289,11 +306,20 @@ function renderIntentLog() {
     row.className = `intent-log-row ${intent.side}`
     const time = new Date(intent.observedAtMs).toLocaleTimeString([], { hour12: false })
     const token = habitat?.state.label || intent.habitatId
+    const holding = currentFlyHolding(intent.flyId)
+    const heldAmount = Number(holding?.heldAmount)
+    const heldToken = String(holding?.tokenSymbol || token)
+    const holdingDetails = Number.isFinite(heldAmount) && heldAmount > 0
+      ? `HELD ${formatTokenAmount(heldAmount)} ${heldToken}`
+      : intent.side === 'buy'
+        ? `TARGET ${(intent.portfolioWeight * 100).toFixed(2)}% · AWAITING FILL`
+        : `HELD 0 ${heldToken}`
     const details = `${intent.reason.toUpperCase()} · dwell ${intent.metrics.dwellSeconds.toFixed(2)}s · ${intent.metrics.distanceM.toFixed(3)}m · confidence ${Math.round(intent.confidence * 100)}%`
-    row.innerHTML = `<div class="intent-log-row-top"><strong></strong><span></span><em>PROPOSAL</em></div><div class="intent-log-token"></div><div class="intent-log-details"></div>`
+    row.innerHTML = `<div class="intent-log-row-top"><strong></strong><span></span><em>PROPOSAL</em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>`
     row.querySelector('strong')!.textContent = `${intent.side.toUpperCase()} INTENT`
     row.querySelector('span')!.textContent = `${time} · ${intent.flyId}`
     row.querySelector('.intent-log-token')!.textContent = token
+    row.querySelector('.intent-log-holding')!.textContent = holdingDetails
     row.querySelector('.intent-log-details')!.textContent = details
     intentLogList.append(row)
   }
@@ -332,7 +358,6 @@ const tradeExecutionBoundary = new TradeExecutionBoundary()
 renderIntentLog()
 const brainUpdateHz = Math.max(1, Number(import.meta.env.VITE_BRAIN_UPDATE_HZ ?? 2) || 2)
 let selectedIndex = 0
-let lastMarketUiStatus = ''
 
 function updatePortfolioSummary() {
   const fund = brainSocket.portfolio()
@@ -350,6 +375,7 @@ function updatePortfolioSummary() {
     ? positions.slice(0, 4).map((position) => String(position.symbol || position.token_address || 'TOKEN')).join(' · ')
     : 'No token positions yet · proposals remain visible in the behavior log'
   updateExecutionToast()
+  renderIntentLog()
 }
 
 // The pilot population is deliberately a numbered set of real CNS agents.
@@ -478,10 +504,22 @@ app.append(performanceStatus)
 app.classList.add('presentation-demo')
 
 const cameraTargetPanel = document.createElement('div')
-cameraTargetPanel.className = 'camera-target-panel debug-only'
+cameraTargetPanel.className = 'camera-target-panel'
+cameraTargetPanel.setAttribute('aria-label', 'Camera controls')
 const cameraTargetLabel = document.createElement('span')
-cameraTargetLabel.textContent = 'INSPECT FLY'
+cameraTargetLabel.textContent = 'VIEW'
 cameraTargetPanel.append(cameraTargetLabel)
+const cameraModeSelect = document.createElement('select')
+cameraModeSelect.setAttribute('aria-label', 'Camera view')
+for (const [label, index] of [['OVERVIEW', 4], ['FOLLOW FLY', 1], ['FLY VISION', 2], ['FREE ORBIT', 0]] as Array<[string, number]>) {
+  const option = document.createElement('option')
+  option.value = String(index)
+  option.textContent = label
+  cameraModeSelect.append(option)
+}
+cameraModeSelect.value = '4'
+cameraModeSelect.addEventListener('change', () => { cameraIndex = Number(cameraModeSelect.value) })
+cameraTargetPanel.append(cameraModeSelect)
 const flySelector = document.createElement('select')
 flySelector.setAttribute('aria-label', 'Select fly to inspect')
 for (let index = 0; index < SWARM_SIZE; index += 1) {
@@ -494,33 +532,13 @@ flySelector.value = String(selectedIndex)
 flySelector.addEventListener('change', () => setSelectedFly(Number(flySelector.value), false))
 cameraTargetPanel.append(flySelector)
 const focusButton = document.createElement('button')
-focusButton.textContent = 'FOCUS'
+focusButton.textContent = 'FRAME FLY'
 focusButton.addEventListener('click', () => {
   cameraIndex = 0
+  cameraModeSelect.value = '0'
   free.focusOn(cameraTargetPosition())
 })
 cameraTargetPanel.append(focusButton)
-for (const [label, mode] of [
-  ['SWARM', 'overview'],
-  ['TOKEN', 'token'],
-  ['AUTO', 'director'],
-] as Array<[string, PresentationCameraMode]>) {
-  const button = document.createElement('button')
-  button.textContent = label
-  button.addEventListener('click', () => {
-    presentation.setMode(mode)
-    cameraIndex = 4
-  })
-  cameraTargetPanel.append(button)
-}
-const followButton = document.createElement('button')
-followButton.textContent = 'FOLLOW'
-followButton.addEventListener('click', () => { cameraIndex = 1 })
-cameraTargetPanel.append(followButton)
-const freeButton = document.createElement('button')
-freeButton.textContent = 'FREE'
-freeButton.addEventListener('click', () => { cameraIndex = 0 })
-cameraTargetPanel.append(freeButton)
 app.append(cameraTargetPanel)
 
 const sceneControls = document.createElement('aside')
@@ -1020,7 +1038,6 @@ function animate(now: number) {
   }
   const marketEnvironment = brainSocket.environmentUpdate()
   if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
-  updateMarketStatus(marketEnvironment)
   if (world.elapsedSeconds >= nextPortfolioUiAt) {
     updatePortfolioSummary()
     nextPortfolioUiAt = world.elapsedSeconds + 1
@@ -1129,11 +1146,6 @@ function animate(now: number) {
     flyRenderer.setLod(lod)
   })
 
-  const marketLabel = marketEnvironment?.status === 'ok'
-    ? `${marketEnvironment.habitats.length} TOKEN PLACES`
-    : 'WAITING FOR TOKEN DATA'
-  const brainLabel = brainSocket.getStatus() === 'connected' ? 'AUTONOMOUS FLY BRAINS' : 'CONNECTING TO FLY BRAINS'
-  demoStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><span>${VISUAL_FLY_COUNT} FLIES</span><span>${marketLabel} · ${brainLabel}</span>`
   updateTokenLogoOverlay()
   pipeline.render(delta, activeCamera)
   if (debugPanelVisible && world.elapsedSeconds >= nextPerfUiAt) {
@@ -1152,16 +1164,21 @@ function animate(now: number) {
 function updateStartupGate() {
   if (startupReleased) return
   const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
+  const habitatsReady = environment.habitats.length > 0
   if (!canonicalBodiesReady) {
-    startupMessage.textContent = 'LOADING CANONICAL FLYBODY'
-    startupDetail.textContent = 'Preparing the fly bodies…'
-    startupProgress.style.width = '42%'
+    startupMessage.textContent = 'LOADING FLY BODIES'
+    startupDetail.textContent = 'Preparing the canonical fly bodies…'
+    startupProgress.style.width = '35%'
+  } else if (!habitatsReady) {
+    startupMessage.textContent = 'LOADING TOKEN HABITATS'
+    startupDetail.textContent = 'Waiting for the live token places to appear…'
+    startupProgress.style.width = '70%'
   } else if (brainSocket.getStatus() !== 'connected') {
-    startupMessage.textContent = 'SCENE READY'
+    startupMessage.textContent = 'TOKEN HABITATS READY'
     startupDetail.textContent = 'Waiting for the autonomous brain feed…'
     startupProgress.style.width = '100%'
   } else if (movingAgents === 0) {
-    startupMessage.textContent = 'SCENE READY'
+    startupMessage.textContent = 'TOKEN HABITATS READY'
     startupDetail.textContent = 'Brains connected · waiting for the first motor update…'
     startupProgress.style.width = '100%'
   } else {
@@ -1170,22 +1187,13 @@ function updateStartupGate() {
     startupProgress.style.width = '100%'
   }
 
-  // Asset readiness controls the loading screen. Socket readiness and physical
-  // motion remain visible in the scene/HUD, but neither can block the app.
-  if (canonicalBodiesReady) {
+  // Do not reveal an empty floor. Both the fly assets and the first non-empty
+  // live token snapshot must be ready before the loading screen can clear.
+  if (canonicalBodiesReady && habitatsReady) {
     startupReleased = true
     startupScreen.classList.add('is-ready')
     window.setTimeout(() => startupScreen.remove(), 500)
   }
-}
-
-function updateMarketStatus(environmentUpdate: ReturnType<BrainSocket['environmentUpdate']>) {
-  const status = environmentUpdate?.status ?? 'waiting'
-  const detail = environmentUpdate?.error ?? environmentUpdate?.reason ?? 'waiting for the Python market feed'
-  const uiStatus = `${status}:${detail}`
-  if (uiStatus === lastMarketUiStatus) return
-  lastMarketUiStatus = uiStatus
-  demoStatus.title = detail
 }
 
 function updateCausalStatus(agent: FlyAgent) {

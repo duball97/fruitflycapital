@@ -125,6 +125,7 @@ class AllocationIntent:
     allocation_fraction: float
     reason: str
     observed_at_ms: int
+    biological_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,7 @@ class PortfolioDelta:
     token_in: str
     token_out: str
     reason: str
+    biological_event_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,6 +165,7 @@ class ExecutionIntent:
     fly_ids: tuple[str, ...]
     slippage_tolerance: float
     created_at_ms: int
+    biological_event_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -175,6 +178,7 @@ class ExecutionIntent:
             "flyIds": list(self.fly_ids),
             "slippageTolerance": self.slippage_tolerance,
             "createdAtMs": self.created_at_ms,
+            "biologicalEventId": self.biological_event_id,
         }
 
 
@@ -289,7 +293,7 @@ class AutonomousTradingRuntime:
         if existing is not None:
             return True
         attempt = next((row for row in self.ledger.rows("execution_attempts", limit=100000) if str(row.get("idempotency_key")) == execution_id or str(row.get("attempt_id")) == execution_id), None)
-        if attempt is None or not _is_real_tx_hash(tx_hash):
+        if attempt is None or int(attempt.get("chain_id") or 0) != 4663 or not _is_real_tx_hash(tx_hash):
             return False
         token_address = str(attempt.get("token_out") if str(attempt.get("token_in")).lower() == ZERO_ADDRESS.lower() else attempt.get("token_in") or "")
         token = self.tokens_by_address.get(_token_key(int(attempt["chain_id"]), token_address)) or TokenRef(int(attempt["chain_id"]), token_address, token_address[:8])
@@ -318,9 +322,9 @@ class AutonomousTradingRuntime:
                 else:
                     if position.token_address and position.held_amount > 0:
                         old = self.tokens_by_address.get(_token_key(position.chain_id or token.chain_id, position.token_address)) or TokenRef(position.chain_id or token.chain_id, position.token_address, position.token_symbol or position.token_address[:8])
-                        actions.append(AllocationIntent(behavior.fly_id, "sell", old, position.allocation_fraction, "rotation", timestamp))
+                        actions.append(AllocationIntent(behavior.fly_id, "sell", old, position.allocation_fraction, "rotation", timestamp, behavior.intent_id))
                     self._save(replace(position, state=FlyBehaviorState.QUALIFYING.value, updated_ms=timestamp))
-                    actions.append(AllocationIntent(behavior.fly_id, "buy", token, position.allocation_fraction, behavior.reason, timestamp))
+                    actions.append(AllocationIntent(behavior.fly_id, "buy", token, position.allocation_fraction, behavior.reason, timestamp, behavior.intent_id))
                 self.processed_events.add(behavior.intent_id)
             elif behavior.side == "sell" and position.token_address and position.token_address.lower() == token.address.lower() and position.held_amount > 0:
                 self.pending_departures[behavior.fly_id] = (timestamp + self.departure_debounce_ms, behavior.reason, token)
@@ -427,7 +431,7 @@ class AutonomousTradingRuntime:
         now = int(time.time() * 1000)
         self.ledger.record_mainnet_execution({
             "execution_id": intent.idempotency_key,
-            "biological_event_id": biological_event_id or ",".join(intent.fly_ids) or intent.idempotency_key,
+            "biological_event_id": biological_event_id or intent.biological_event_id or intent.idempotency_key,
             "timestamp_ms": intent.created_at_ms,
             "fly_ids_json": json.dumps(list(intent.fly_ids)),
             "side": intent.side,
@@ -504,7 +508,7 @@ class AutonomousTradingRuntime:
         chain_id = int(row.get("chain_id") or 4663)
         token = self.tokens_by_address.get(_token_key(chain_id, token_address)) or TokenRef(chain_id, token_address, str(row.get("token_symbol") or token_address[:8]))
         fly_ids = _json_list(row.get("fly_ids_json"))
-        group = [(fly_id, token, "confirmed onchain") for fly_id in fly_ids if fly_id in self.positions]
+        group = [(fly_id, token, "confirmed onchain", str(row.get("biological_event_id") or "") or None) for fly_id in fly_ids if fly_id in self.positions]
         if not group:
             return
         if str(row.get("side")) == "buy":
@@ -523,13 +527,13 @@ class AutonomousTradingRuntime:
             return None
 
     def _execute_netted(self, actions: list[AllocationIntent], timestamp: int) -> None:
-        grouped: dict[tuple[str, int, str], list[tuple[str, TokenRef, str]]] = {}
+        grouped: dict[tuple[str, int, str], list[tuple[str, TokenRef, str, str | None]]] = {}
         for action in actions:
             side, fly_id, token, reason = action.side, action.fly_id, action.token, action.reason
             if (risk_reason := self.risk_guard.reject_reason(token)) is not None:
                 self.pending_rebalance.append({"status": "blocked", "reason": risk_reason, "flyId": fly_id, "tokenAddress": token.address})
                 continue
-            grouped.setdefault((side, token.chain_id, token.address.lower()), []).append((fly_id, token, reason))
+            grouped.setdefault((side, token.chain_id, token.address.lower()), []).append((fly_id, token, reason, action.biological_event_id))
         for (side, chain_id, token_address), group in grouped.items():
             fly_ids = tuple(item[0] for item in group)
             token = group[0][1]
@@ -548,9 +552,10 @@ class AutonomousTradingRuntime:
                     self.pending_rebalance.append({"status": "blocked", "reason": "sell amount below token base unit", "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address})
                     continue
             reason = ",".join(sorted({item[2] for item in group}))
-            delta = PortfolioDelta(side, token, fly_ids, amount, token_in, token_out, reason)
+            biological_event_ids = tuple(item[3] for item in group if item[3])
+            delta = PortfolioDelta(side, token, fly_ids, amount, token_in, token_out, reason, biological_event_ids)
             key = f"{delta.side}:{chain_id}:{token_address}:{','.join(fly_ids)}:{timestamp}"
-            intent = ExecutionIntent(hashlib.sha256(key.encode()).hexdigest(), delta.side, chain_id, delta.token_in, delta.token_out, str(delta.amount_in), delta.fly_ids, self.slippage_tolerance, timestamp)
+            intent = ExecutionIntent(hashlib.sha256(key.encode()).hexdigest(), delta.side, chain_id, delta.token_in, delta.token_out, str(delta.amount_in), delta.fly_ids, self.slippage_tolerance, timestamp, ",".join(delta.biological_event_ids) or None)
             if intent.idempotency_key in self.processed_events:
                 continue
             attempt = {"attempt_id": intent.idempotency_key, "idempotency_key": intent.idempotency_key, "status": "pending", "side": side, "chain_id": chain_id, "token_in": token_in, "token_out": token_out, "amount_in": str(amount), "amount_out": None, "fly_ids_json": json.dumps(list(fly_ids)), "execution_price": None, "gas": None, "slippage": self.slippage_tolerance, "tx_hash": None, "nonce": None, "error": None, "created_ms": timestamp, "updated_ms": timestamp}
@@ -559,10 +564,11 @@ class AutonomousTradingRuntime:
             try:
                 result = self.adapter.execute(intent, token)
                 status = str(result.get("status", "prepared"))
-                amount_out = float(result.get("amountOut") or 0)
+                expected_output = _expected_output(result)
+                amount_out = float(expected_output or 0)
                 tx_hash = str(result.get("txHash") or "")
                 if _is_real_tx_hash(tx_hash):
-                    self._persist_broadcast(intent, token, tx_hash, expected_output=str(result.get("amountOut")) if result.get("amountOut") is not None else None)
+                    self._persist_broadcast(intent, token, tx_hash, expected_output=expected_output)
                     status = ReceiptStatus.BROADCAST
                 attempt.update({"status": status, "amount_out": str(amount_out), "execution_price": result.get("executionPrice"), "gas": result.get("gas"), "tx_hash": result.get("txHash"), "nonce": result.get("nonce"), "updated_ms": int(time.time() * 1000)})
                 if status in {"filled", "simulated"}:
@@ -577,14 +583,14 @@ class AutonomousTradingRuntime:
             self.ledger.record_execution_attempt(attempt)
             self.processed_events.add(intent.idempotency_key)
 
-    def _apply_fill(self, side: str, group: list[tuple[str, TokenRef, str]], amount_out: float, token: TokenRef, timestamp: int) -> None:
+    def _apply_fill(self, side: str, group: list[tuple[str, TokenRef, str, str | None]], amount_out: float, token: TokenRef, timestamp: int) -> None:
         if side == "buy":
             per_fly = amount_out / max(1, len(group))
-            for fly_id, _, _ in group:
+            for fly_id, _, _, _ in group:
                 position = self.positions[fly_id]
                 self._save(replace(position, state=FlyBehaviorState.HOLDING.value, chain_id=token.chain_id, token_address=token.address, token_symbol=token.symbol, entry_timestamp_ms=timestamp, entry_price_usd=token.price_usd, held_amount=per_fly, current_value_usd=(token.price_usd or 0.0) * per_fly, unrealized_pnl_usd=0.0, departure_reason=None, updated_ms=timestamp))
         else:
-            for fly_id, _, reason in group:
+            for fly_id, _, reason, _ in group:
                 position = self.positions[fly_id]
                 current = (token.price_usd or position.entry_price_usd or 0.0) * position.held_amount
                 basis = (position.entry_price_usd or 0.0) * position.held_amount
@@ -615,6 +621,24 @@ def _number(value: Any) -> float | None:
 
 def _is_real_tx_hash(value: str) -> bool:
     return bool(re.fullmatch(r"0x[a-fA-F0-9]{64}", str(value or "")))
+
+
+def _expected_output(result: Mapping[str, Any]) -> str | None:
+    direct = result.get("amountOut")
+    if direct is not None:
+        return str(direct)
+    quote = result.get("quote")
+    if not isinstance(quote, Mapping):
+        return None
+    output = quote.get("output")
+    if isinstance(output, Mapping) and output.get("amount") is not None:
+        return str(output["amount"])
+    order_info = quote.get("orderInfo")
+    outputs = order_info.get("outputs") if isinstance(order_info, Mapping) else None
+    if isinstance(outputs, list) and outputs and isinstance(outputs[0], Mapping):
+        if outputs[0].get("startAmount") is not None:
+            return str(outputs[0]["startAmount"])
+    return None
 
 
 def _json_list(value: Any) -> list[str]:

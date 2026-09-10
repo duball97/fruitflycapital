@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         portfolio: 'portfolio/index.html',
+        about: 'about/index.html',
       },
       output: {
         manualChunks: {

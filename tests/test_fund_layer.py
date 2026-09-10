@@ -8,6 +8,7 @@ from malecns.fund.nav_reporter import FundNavReporter
 from malecns.fund.valuation import FakeValuationProvider
 from malecns.fund.wallet import RpcWalletClient, WalletSnapshot
 from malecns.fund.autonomous import AutonomousTradingRuntime, SimulationExecutionAdapter
+from malecns.fund.receipts import BlockscoutClient, ReceiptStatus, observe_receipt
 from malecns.swarm.observer import BehaviorTradeIntent
 
 
@@ -125,3 +126,57 @@ def test_prepared_external_execution_never_becomes_a_fill():
     assert snapshot["flies"][0]["state"] == "QUALIFYING"
     assert snapshot["pendingRebalance"][0]["status"] == "prepared_external_authorization"
     assert ledger.rows("execution_attempts")[0]["nonce"] == "0x2a"
+
+
+def test_mainnet_receipt_uses_rpc_as_canonical_and_enriches_with_blockscout():
+    wallet_address = "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9"
+    token_address = "0x1111111111111111111111111111111111111111"
+    recipient_topic = "0x" + ("0" * 24) + wallet_address[2:].lower()
+    token_topic = "0x" + ("0" * 24) + wallet_address[2:].lower()
+    receipt = {
+        "status": "0x1",
+        "blockNumber": "0x5a00001",
+        "transactionIndex": "0x2",
+        "gasUsed": "0x5208",
+        "effectiveGasPrice": "0x3b9aca00",
+        "logs": [{"address": token_address, "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", token_topic, recipient_topic], "data": "0x2b5e3af16b1880000"}],
+    }
+    class ReceiptWallet:
+        def __init__(self):
+            self.wallet_address = wallet_address
+
+        def call(self, method, params):
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_getTransactionByHash":
+                return {"from": wallet_address, "to": "0x2222222222222222222222222222222222222222", "value": "0x38d7ea4c68000"}
+            raise AssertionError(method)
+
+    seen_urls = []
+    blockscout = BlockscoutClient(fetcher=lambda url, timeout: seen_urls.append(url) or {"status": "ok", "method": "swap"})
+    observation = observe_receipt(ReceiptWallet(), "0x" + "a" * 64, side="buy", token_address=token_address, token_symbol="AERO", input_token="0x0000000000000000000000000000000000000000", input_amount="1000000000000000", blockscout=blockscout, output_decimals=18)
+    assert observation.status == ReceiptStatus.CONFIRMED
+    assert observation.block_number == 94371841
+    assert observation.transaction_fee == str(21000 * 1_000_000_000)
+    assert observation.actual_output_amount == "50"
+    assert observation.blockscout == {"status": "ok", "method": "swap"}
+    assert seen_urls == ["https://robinhoodchain.blockscout.com/api/v2/transactions/0x" + "a" * 64]
+
+
+def test_external_broadcast_registration_keeps_simulation_hashes_out_of_mainnet():
+    class PreparedAdapter:
+        def execute(self, intent, token):
+            return {"status": "prepared_external_authorization", "nonce": "0x2a"}
+
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=PreparedAdapter())
+    token = "0x3333333333333333333333333333333333333333"
+    runtime.update_habitats([{"id": "market-3", "label": "AERO", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 1.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
+    snapshot = runtime.ingest([BehaviorTradeIntent("bio-1", "fly-007", "market-3", "buy", "dwell", .9, 1000, {"contact": True}, .0625)], observed_at_ms=1000)
+    execution_id = ledger.rows("execution_attempts")[0]["execution_id"] if "execution_id" in ledger.rows("execution_attempts")[0] else ledger.rows("execution_attempts")[0]["idempotency_key"]
+    assert runtime.register_broadcast(execution_id, "0x" + "b" * 64, expected_output="123.45", biological_event_id="bio-1")
+    execution = ledger.rows("mainnet_executions")[0]
+    assert execution["status"] == ReceiptStatus.BROADCAST
+    assert execution["chain_id"] == 4663
+    assert execution["tx_hash"] == "0x" + "b" * 64
+    assert not any(str(event.get("tx_hash", "")).startswith("0xsim") for event in ledger.rows("mainnet_executions"))
