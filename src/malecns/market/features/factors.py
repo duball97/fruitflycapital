@@ -124,10 +124,24 @@ def _raw_features(state: TokenState) -> dict[str, float | None]:
     count_imbalance = (flow.buy_count_5m - flow.sell_count_5m) / total_count if total_count else 0.0
     liquidity_delta = state.liquidity.liquidity_delta_usd
     liquidity = state.liquidity.liquidity_usd
+    market_cap_to_liquidity = state.liquidity.market_cap_to_liquidity
+    fdv_to_liquidity = state.liquidity.fdv_to_liquidity
+    volume_24h_to_market_cap = state.liquidity.volume_24h_to_market_cap
+    volume_24h_to_liquidity = state.liquidity.volume_24h_to_liquidity
     return {
         "market.volume5m": state.market.volume_5m_usd,
         "market.volume15m": state.market.volume_15m_usd,
         "market.volume1h": state.market.volume_1h_usd,
+        "market.volume24h": state.market.volume_24h_usd,
+        "market.marketCap": state.market.market_cap_usd,
+        "market.fdv": state.market.fdv_usd,
+        "market.priceUsd": state.market.price_usd,
+        "market.pairAgeHours": state.market.pair_age_hours,
+        "market.cmcRank": state.market.cmc_rank,
+        "market.circulatingSupply": state.market.circulating_supply,
+        "market.cmcPercentChange7d": state.market.cmc_percent_change_7d,
+        "market.cmcVolumeChange24h": state.market.cmc_volume_change_24h,
+        "market.marketCapDominance": state.market.market_cap_dominance,
         "flow.buyCount5m": flow.buy_count_5m,
         "flow.sellCount5m": flow.sell_count_5m,
         "flow.buyUsd5m": flow.buy_usd_5m,
@@ -141,6 +155,17 @@ def _raw_features(state: TokenState) -> dict[str, float | None]:
         "liquidity.relative": None if liquidity_delta is None else liquidity_delta / max(liquidity - liquidity_delta, 1.0),
         "liquidity.stability": None if liquidity_delta is None else 1.0 - min(1.0, abs(liquidity_delta) / max(liquidity, 1.0)),
         "liquidity.volumeRatio": state.liquidity.volume_liquidity_ratio_1h,
+        "liquidity.marketCapToLiquidity": market_cap_to_liquidity,
+        "liquidity.fdvToLiquidity": fdv_to_liquidity,
+        "liquidity.volume24hToMarketCap": volume_24h_to_market_cap,
+        "liquidity.volume24hToLiquidity": volume_24h_to_liquidity,
+        # Higher valuation per unit of executable LP means less immediate
+        # depth relative to the value being represented. Keep this transform
+        # bounded and explicit instead of hiding it in a sensory formula.
+        "valuation.marketCapLiquidityQuality": _inverse_ratio_quality(market_cap_to_liquidity, 10.0),
+        "valuation.fdvLiquidityQuality": _inverse_ratio_quality(fdv_to_liquidity, 10.0),
+        "valuation.volumeToMarketCap": volume_24h_to_market_cap,
+        "valuation.volumeToLiquidity": volume_24h_to_liquidity,
         "risk.liquidityStress": max(0.0, 1.0 - min(1.0, liquidity / 100_000.0)),
         "risk.flowInstability": abs(flow.flow_imbalance),
         "risk.volatility": abs(flow.tx_acceleration) / max(abs(flow.tx_velocity_5m), 1.0),
@@ -154,6 +179,16 @@ def _scale_for(feature_id: str) -> float:
         return 100_000.0
     if "volume1h" in feature_id:
         return 100_000.0
+    if "marketCap" in feature_id or feature_id.endswith(".fdv"):
+        return 1_000_000.0
+    if feature_id.endswith("pairAgeHours"):
+        return 720.0
+    if feature_id.endswith("cmcRank"):
+        return 100.0
+    if feature_id.endswith("PercentChange7d") or feature_id.endswith("VolumeChange24h"):
+        return 100.0
+    if feature_id.endswith("Dominance"):
+        return 100.0
     if "volume15m" in feature_id:
         return 25_000.0
     if "volume" in feature_id or "Usd" in feature_id:
@@ -161,6 +196,12 @@ def _scale_for(feature_id: str) -> float:
     if "Velocity" in feature_id or "acceleration" in feature_id:
         return 10.0
     return 1.0
+
+
+def _inverse_ratio_quality(value: float | None, midpoint: float) -> float | None:
+    if value is None or value < 0:
+        return None
+    return 1.0 / (1.0 + value / max(midpoint, 1e-9))
 
 
 def _clip_signed_or_unit(value: float, value_type: str) -> float:

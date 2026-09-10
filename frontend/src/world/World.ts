@@ -1,5 +1,5 @@
 import { Object3D, Scene } from 'three'
-import { FlyAgent } from '../fly/FlyAgent'
+import { FlyAgent, type HabitatContactSampler } from '../fly/FlyAgent'
 import { Environment } from './Environment'
 
 export class World {
@@ -23,7 +23,7 @@ export class World {
     this.scene.add(object)
   }
 
-  update(realDeltaSeconds: number) {
+  update(realDeltaSeconds: number, habitatContactSampler: HabitatContactSampler = () => false) {
     this.accumulator += Math.min(realDeltaSeconds, 0.1)
     let steps = 0
     // Keep the interactive loop real-time. If a tab wakes up or a heavy asset
@@ -31,7 +31,14 @@ export class World {
     // that makes the next frame even slower.
     while (this.accumulator >= this.fixedDt && steps < 6) {
       for (const agent of this.agents) {
-        agent.updateFixed(this.fixedDt, this.environment.bounds, this.environment.group, (position, timeSeconds) => this.environment.sampleOdorAt(position, timeSeconds), this.elapsedSeconds)
+        agent.updateFixed(
+          this.fixedDt,
+          this.environment.bounds,
+          this.environment.group,
+          (position, timeSeconds) => this.environment.sampleOdorAt(position, timeSeconds),
+          this.elapsedSeconds,
+          habitatContactSampler,
+        )
       }
       this.elapsedSeconds += this.fixedDt
       this.accumulator -= this.fixedDt

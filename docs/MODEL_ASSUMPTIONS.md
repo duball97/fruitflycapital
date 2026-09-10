@@ -141,3 +141,20 @@ is an observed result of the current boundary, not a parameter adjustment.
 
 See [`FLIGHT_MOTOR_MAPPING.md`](FLIGHT_MOTOR_MAPPING.md) for exact body IDs,
 literature evidence, and the live-provider boundary.
+
+## Flybody steering-reference assumptions
+
+The upstream Flybody `TwoLevelController` uses a steering observation block,
+not only the WPG frequency action. NeuroSwarm's V1 adapter supplies the
+7-dimensional `future_steps=0` form:
+
+```text
+[ref_displacement_cm_x, ref_displacement_cm_y, ref_displacement_cm_z,
+ ref_root_quat_w, ref_root_quat_x, ref_root_quat_y, ref_root_quat_z]
+```
+
+The egocentric displacement and relative `[w, x, y, z]` quaternion semantics
+are `FLYBODY_UPSTREAM`; the forward scale (0.5 cm), yaw scale (+/-0.35 rad),
+and zero vertical/lateral/pitch/roll mapping are `OUR_ASSUMPTION` calibration
+choices. These values are not claimed to be MaleCNS dimensions. See
+[`FLYBODY_FLIGHT_AUDIT.md`](FLYBODY_FLIGHT_AUDIT.md).

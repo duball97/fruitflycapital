@@ -52,6 +52,7 @@ class FlightDecodeResult:
         return {
             "flightCommand": self.command.as_dict(),
             "maleCnsCommand": self.command.as_dict(),
+            "steeringReference7d": self.low_level_command.steering_reference.as_dict(),
             "lowLevelFlightCommand": self.low_level_command.as_dict(),
             "descendingRates": self.descending_rates_hz,
             "spikeCounts": self.spike_counts,

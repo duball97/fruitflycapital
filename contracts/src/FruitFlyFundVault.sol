@@ -11,6 +11,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+interface IWETH {
+    function deposit() external payable;
+}
+
 /// @notice Explicit-share accounting for a multichain strategy fund.
 /// @dev This is the implementation behind an OpenZeppelin transparent proxy.
 /// V1 uses an authorized offchain NAV reporter; it is not trustless production
@@ -43,6 +47,7 @@ contract FruitFlyFundVault is Initializable, ERC20, AccessControl, Pausable, Ree
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
 
     event Deposit(address indexed caller, address indexed owner, uint256 assets, uint256 shares);
+    event NativeDeposit(address indexed caller, address indexed owner, uint256 assets, uint256 shares);
     event CapitalDeployed(address indexed treasury, uint256 amount);
     event StrategyNavReported(uint256 strategyNavAsset, uint256 totalNavAsset, uint256 navPerShareAsset, uint256 timestamp);
     event WithdrawalRequested(uint256 indexed requestId, address indexed owner, uint256 shares, uint256 amountAsset, uint256 navPerShareAsset);
@@ -94,12 +99,40 @@ contract FruitFlyFundVault is Initializable, ERC20, AccessControl, Pausable, Ree
 
     function deposit(uint256 assets, address receiver) external nonReentrant whenNotPaused returns (uint256 shares) {
         require(assets > 0 && receiver != address(0), "invalid deposit");
-        uint256 price = navPerShareAsset();
+        shares = _sharesForDeposit(assets, navPerShareAsset());
+        accountingAsset.safeTransferFrom(msg.sender, address(this), assets);
+        _completeDeposit(msg.sender, receiver, assets, shares);
+    }
+
+    /// @notice Wrap native ETH into the configured WETH asset and mint FFC shares.
+    /// @dev The deployed Robinhood testnet vault is configured with WETH.
+    function depositETH(address receiver) external payable nonReentrant whenNotPaused returns (uint256 shares) {
+        require(msg.value > 0 && receiver != address(0), "invalid deposit");
+        shares = _sharesForDeposit(msg.value, navPerShareAsset());
+        IWETH(address(accountingAsset)).deposit{value: msg.value}();
+        _completeDeposit(msg.sender, receiver, msg.value, shares);
+        emit NativeDeposit(msg.sender, receiver, msg.value, shares);
+    }
+
+    /// @notice A plain ETH transfer deposits for the sending address.
+    /// @dev This makes sending ETH to the fund proxy equivalent to
+    /// depositETH(msg.sender). Sending ETH to WETH itself only wraps it.
+    receive() external payable nonReentrant whenNotPaused {
+        require(msg.value > 0, "invalid deposit");
+        uint256 shares = _sharesForDeposit(msg.value, navPerShareAsset());
+        IWETH(address(accountingAsset)).deposit{value: msg.value}();
+        _completeDeposit(msg.sender, msg.sender, msg.value, shares);
+        emit NativeDeposit(msg.sender, msg.sender, msg.value, shares);
+    }
+
+    function _sharesForDeposit(uint256 assets, uint256 price) private pure returns (uint256 shares) {
         shares = Math.mulDiv(assets, SHARE_SCALE, price);
         require(shares > 0, "rounding to zero");
-        accountingAsset.safeTransferFrom(msg.sender, address(this), assets);
+    }
+
+    function _completeDeposit(address caller, address receiver, uint256 assets, uint256 shares) private {
         _mint(receiver, shares);
-        emit Deposit(msg.sender, receiver, assets, shares);
+        emit Deposit(caller, receiver, assets, shares);
     }
 
     function deployCapital(uint256 amount) external onlyRole(STRATEGY_ROLE) whenNotPaused {

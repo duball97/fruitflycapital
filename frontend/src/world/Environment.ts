@@ -8,7 +8,9 @@ import type { EnvironmentUpdateMessage } from '../networking/protocol'
 import { ParticleField } from './ParticleField'
 import type { TokenState } from './TokenState'
 
-const WORLD_HABITAT_CAPACITY = 128
+// The city is a directory of the first 100 tracked markets. This is separate
+// from the smaller deep-observer tier on the backend.
+const WORLD_HABITAT_CAPACITY = 100
 const HABITAT_PALETTE = [0x4bd6a0, 0x6ca8ff, 0xff6e80, 0xf5c84c, 0xa980ff, 0xff9b5c, 0x56d9d0, 0xff80b8]
 
 export class Environment {
@@ -68,11 +70,12 @@ export class Environment {
     const incomingIds = new Set<string>()
     for (const state of update.habitats.slice(0, WORLD_HABITAT_CAPACITY)) {
       incomingIds.add(state.id)
+      const nextState = tokenStateFromEnvironment(state)
       let habitat = this.habitatsById.get(state.id)
       if (!habitat) {
-        habitat = this.addHabitat(tokenStateFromEnvironment(state), this.positionFor(state.id, this.habitatList.length), this.colorFor(state.id))
+        habitat = this.addHabitat(nextState, this.positionFor(state.id, this.habitatList.length), this.colorFor(state.id))
       } else {
-        habitat.setIdentity(state.id, state.label)
+        habitat.setMarketState(nextState)
       }
       habitat.setPhysicalProperties({
         physicalRadiusM: state.physicalRadiusM,
@@ -109,12 +112,36 @@ export class Environment {
       (total, habitat) => {
         const field = habitat.odorAt(position, timeSeconds)
         return {
-          attractive: Math.min(1, total.attractive + field.attractive),
-          aversive: Math.min(1, total.aversive + field.aversive),
+          // A fly should smell the strongest nearby source, not a saturated
+          // sum of 100 overlapping habitats. Max-preserving the field keeps a
+          // spatial gradient so the autonomous controller can still approach
+          // a particular token place.
+          attractive: Math.max(total.attractive, field.attractive),
+          aversive: Math.max(total.aversive, field.aversive),
         }
       },
       { attractive: 0, aversive: 0 },
     )
+  }
+
+  /**
+   * Contact is evaluated after physics, outside the CNS sensory payload.
+   * The brain receives odor and bilateral gradients; swarm telemetry may
+   * identify which habitat was actually touched afterward.
+   */
+  habitatContactAt(position: Vector3) {
+    let nearest: { habitatId: string; distanceM: number; radiusM: number } | null = null
+    for (const habitat of this.habitatList) {
+      const distanceM = position.distanceTo(habitat.group.position)
+      const radiusM = Math.max(0.045, habitat.properties.physicalRadiusM * 0.55 + 0.025)
+      if (!nearest || distanceM < nearest.distanceM) nearest = { habitatId: habitat.state.id, distanceM, radiusM }
+    }
+    return {
+      contact: nearest !== null && nearest.distanceM <= nearest.radiusM,
+      habitatId: nearest?.habitatId ?? null,
+      distanceM: nearest?.distanceM ?? Number.POSITIVE_INFINITY,
+      radiusM: nearest?.radiusM ?? 0,
+    }
   }
 
   private addHabitat(state: TokenState, position: Vector3, color: number) {
@@ -131,7 +158,7 @@ export class Environment {
 
   private positionFor(id: string, fallbackIndex: number) {
     const slot = this.slotFor(id, fallbackIndex)
-    const columns = 16
+    const columns = 10
     const rows = Math.ceil(WORLD_HABITAT_CAPACITY / columns)
     const x = -0.86 + (slot % columns) * (1.72 / (columns - 1))
     const z = -0.86 + Math.floor(slot / columns) * (1.72 / Math.max(1, rows - 1))
@@ -164,20 +191,23 @@ export class Environment {
       scene.background = texture
     })
     background.colorSpace = SRGBColorSpace
-    scene.fog = new Fog(0x102b2b, 1.35, 4.8)
-    scene.add(new HemisphereLight(0x476d78, 0x081318, 0.72))
-    scene.add(new AmbientLight(0x17333a, 0.32))
-    const key = new DirectionalLight(0xffc77d, 1.35)
+    scene.fog = new Fog(0x1b3438, 2.5, 9.5)
+    scene.add(new HemisphereLight(0x92c4c3, 0x152227, 1.26))
+    scene.add(new AmbientLight(0x3b6d70, 0.78))
+    const key = new DirectionalLight(0xffcf92, 1.95)
     key.position.set(-1.5, 2.2, 1.1)
     key.castShadow = false
     scene.add(key)
-    const fill = new DirectionalLight(0x61b9d6, 0.72)
+    const fill = new DirectionalLight(0x83d9ed, 1.18)
     fill.position.set(1.2, 1.1, -1.3)
     scene.add(fill)
+    const moon = new DirectionalLight(0x87b9ff, 0.5)
+    moon.position.set(-1.8, 2.8, -2.2)
+    scene.add(moon)
     // Low-intensity street pools sell the night scene without turning every
     // habitat into an overexposed glowing disk.
     for (const [x, z, color] of [[-1.8, -1.4, 0x37b8ff], [1.65, 0.9, 0xff8c48], [0.2, 1.75, 0x72f0bf]] as const) {
-      const streetLight = new PointLight(color, 0.42, 1.3, 2)
+      const streetLight = new PointLight(color, 0.62, 1.7, 2)
       streetLight.position.set(x, 0.46, z)
       scene.add(streetLight)
     }
@@ -186,21 +216,54 @@ export class Environment {
 }
 
 function tokenStateFromEnvironment(state: EnvironmentUpdateMessage['environment']['habitats'][number]): TokenState {
+  const numberSignal = (name: string, fallback: number | null = null) => {
+    const value = state.signals?.find((signal) => signal.name === name)?.value
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  }
   return {
     id: state.id,
     label: state.label,
     tokenAddress: null,
     poolId: null,
     observedAtMs: 0,
-    market: { priceInPair: null, volume5mUsd: 0, volume15mUsd: 0, volume1hUsd: 0 },
-    flow: { buyCount5m: 0, sellCount5m: 0, buyUsd5m: 0, sellUsd5m: 0, flowImbalance: 0, txVelocity5m: 0, txAcceleration: 0 },
-    liquidity: { liquidityUsd: 0, liquidityDeltaUsd: null, volumeLiquidityRatio1h: 0 },
+    market: {
+      priceInPair: null,
+      priceUsd: numberSignal('market.priceUsd'),
+      marketCapUsd: numberSignal('market.marketCapUsd'),
+      fdvUsd: numberSignal('market.fdvUsd'),
+      volume5mUsd: numberSignal('market.volume5mUsd', 0) ?? 0,
+      volume15mUsd: numberSignal('market.volume15mUsd', 0) ?? 0,
+      volume1hUsd: numberSignal('market.volume1hUsd', 0) ?? 0,
+      volume24hUsd: numberSignal('market.volume24hUsd'),
+    },
+    flow: {
+      buyCount5m: numberSignal('flow.buyCount5m', 0) ?? 0,
+      sellCount5m: numberSignal('flow.sellCount5m', 0) ?? 0,
+      buyUsd5m: numberSignal('flow.buyUsd5m', 0) ?? 0,
+      sellUsd5m: numberSignal('flow.sellUsd5m', 0) ?? 0,
+      flowImbalance: numberSignal('flow.imbalance', 0) ?? 0,
+      txVelocity5m: numberSignal('flow.txVelocity5m', 0) ?? 0,
+      txAcceleration: numberSignal('flow.txAcceleration', 0) ?? 0,
+    },
+    liquidity: {
+      liquidityUsd: numberSignal('liquidity.usd', 0) ?? 0,
+      liquidityDeltaUsd: numberSignal('liquidity.deltaUsd'),
+      volumeLiquidityRatio1h: numberSignal('liquidity.volumeLiquidityRatio1h', 0) ?? 0,
+      marketCapToLiquidity: numberSignal('liquidity.marketCapToLiquidity'),
+      fdvToLiquidity: numberSignal('liquidity.fdvToLiquidity'),
+      volume24hToMarketCap: numberSignal('liquidity.volume24hToMarketCap'),
+      volume24hToLiquidity: numberSignal('liquidity.volume24hToLiquidity'),
+    },
     holders: { status: 'unavailable', holderCount: null, growth24h: null, top10Concentration: null },
     security: { status: 'unavailable', honeypot: null, contractVerified: null, ownerControl: null },
     social: { status: 'unavailable', mentions: null, sentiment: null },
     lore: { status: 'unavailable', catalysts: [] },
-    signals: [],
-    provenance: [],
+    signals: (state.signals ?? []).map((signal) => ({
+      ...signal,
+      value: typeof signal.value === 'number' || typeof signal.value === 'string' || signal.value === null ? signal.value : null,
+    })),
+    provenance: state.provenance ?? [],
+    financial: state.financialTrace ?? null,
   }
 }
 

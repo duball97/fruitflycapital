@@ -1,4 +1,4 @@
-import { BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, Sprite, SpriteMaterial, SphereGeometry, TorusGeometry, Vector3 } from 'three'
+import { AdditiveBlending, BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, Sprite, SpriteMaterial, SphereGeometry, TorusGeometry, Vector3 } from 'three'
 import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
@@ -44,6 +44,8 @@ export class TokenHabitat {
   private readonly floorGlow: Mesh
   private readonly label: Sprite
   private readonly semanticGroup = new Group()
+  private readonly smellGroup = new Group()
+  private readonly smellPuffs: Array<{ mesh: Mesh; phase: number }> = []
   private enabled = true
 
   constructor(state: TokenState, position: Vector3, color: number) {
@@ -51,9 +53,21 @@ export class TokenHabitat {
     this.initialState = state
     this.basePosition.copy(position)
     this.group.name = `TokenHabitat:${state.id}`
+    this.group.userData.tokenHabitatId = state.id
     this.group.position.copy(position)
     this.semanticGroup.name = 'SemanticSmellSource'
     this.group.add(this.semanticGroup)
+    this.smellGroup.name = 'AnimatedOdorCloud'
+    for (let index = 0; index < 5; index += 1) {
+      const puff = new Mesh(
+        new SphereGeometry(0.012, 8, 6),
+        new MeshBasicMaterial({ color: 0x9de4c2, transparent: true, opacity: 0, depthWrite: false, blending: AdditiveBlending }),
+      )
+      puff.position.y = 0.08
+      this.smellGroup.add(puff)
+      this.smellPuffs.push({ mesh: puff, phase: index / 5 })
+    }
+    this.group.add(this.smellGroup)
 
     this.floorGlow = new Mesh(
       new CircleGeometry(0.18, 32),
@@ -65,8 +79,9 @@ export class TokenHabitat {
 
     this.label = new Sprite(new SpriteMaterial({ map: labelTexture(state.label), transparent: true, depthWrite: false }))
     this.label.name = 'TokenLabel'
-    this.label.position.y = 0.23
-    this.label.scale.set(0.31, 0.058, 1)
+    this.label.userData.tokenHabitatId = state.id
+    this.label.position.y = 0.2
+    this.label.scale.set(0.23, 0.044, 1)
     this.group.add(this.label)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
@@ -145,14 +160,25 @@ export class TokenHabitat {
     const intensity = visual.brightness * (0.7 + visual.visualMotionIntensity * 0.3)
     ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
     ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
-    ;(this.pressureRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.18 + visual.chaos * 0.35 : 0.07
-    ;(this.outerRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.12 + visual.chaos * 0.2 : 0.04
-    ;(this.innerRing.material as MeshPhysicalMaterial).emissiveIntensity = this.enabled ? 0.24 + visual.brightness * 0.55 : 0.08
+    // Keep the identity marker low-profile. The former animated rings made
+    // every habitat look like the same sci-fi platform and competed with the
+    // actual food/trash object that carries the smell visually.
+    this.pressureRing.visible = false
+    this.outerRing.visible = false
+    this.innerRing.visible = false
     this.pile.scale.setScalar(Math.max(0.72, visual.resourcePileRadiusM / 0.06))
     this.signalLight.intensity = this.enabled ? 0.05 + visual.brightness * 0.38 + visual.particleActivity * 0.18 : 0
     this.floorGlow.visible = this.enabled
     ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled ? 0.045 + visual.brightness * 0.13 : 0
     this.floorGlow.scale.setScalar(0.82 + visual.physicalRadiusM * 2.4)
+    this.smellGroup.visible = this.enabled
+    const smellColor = odorColor(visual.semanticType)
+    const smellStrength = Math.max(visual.attractiveOdor, visual.aversiveDanger, visual.visualMotionIntensity * 0.42)
+    this.smellPuffs.forEach(({ mesh }) => {
+      const material = mesh.material as MeshBasicMaterial
+      material.color.setHex(smellColor)
+      material.opacity = this.enabled ? 0.04 + smellStrength * 0.32 : 0
+    })
     // The old floating column/cap read as a sci-fi status widget rather than
     // a place a fly would investigate. Signal is now carried by the physical
     // prop, floor glow, and neon token label.
@@ -214,7 +240,44 @@ export class TokenHabitat {
     this.innerRing.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.06 * pulse)
     this.outerRing.scale.setScalar(0.96 + visual.chaos * 0.35 + visual.visualMotionIntensity * 0.12 * pulse)
     this.outerRing.rotation.z = -timeSeconds * (0.004 + visual.visualMotionIntensity * 0.02)
-    this.signalLight.intensity = this.enabled ? 0.08 + visual.brightness * 0.65 + visual.particleActivity * (0.22 + pulse * 0.18) : 0
+    this.signalLight.intensity = this.enabled ? 0.05 + visual.brightness * 0.38 + visual.particleActivity * (0.12 + pulse * 0.08) : 0
+
+    // Odor is shown as a slow, rising cloud rather than a generic rotating
+    // sci-fi ring. Each mote has a different phase, radius and drift so a
+    // habitat reads as a living food/rot/trash source at a glance.
+    const smellStrength = Math.max(visual.attractiveOdor, visual.aversiveDanger, visual.visualMotionIntensity * 0.42)
+    this.smellGroup.visible = this.enabled && smellStrength > 0.025
+    this.smellPuffs.forEach(({ mesh, phase }, index) => {
+      const cycle = (timeSeconds * (0.16 + smellStrength * 0.24) + phase) % 1
+      const angle = timeSeconds * (0.55 + index * 0.07) + phase * Math.PI * 2
+      const radius = 0.016 + Math.sin(timeSeconds * 0.8 + index * 1.9) * 0.008 + visual.chaos * 0.012
+      mesh.position.set(Math.cos(angle) * radius, 0.078 + cycle * (0.13 + visual.physicalRadiusM * 0.18), Math.sin(angle) * radius)
+      const size = 0.55 + cycle * 0.9 + Math.sin(timeSeconds * 1.4 + index) * 0.12
+      mesh.scale.setScalar(size)
+      ;(mesh.material as MeshBasicMaterial).opacity = this.smellGroup.visible
+        ? (0.06 + smellStrength * 0.28) * (1 - cycle) * (0.82 + pulse * 0.18)
+        : 0
+    })
+
+    // Rot slowly breathes and sags; food gently settles. These tiny motions
+    // keep the semantic prop alive without turning it into another dashboard
+    // widget or making all habitats spin identically.
+    const semanticPhase = this.basePosition.x * 3.1 + this.basePosition.z * 2.2
+    if (visual.semanticType === 'rot') {
+      this.semanticGroup.rotation.z = Math.sin(timeSeconds * 0.7 + semanticPhase) * 0.045
+      this.semanticGroup.position.y = Math.sin(timeSeconds * 1.15 + semanticPhase) * 0.003
+    } else if (visual.semanticType === 'food') {
+      this.semanticGroup.rotation.z = Math.sin(timeSeconds * 0.45 + semanticPhase) * 0.018
+      this.semanticGroup.position.y = Math.sin(timeSeconds * 0.9 + semanticPhase) * 0.0015
+    } else {
+      this.semanticGroup.rotation.z = 0
+      this.semanticGroup.position.y = 0
+    }
+    const glowPulse = 0.93 + Math.sin(timeSeconds * 0.8 + semanticPhase) * 0.07
+    this.floorGlow.scale.setScalar((0.82 + visual.physicalRadiusM * 2.4) * glowPulse)
+    ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled
+      ? (0.045 + visual.brightness * 0.13) * (0.92 + pulse * 0.08)
+      : 0
     if (this.signalColumn.visible) {
       const columnScale = 0.5 + visual.particleActivity * 1.4 + visual.chaos * 0.4
       this.signalColumn.scale.set(1, columnScale * pulse, 1)
@@ -233,11 +296,25 @@ export class TokenHabitat {
     this.label.material.map = labelTexture(label)
     this.label.material.needsUpdate = true
     this.group.name = `TokenHabitat:${id}`
+    this.group.userData.tokenHabitatId = id
+    this.label.userData.tokenHabitatId = id
+  }
+
+  setMarketState(state: TokenState) {
+    this.state = state
+    this.group.name = `TokenHabitat:${state.id}`
+    this.group.userData.tokenHabitatId = state.id
+    this.label.userData.tokenHabitatId = state.id
+    this.label.material.map?.dispose()
+    this.label.material.map = labelTexture(state.label)
+    this.label.material.needsUpdate = true
   }
 
   resetIdentity() {
     this.state = this.initialState
     this.group.name = `TokenHabitat:${this.state.id}`
+    this.group.userData.tokenHabitatId = this.state.id
+    this.label.userData.tokenHabitatId = this.state.id
   }
 
   resetPosition() {
@@ -255,7 +332,11 @@ export class TokenHabitat {
 
   odorAt(position: Vector3, timeSeconds: number) {
     const distance = position.distanceTo(this.group.position)
-    const sigma = 0.24 + this.properties.physicalRadiusM * 0.45
+    // The source is sensed from a flying body above the street. A narrow
+    // field made the floor-level habitat effectively unsmellable before a fly
+    // had any chance to descend, so keep a readable vertical gradient while
+    // preserving spatial separation between nearby sources.
+    const sigma = 0.36 + this.properties.physicalRadiusM * 0.55
     const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma))
     const fluctuation = 1 + Math.sin(timeSeconds * (0.7 + this.properties.chaos * 2.0) + this.group.position.x * 4.0) * this.properties.chaos * 0.08
     return {
@@ -291,6 +372,13 @@ function labelTexture(value: string) {
   const texture = new CanvasTexture(canvas)
   texture.needsUpdate = true
   return texture
+}
+
+function odorColor(type: HabitatProperties['semanticType']) {
+  if (type === 'food') return 0xffc86b
+  if (type === 'rot') return 0x98c56c
+  if (type === 'trash') return 0x9cc9b8
+  return 0x75cfe2
 }
 
 export function propertiesFromState(state: TokenState): HabitatProperties {

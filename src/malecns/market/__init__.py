@@ -2,6 +2,7 @@
 
 from .habitat_encoder import HabitatEncoder, PhysicalHabitatState
 from .dexscreener_client import DexScreenerApiError, DexScreenerClient
+from .coinmarketcap_client import CoinMarketCapApiError, CoinMarketCapClient
 from .models import (
     FlowState,
     HoldersState,
@@ -48,6 +49,8 @@ __all__ = [
     "GraphProvider",
     "DexScreenerApiError",
     "DexScreenerClient",
+    "CoinMarketCapApiError",
+    "CoinMarketCapClient",
     "DexScreenerMarketDiscovery",
     "DexScreenerUniverseProvider",
     "HabitatEncoder",

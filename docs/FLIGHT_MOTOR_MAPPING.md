@@ -49,6 +49,20 @@ synaptic weights. No MaleCNS edge, neuron ID, or connection strength is
 changed. The browser then converts the normalized command to forces and
 torques using the existing rigid-body physics.
 
+When the optional Flybody low-level worker is connected, the same normalized
+neural command is also passed through `MaleCNSFlightAdapter` as a bounded
+7-dimensional current steering reference:
+
+```text
+[forward displacement cm, 0, 0, relative yaw quaternion w, x, y, z]
+```
+
+This is a calibration boundary, not a claim that a MaleCNS firing rate has a
+published centimetre/radian conversion. The low-level policy owns wingbeat
+generation, joint actuation, lift, and stabilization. It does not select a
+market or habitat. Exact semantics and the required `future_steps=0`
+environment are documented in [FLYBODY_FLIGHT_AUDIT.md](FLYBODY_FLIGHT_AUDIT.md).
+
 The following mappings are deliberately unimplemented:
 
 | Output | Current status | Reason |

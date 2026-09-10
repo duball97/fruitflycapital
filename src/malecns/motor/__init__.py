@@ -9,7 +9,13 @@ from .registry import (
     walking_state_ids,
 )
 from .flight_decoder import FlightCommand, FlightDecodeResult, FlightMotorDecoder
-from .flight_adapter import LowLevelFlightCommand, MaleCNSFlightAdapter
+from .flight_adapter import (
+    FLYBODY_CONTROL_TIMESTEP_SECONDS,
+    FLYBODY_STEERING_COMMAND_DIM,
+    FlyBodySteeringReference,
+    LowLevelFlightCommand,
+    MaleCNSFlightAdapter,
+)
 from .flight_registry import flight_population_ids, flight_population_types
 
 __all__ = [
@@ -24,6 +30,9 @@ __all__ = [
     "FlightMotorDecoder",
     "LowLevelFlightCommand",
     "MaleCNSFlightAdapter",
+    "FlyBodySteeringReference",
+    "FLYBODY_STEERING_COMMAND_DIM",
+    "FLYBODY_CONTROL_TIMESTEP_SECONDS",
     "flight_population_ids",
     "flight_population_types",
 ]

@@ -25,11 +25,13 @@ applies the matrix, and `pipeline.py` provides evaluation and ablation.
 explicit `NEUROSWARM_ENCODING_MODE=legacy` environment variable for comparison
 tests. Neither mode creates a target coordinate or a buy/sell command.
 
-Currently populated: five-minute, fifteen-minute, and one-hour volume;
+Currently populated: five-minute, fifteen-minute, one-hour, and (when
+supplied) 24-hour volume; USD price; market cap; FDV; pair age;
 token-relative buy/sell counts and USD flow; transaction velocity and
 acceleration; liquidity; liquidity change when a previous poll exists; and
-volume/liquidity ratio. Derived risk-stress and activity-shock features come
-from those observations.
+volume/liquidity ratio. Derived market-cap/LP, FDV/LP, volume/market-cap, and
+volume/LP ratios are also available. Derived risk-stress and activity-shock
+features come from those observations.
 
 Holder, security, onchain wallet, social, lore, and fundamental features are
 registered but unavailable until a provider supplies them. Unavailable is not

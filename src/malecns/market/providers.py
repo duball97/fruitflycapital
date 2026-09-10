@@ -33,6 +33,21 @@ class GraphProvider:
         pool = self.client.pool_state(pool_id)
         if not pool:
             raise ValueError(f"Graph returned no pool state for {pool_id}")
+        # Deep Graph observation supplies the swap/pool truth, while the
+        # discovery provider supplies optional market context that Graph does
+        # not expose on a pool entity (market cap, FDV, USD price, pair age).
+        # Keep the namespaces explicit; this is enrichment, not a replacement
+        # for Graph's liquidity or swap measurements.
+        pool = dict(pool)
+        for key in (
+            "priceUsd", "priceNative", "marketCapUsd", "fdvUsd",
+            "pairCreatedAt", "liquidityBase", "liquidityQuote",
+            "volume24hUsd", "cmcId", "cmcSlug", "cmcRank",
+            "circulatingSupply", "totalSupply", "cmcPercentChange7d",
+            "cmcVolumeChange24h", "marketCapDominance",
+        ):
+            if key in config and config[key] is not None and key not in pool:
+                pool[key] = config[key]
         token0 = _address(pool.get("token0"))
         token1 = _address(pool.get("token1"))
         if token_address not in {token0, token1}:

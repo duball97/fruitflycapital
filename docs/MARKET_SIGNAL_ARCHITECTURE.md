@@ -7,12 +7,12 @@ market metric has a biological equivalent.
 ## Data flow
 
 ```text
-DexScreener market discovery
+CoinMarketCap ranked context + DexScreener market discovery
     |
     v
 MarketUniverse -> eligibility -> locked MarketRound
     |                         |
-    |                         +--> up to 128 physical market habitats
+    |                         +--> up to 100 physical market habitats
     v
 GraphProvider (up to 12 selected Ethereum/Uniswap deep observers)
     |
@@ -51,7 +51,7 @@ logic. The habitat model does not depend on DexScreener's response shape, and
 no raw market fields are forwarded to a fly.
 
 The Graph remains the deeper observation provider for selected Ethereum /
-Uniswap pairs. The round can contain up to 128 physically present markets,
+Uniswap pairs. The round can contain up to 100 physically present markets,
 while `NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT` bounds the expensive Graph tier.
 The other habitats receive lightweight state from the cached DexScreener row;
 this preserves market identity and a coarse sensory field without pretending
@@ -63,11 +63,18 @@ Financial factor weights and sensory mappings are versioned in
 `config/financial_factors.v1.json` and `config/sensory_mapping.v1.json`; see
 [`docs/FINANCIAL_SENSORY_PIPELINE.md`](FINANCIAL_SENSORY_PIPELINE.md).
 
-## DexScreener discovery
+## Ranked asset context and DexScreener discovery
 
 The implementation is in
 [`src/malecns/market/dexscreener_client.py`](../src/malecns/market/dexscreener_client.py)
-and [`src/malecns/market/universe.py`](../src/malecns/market/universe.py). It
+[`src/malecns/market/coinmarketcap_client.py`](../src/malecns/market/coinmarketcap_client.py)
+and [`src/malecns/market/universe.py`](../src/malecns/market/universe.py). The
+optional CoinMarketCap client uses the classic latest-listings endpoint for a
+broad ranked universe. Its rank, supply, market-cap, seven-day change, 24-hour
+volume change, and dominance fields are metadata/context; they are not proof
+of a tradable pool on Robinhood, Base, or any other chain. Only listings with
+an exact platform chain and token address seed DexScreener resolution.
+Symbol-only matches are rejected to avoid collisions. The discovery layer
 uses the documented server-side public endpoints:
 
 - `/token-profiles/latest/v1` and `/token-profiles/recent-updates/v1` provide
@@ -82,8 +89,12 @@ Ethereum pools. For a reliable project-specific universe, add explicit seed
 addresses through `NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES`; the provider
 still resolves their actual pairs and statistics. Core and recent targets are
 universe sizes, not numbers of habitats or brains. The default world round is
-up to 128 markets locked for ten minutes, with up to 12 of those markets sent
-to the deep Graph observer.
+up to 100 tracked markets locked for ten minutes, with up to 12 of those
+markets sent to the deep Graph observer. World inclusion does not require the
+deep liquidity/volume thresholds, so a newly tracked market can be visible
+without being treated as executable or investable. If fewer than 100 real
+candidates are returned by the provider, the scene shows that smaller count;
+the system does not invent token markets.
 
 When a configured Graph client supports the `pools` query, the discovery
 provider also asks it for high-TVL pool IDs and enriches those IDs through
@@ -104,7 +115,8 @@ The Python model is in
 [`src/malecns/market/models.py`](../src/malecns/market/models.py). It contains:
 
 - `market`: pair-relative price, and USD volume over 5 minutes, 15 minutes,
-  and 1 hour;
+  1 hour, and 24 hours, plus optional CMC rank, circulating/total supply,
+  seven-day price change, 24-hour volume change, and market-cap dominance;
 - `flow`: token-relative buy/sell counts and USD amounts over 5 minutes, flow
   imbalance, transaction velocity, and transaction acceleration;
 - `liquidity`: pool TVL in USD, change since the previous poll, and the 1-hour
@@ -140,6 +152,7 @@ The current signal list is intentionally small and inspectable:
 market.volume5mUsd
 market.volume15mUsd
 market.volume1hUsd
+market.volume24hUsd (when supplied by discovery/deep-provider enrichment)
 flow.buyCount5m
 flow.sellCount5m
 flow.buyUsd5m
@@ -150,7 +163,34 @@ flow.txAcceleration
 liquidity.usd
 liquidity.deltaUsd
 liquidity.volumeLiquidityRatio1h
+market.priceUsd
+market.marketCapUsd
+market.fdvUsd
+market.pairAgeHours
+liquidity.marketCapToLiquidity
+liquidity.fdvToLiquidity
+liquidity.volume24hToMarketCap
+liquidity.volume24hToLiquidity
 ```
+
+### DexScreener valuation and depth fields
+
+The discovery payload preserves the optional `marketCap`, `fdv`, `priceUsd`,
+`priceNative`, `liquidity.base`, `liquidity.quote`, `txns.h24`, `boosts.active`,
+and `pairCreatedAt` fields documented by DexScreener. From them it derives:
+
+- `marketCapToLiquidity`: circulating market cap divided by current pool LP
+  liquidity;
+- `fdvToLiquidity`: fully diluted valuation divided by LP liquidity;
+- `volume24hToMarketCap`: 24-hour turnover relative to circulating market cap;
+- `volume24hToLiquidity`: 24-hour turnover relative to current LP liquidity;
+- `pairAgeHours`: elapsed age of the pair at observation time.
+
+These are research features, not standalone trade signals. Market cap and FDV
+are nullable because DexScreener may not provide them for every pair. The raw
+facts, derived ratios, provider, and observation time are persisted in the
+Supabase market cache and carried into `financialTrace` for lightweight
+DexScreener habitats.
 
 ## Graph metrics
 

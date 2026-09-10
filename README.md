@@ -318,23 +318,32 @@ limitations.
 The embodied sensor contract is documented in
 [docs/SENSORY_WORLD.md](docs/SENSORY_WORLD.md).
 
+The Flybody integration boundary is the upstream 7D
+`ref_displacement + ref_root_quat` steering block when its low-level
+flight-imitation checkpoint is installed; the WPG frequency scalar is not the
+navigation interface. See [docs/FLYBODY_FLIGHT_AUDIT.md](docs/FLYBODY_FLIGHT_AUDIT.md).
+
 ## Onchain market discovery and habitat data
 
 The optional live feed is deliberately layered:
 
 ```text
-DexScreener -> MarketUniverse -> eligibility -> locked MarketRound
-            -> up to 128 physical market habitats
+CoinMarketCap ranked context + DexScreener pairs -> MarketUniverse -> eligibility -> locked MarketRound
+            -> up to 100 physical market habitats
             -> 12 deep Ethereum/Uniswap observer configs
 GraphProvider -> RawTokenObservation -> TokenSignalEngine -> Signal[]
               -> HabitatEncoder -> physical habitat fields -> fly sensors
 ```
 
-DexScreener now supplies server-side market discovery through the documented
-public API. It decides which markets enter the arena, not which market is
+CoinMarketCap is an optional broad ranked-asset context provider. When
+`CMC_API_KEY` is configured, the top listings seed exact chain/address
+lookups and enrich matching candidates with rank, supply, seven-day change,
+volume change, and dominance. It never creates a habitat from a symbol alone.
+DexScreener still supplies the real pair, liquidity, and tradability context
+through its documented public API. It decides which markets enter the tracked market world, not which market is
 attractive to a fly: selection scores, rankings, bullish labels, expected
 returns, coordinates, and trading recommendations never enter the habitat or
-brain path. The default round exposes up to 128 eligible markets and locks
+brain path. The default round exposes up to 100 tracked markets and locks
 them for ten minutes; up to 12 receive deep Graph observation while the rest
 receive lightweight DexScreener-derived state. See
 [docs/MARKET_SIGNAL_ARCHITECTURE.md](docs/MARKET_SIGNAL_ARCHITECTURE.md).
@@ -346,6 +355,11 @@ NEUROSWARM_MARKET_DISCOVERY_ENABLED=true
 NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood
 NEUROSWARM_MARKET_DEX_IDS=
 NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=
+NEUROSWARM_MARKET_CORE_TARGET=100
+NEUROSWARM_MARKET_WORLD_CAPACITY=100
+NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT=12
+CMC_API_KEY=
+CMC_LISTINGS_LIMIT=100
 ```
 
 The latest/recent profile feeds can seed discovery when they contain the
@@ -357,8 +371,12 @@ DexScreener on those chains.
 
 On Render, set these same values in the service environment and redeploy:
 `NEUROSWARM_MARKET_DISCOVERY_ENABLED=true`,
-`NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood`, and leave
-`NEUROSWARM_MARKET_DEX_IDS` empty.
+`NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood`,
+`NEUROSWARM_MARKET_CORE_TARGET=100`,
+`NEUROSWARM_MARKET_WORLD_CAPACITY=100`, and leave
+`NEUROSWARM_MARKET_DEX_IDS` empty. The capacity is an upper bound: the
+service shows only real candidates returned by the providers, so it will not
+invent 95 markets if discovery currently returns five.
 report can be inspected with:
 
 ```bash
@@ -372,7 +390,9 @@ feed remains empty. That is intentional: no swap data is fabricated.
 `TokenState` keeps market, flow, liquidity, holders, security, social, and
 lore as separate domains. Each derived signal carries its value, normalized
 value, importance, valence, confidence, freshness, source, and observation
-time. The current Graph provider supplies market/flow/liquidity only; missing
+time. DexScreener also preserves optional USD price, market cap, FDV, pair age,
+LP base/quote reserves, transaction totals, market-cap/LP, FDV/LP,
+volume/market-cap, and volume/LP ratios. Missing
 holder, security, social, and lore data remains explicitly unavailable. See
 [docs/MARKET_SIGNAL_ARCHITECTURE.md](docs/MARKET_SIGNAL_ARCHITECTURE.md) for
 metric definitions, provenance, and the planned provider boundaries.

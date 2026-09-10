@@ -1,5 +1,5 @@
 import './style.css'
-import { Scene, Vector3, WebGLRenderer } from 'three'
+import { Object3D, Raycaster, Scene, Vector2, Vector3, WebGLRenderer } from 'three'
 import { Environment } from './world/Environment'
 import { World } from './world/World'
 import { BrainSocket } from './networking/BrainSocket'
@@ -17,6 +17,7 @@ import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
 import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
+import type { TokenState } from './world/TokenState'
 
 // The public experience is intentionally autonomous. Manual actuation remains
 // available only inside the controller module for isolated developer tests; it
@@ -197,6 +198,135 @@ freeButton.addEventListener('click', () => { cameraIndex = 0 })
 cameraTargetPanel.append(freeButton)
 app.append(cameraTargetPanel)
 
+const tokenPopup = document.createElement('div')
+tokenPopup.className = 'token-popup-backdrop'
+tokenPopup.hidden = true
+tokenPopup.innerHTML = `
+  <section class="token-popup" role="dialog" aria-modal="true" aria-labelledby="token-popup-title">
+    <button class="token-popup-close" type="button" aria-label="Close token details">CLOSE</button>
+    <div class="token-popup-kicker">TOKEN HABITAT · LIVE SNAPSHOT</div>
+    <h2 id="token-popup-title" class="token-popup-title"></h2>
+    <div class="token-popup-subtitle"></div>
+    <div class="token-popup-grid">
+      <div><span>PRICE</span><strong data-token-metric="price">—</strong></div>
+      <div><span>MARKET CAP</span><strong data-token-metric="marketCap">—</strong></div>
+      <div><span>FDV</span><strong data-token-metric="fdv">—</strong></div>
+      <div><span>LIQUIDITY</span><strong data-token-metric="liquidity">—</strong></div>
+      <div><span>24H VOLUME</span><strong data-token-metric="volume24h">—</strong></div>
+      <div><span>MCAP / LIQUIDITY</span><strong data-token-metric="marketCapToLiquidity">—</strong></div>
+      <div><span>BUY / SELL 5M</span><strong data-token-metric="flow">—</strong></div>
+      <div><span>ATTRACTIVE ODOR</span><strong data-token-metric="odor">—</strong></div>
+    </div>
+    <div class="token-popup-section-label">WHAT THE FLIES SENSE</div>
+    <div class="token-popup-sense">
+      <span data-token-sense="semantic"></span>
+      <span data-token-sense="activity"></span>
+      <span data-token-sense="risk"></span>
+    </div>
+    <div class="token-popup-footnote">The habitat is updated from the market feed. Fly behaviour is autonomous; this popup does not steer the swarm.</div>
+  </section>
+`
+app.append(tokenPopup)
+const tokenPopupElement = tokenPopup.querySelector<HTMLElement>('.token-popup')!
+const tokenPopupTitle = tokenPopup.querySelector<HTMLElement>('.token-popup-title')!
+const tokenPopupSubtitle = tokenPopup.querySelector<HTMLElement>('.token-popup-subtitle')!
+const tokenPopupClose = tokenPopup.querySelector<HTMLButtonElement>('.token-popup-close')!
+const tokenPopupMetrics = Object.fromEntries(
+  Array.from(tokenPopup.querySelectorAll<HTMLElement>('[data-token-metric]')).map((element) => [element.dataset.tokenMetric!, element]),
+) as Record<string, HTMLElement>
+const tokenPopupSense = Object.fromEntries(
+  Array.from(tokenPopup.querySelectorAll<HTMLElement>('[data-token-sense]')).map((element) => [element.dataset.tokenSense!, element]),
+) as Record<string, HTMLElement>
+
+function closeTokenPopup() {
+  tokenPopup.hidden = true
+}
+
+tokenPopupClose.addEventListener('click', closeTokenPopup)
+tokenPopup.addEventListener('click', (event) => {
+  if (event.target === tokenPopup) closeTokenPopup()
+})
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeTokenPopup()
+})
+
+function openTokenPopup(habitat: Environment['habitats'][number]) {
+  const state = habitat.state
+  tokenPopupTitle.textContent = state.label || state.id
+  tokenPopupSubtitle.textContent = [state.chainId?.toUpperCase(), state.dexId, state.pairAddress ?? state.id]
+    .filter(Boolean)
+    .join(' · ')
+  setPopupMetric('price', formatUsd(signalNumber(state, 'market.priceUsd', state.market.priceUsd)))
+  setPopupMetric('marketCap', formatUsd(signalNumber(state, 'market.marketCapUsd', state.market.marketCapUsd)))
+  setPopupMetric('fdv', formatUsd(signalNumber(state, 'market.fdvUsd', state.market.fdvUsd)))
+  setPopupMetric('liquidity', formatUsd(signalNumber(state, 'liquidity.usd', state.liquidity.liquidityUsd)))
+  setPopupMetric('volume24h', formatUsd(signalNumber(state, 'market.volume24hUsd', state.market.volume24hUsd)))
+  setPopupMetric('marketCapToLiquidity', formatRatio(signalNumber(state, 'liquidity.marketCapToLiquidity', state.liquidity.marketCapToLiquidity)))
+  setPopupMetric('flow', `${state.flow.buyCount5m} / ${state.flow.sellCount5m}`)
+  setPopupMetric('odor', `${Math.round(habitat.properties.attractiveOdor * 100)}%`)
+  tokenPopupSense.semantic!.textContent = `SOURCE: ${habitat.properties.semanticType.toUpperCase()}`
+  tokenPopupSense.activity!.textContent = `ACTIVITY: ${Math.round(habitat.properties.visualMotionIntensity * 100)}%`
+  tokenPopupSense.risk!.textContent = `RISK / CHAOS: ${Math.round(habitat.properties.chaos * 100)}%`
+  tokenPopup.hidden = false
+  tokenPopupClose.focus()
+}
+
+function setPopupMetric(name: string, value: string) {
+  const element = tokenPopupMetrics[name]
+  if (element) element.textContent = value
+}
+
+function signalNumber(state: TokenState, name: string, fallback: number | null | undefined) {
+  const value = state.signals.find((signal) => signal.name === name)?.value
+  return typeof value === 'number' ? value : fallback
+}
+
+function formatUsd(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`
+  if (Math.abs(value) >= 1) return `$${value.toFixed(2)}`
+  return `$${value.toPrecision(4)}`
+}
+
+function formatRatio(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  return `${value.toFixed(2)}×`
+}
+
+const tokenPicker = new Raycaster()
+const tokenPointer = new Vector2()
+let tokenPointerDown: { x: number; y: number } | null = null
+canvas.addEventListener('pointerdown', (event) => {
+  tokenPointerDown = { x: event.clientX, y: event.clientY }
+})
+canvas.addEventListener('pointerup', (event) => {
+  if (!tokenPointerDown) return
+  const moved = Math.hypot(event.clientX - tokenPointerDown.x, event.clientY - tokenPointerDown.y)
+  tokenPointerDown = null
+  if (moved > 7 || tokenPopup.hidden === false) return
+  const bounds = canvas.getBoundingClientRect()
+  tokenPointer.set(
+    ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+    -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+  )
+  tokenPicker.setFromCamera(tokenPointer, activeCamera)
+  const hit = tokenPicker.intersectObjects(environment.habitats.map((habitat) => habitat.group), true)[0]
+  const habitatId = hit ? habitatIdFromObject(hit.object) : null
+  const habitat = habitatId ? environment.habitats.find((candidate) => candidate.state.id === habitatId) : undefined
+  if (habitat) openTokenPopup(habitat)
+})
+
+function habitatIdFromObject(object: Object3D) {
+  let current: Object3D | null = object
+  while (current) {
+    const id = current.userData.tokenHabitatId
+    if (typeof id === 'string') return id
+    current = current.parent
+  }
+  return null
+}
+
 function setSelectedFly(index: number, focus: boolean) {
   selectedIndex = population.select(index)
   flySelector.value = String(selectedIndex)
@@ -244,7 +374,7 @@ let nextPerfUiAt = 0
 function animate(now: number) {
   const delta = (now - previous) / 1000
   previous = now
-  world.update(delta)
+  world.update(delta, (position) => environment.habitatContactAt(position).contact)
   followers.forEach((follower) => follower.update(delta, world.elapsedSeconds))
   environment.updateVisuals(world.elapsedSeconds)
   trails.update(agents, selectedIndex, delta)
@@ -261,12 +391,15 @@ function animate(now: number) {
         flyId: agent.id,
         timestampMs: Date.now(),
         position: vectorToWire(agent.body.position),
-        habitats: environment.habitats.map((habitat) => ({
-          habitatId: habitat.state.id,
-          distanceM: agent.body.position.distanceTo(habitat.group.position),
-          radiusM: habitat.properties.physicalRadiusM,
-          contact: false,
-        })),
+        habitats: environment.habitats.map((habitat) => {
+          const contact = environment.habitatContactAt(agent.body.position)
+          return {
+            habitatId: habitat.state.id,
+            distanceM: agent.body.position.distanceTo(habitat.group.position),
+            radiusM: habitat.properties.physicalRadiusM,
+            contact: contact.contact && contact.habitatId === habitat.state.id,
+          }
+        }),
       })),
     })
     nextSwarmTelemetryAt += 0.25
@@ -392,6 +525,7 @@ function updateCausalStatus(agent: FlyAgent) {
     `<strong>CAUSE MAP · ${agent.id}</strong> · ${brainStep}`,
     `senses: vision L/R ${frame.leftEye.meanLuminance.toFixed(2)}/${frame.rightEye.meanLuminance.toFixed(2)} · odor ${frame.odor.concentration.toFixed(2)} · wall ${frame.contact.wall}`,
     `spikes/DN: ${stimulation ? `${stimulation.visual.length} visual + ${stimulation.olfactory.length} odor` : 'not encoded yet'} → decoded MaleCNS output → command ${command.forwardThrust.toFixed(2)} thrust · ${command.yawTorque.toFixed(2)} yaw · ${command.pitchTorque.toFixed(2)} pitch`,
+    `landing: ${agent.landingState} · habitat contact ${environment.habitatContactAt(agent.body.position).contact ? 'true' : 'false'} · neural/motor ${agent.lastNeuralCommand.verticalThrust.toFixed(2)}/${agent.lastMotorCommand.verticalThrust.toFixed(2)} vertical`,
   ].join('<br>')
 }
 

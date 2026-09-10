@@ -281,6 +281,7 @@ class FlightDecoderTest(unittest.TestCase):
         self.assertEqual(result.spike_counts["12"], 2)
         self.assertGreater(result.low_level_command.forward_thrust, 0.0)
         self.assertIn("lowLevelFlightCommand", result.as_dict())
+        self.assertEqual(result.as_dict()["steeringReference7d"]["dimension"], 7)
 
     def test_low_level_adapter_is_idle_without_neural_activity(self):
         from malecns.motor.flight_adapter import MaleCNSFlightAdapter
@@ -290,6 +291,20 @@ class FlightDecoderTest(unittest.TestCase):
         )
         self.assertEqual(command.forward_thrust, 0.0)
         self.assertEqual(command.vertical_thrust, 0.5)
+        self.assertEqual(command.steering_reference.dimension, 7)
+        self.assertEqual(command.steering_reference.as_vector(), (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0))
+
+    def test_flybody_steering_reference_maps_neural_readouts_only(self):
+        from malecns.motor.flight_adapter import MaleCNSFlightAdapter
+
+        command = MaleCNSFlightAdapter().adapt(
+            thrust=1.0, yaw=-1.0, pitch=1.0, roll=-1.0, active_rate_hz=20.0
+        )
+        reference = command.steering_reference
+        self.assertEqual(reference.ref_displacement_cm, (0.5, 0.0, 0.0))
+        self.assertLess(reference.ref_root_quat_wxyz[3], 0.0)
+        self.assertAlmostEqual(sum(value * value for value in reference.ref_root_quat_wxyz), 1.0)
+        self.assertEqual(command.as_dict()["steeringReference7d"]["dimension"], 7)
 
     def test_flight_registry_uses_male_type_annotation(self):
         from malecns.loader import normalize_neurons

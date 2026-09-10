@@ -27,6 +27,33 @@ an arbitrary recipient. Withdrawals use `REQUESTED → FUNDED → CLAIMED` and
 escrow shares at request time. The request stores the NAV snapshot and fixed
 WETH amount used for the eventual claim.
 
+### Native ETH deposits
+
+The Robinhood testnet fund proxy accepts native ETH. A normal ETH transfer to
+the **proxy** is treated as a deposit for the sender: the vault wraps the ETH
+into its configured WETH asset and mints FFC shares to that sender. The
+explicit equivalent is:
+
+```text
+proxy.depositETH(YOUR_ADDRESS, value = 0.01 ETH)
+```
+
+The standard ERC-20 path remains available:
+
+```text
+WETH.approve(FUND_PROXY, amount)
+FUND_PROXY.deposit(amount, YOUR_ADDRESS)
+```
+
+Do not send ETH to the WETH token and expect fund shares. That only wraps ETH
+into WETH in the sender's WETH balance. Do not send WETH directly to the proxy
+either: an ERC-20 transfer does not identify a share receiver, so the vault
+cannot credit shares for an unsolicited transfer. Use `deposit` after approval.
+
+Plain native transfers made through a normal transaction are supported; forced
+ETH transfers (for example via `selfdestruct`) cannot be associated with a
+receiver and are not deposits.
+
 V1 uses an authorized offchain NAV reporter and is not a trustless production
 fund accounting system. OpenZeppelin AccessControl, SafeERC20,
 ReentrancyGuard, Pausable, ERC20, Initializable, and Math are used. The vault

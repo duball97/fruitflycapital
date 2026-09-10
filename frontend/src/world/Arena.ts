@@ -1,6 +1,8 @@
 import { BoxGeometry, CanvasTexture, CircleGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace, SphereGeometry, Vector3 } from 'three'
 import type { WorldBounds } from '../fly/FlyBody'
 
+const FLOOR_Y = -0.012
+
 export const ARENA_BOUNDS: WorldBounds = {
   min: new Vector3(-1, 0, -1),
   max: new Vector3(1, 1, 1),
@@ -23,9 +25,19 @@ export class Arena {
       new MeshStandardMaterial({ color: 0x727a74, map: floorTexture, roughness: 0.94, metalness: 0.02 }),
     )
     floor.rotation.x = -Math.PI / 2
-    floor.name = 'Floor'
+    // The GLB road is intentionally a few millimetres above this fallback.
+    // It remains visible in holes in the source city without z-fighting with
+    // the authored road surface.
+    floor.position.y = FLOOR_Y
+    floor.name = 'StreetFloor'
     this.group.add(floor)
     this.addStreetDetails()
+  }
+
+  /** Hide only the synthetic safety floor once the supplied city floor loads. */
+  setFallbackFloorVisible(visible: boolean) {
+    const floor = this.group.getObjectByName('StreetFloor')
+    if (floor) floor.visible = visible
   }
 
   private addStreetDetails() {
@@ -34,14 +46,14 @@ export class Arena {
     const lineMaterial = new MeshStandardMaterial({ color: 0xe0bd55, emissive: 0x3f2e0c, emissiveIntensity: 0.22, roughness: 0.62 })
     for (const z of [-1.9, 1.9]) {
       const line = new Mesh(new BoxGeometry(4.8, 0.006, 0.018), lineMaterial)
-      line.position.set(0, 0.006, z)
+      line.position.set(0, FLOOR_Y + 0.006, z)
       details.add(line)
     }
     const oilMaterial = new MeshStandardMaterial({ color: 0x171b1d, transparent: true, opacity: 0.55, roughness: 0.98 })
     for (const [x, z, sx, sz] of [[-1.8, -0.9, 0.42, 0.16], [1.6, 0.7, 0.31, 0.12], [-0.7, 1.65, 0.25, 0.1]] as const) {
       const stain = new Mesh(new CircleGeometry(1, 24), oilMaterial)
       stain.rotation.x = -Math.PI / 2
-      stain.position.set(x, 0.007, z)
+      stain.position.set(x, FLOOR_Y + 0.007, z)
       stain.scale.set(sx, sz, 1)
       details.add(stain)
     }

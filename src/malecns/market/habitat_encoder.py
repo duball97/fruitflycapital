@@ -113,14 +113,47 @@ class HabitatEncoder:
             buy_usd = float(config.get("buyUsd5m") or 0.0)
             sell_usd = float(config.get("sellUsd5m") or 0.0)
             imbalance = (buy_usd - sell_usd) / (buy_usd + sell_usd) if buy_usd + sell_usd else ((buys - sells) / total if total else 0.0)
+            liquidity_usd = float(config.get("liquidityUsd") or 0.0)
+            volume_24h_usd = _optional_float(config.get("volume24hUsd"))
+            market_cap_usd = _optional_float(config.get("marketCapUsd"))
+            fdv_usd = _optional_float(config.get("fdvUsd"))
+            market_cap_to_liquidity = _optional_float(config.get("marketCapToLiquidity"))
+            fdv_to_liquidity = _optional_float(config.get("fdvToLiquidity"))
+            volume_24h_to_market_cap = _optional_float(config.get("volume24hToMarketCap"))
+            volume_24h_to_liquidity = _optional_float(config.get("volume24hToLiquidity"))
+            if market_cap_to_liquidity is None and market_cap_usd is not None and liquidity_usd > 0:
+                market_cap_to_liquidity = market_cap_usd / liquidity_usd
+            if fdv_to_liquidity is None and fdv_usd is not None and liquidity_usd > 0:
+                fdv_to_liquidity = fdv_usd / liquidity_usd
+            if volume_24h_to_market_cap is None and volume_24h_usd is not None and market_cap_usd and market_cap_usd > 0:
+                volume_24h_to_market_cap = volume_24h_usd / market_cap_usd
+            if volume_24h_to_liquidity is None and volume_24h_usd is not None and liquidity_usd > 0:
+                volume_24h_to_liquidity = volume_24h_usd / liquidity_usd
+            observed_at_ms = int(config.get("observedAtMs") or 0)
+            provider = "dexscreener"
+            provenance = ({"provider": provider, "marketId": config.get("id"), "lightweight": True},)
             state = TokenState(
                 id=str(config.get("id", "")),
                 label=str(config.get("label", config.get("id", ""))),
                 token_address=str(config.get("tokenAddress", "")),
                 pool_id=str(config.get("poolId", config.get("id", ""))),
-                observed_at_ms=int(config.get("observedAtMs") or 0),
+                observed_at_ms=observed_at_ms,
                 market=MarketState(
+                    price_usd=_optional_float(config.get("priceUsd")),
+                    price_native=_optional_float(config.get("priceNative")),
+                    market_cap_usd=market_cap_usd,
+                    fdv_usd=fdv_usd,
+                    pair_age_hours=_optional_float(config.get("pairAgeHours")),
+                    cmc_id=_optional_int(config.get("cmcId")),
+                    cmc_slug=str(config.get("cmcSlug")) if config.get("cmcSlug") else None,
+                    cmc_rank=_optional_int(config.get("cmcRank")),
+                    circulating_supply=_optional_float(config.get("circulatingSupply")),
+                    total_supply=_optional_float(config.get("totalSupply")),
+                    cmc_percent_change_7d=_optional_float(config.get("cmcPercentChange7d")),
+                    cmc_volume_change_24h=_optional_float(config.get("cmcVolumeChange24h")),
+                    market_cap_dominance=_optional_float(config.get("marketCapDominance")),
                     volume_5m_usd=float(config.get("volume5mUsd") or 0.0),
+                    volume_24h_usd=volume_24h_usd,
                     volume_1h_usd=float(config.get("volume1hUsd") or 0.0),
                 ),
                 flow=FlowState(
@@ -131,8 +164,44 @@ class HabitatEncoder:
                     flow_imbalance=imbalance,
                     tx_velocity_5m=total / 5.0,
                 ),
-                liquidity=LiquidityState(liquidity_usd=float(config.get("liquidityUsd") or 0.0)),
-                provenance=({"provider": "dexscreener", "marketId": config.get("id"), "lightweight": True},),
+                liquidity=LiquidityState(
+                    liquidity_usd=liquidity_usd,
+                    liquidity_base=_optional_float(config.get("liquidityBase")),
+                    liquidity_quote=_optional_float(config.get("liquidityQuote")),
+                    market_cap_to_liquidity=market_cap_to_liquidity,
+                    fdv_to_liquidity=fdv_to_liquidity,
+                    volume_24h_to_market_cap=volume_24h_to_market_cap,
+                    volume_24h_to_liquidity=volume_24h_to_liquidity,
+                ),
+                signals=tuple(
+                    _lightweight_signal(name, value, observed_at_ms, provider)
+                    for name, value in (
+                        ("market.priceUsd", _optional_float(config.get("priceUsd"))),
+                        ("market.marketCapUsd", market_cap_usd),
+                        ("market.fdvUsd", fdv_usd),
+                        ("market.pairAgeHours", _optional_float(config.get("pairAgeHours"))),
+                        ("market.volume5mUsd", _optional_float(config.get("volume5mUsd"))),
+                        ("market.volume1hUsd", _optional_float(config.get("volume1hUsd"))),
+                        ("market.volume24hUsd", volume_24h_usd),
+                        ("flow.buyCount5m", float(buys)),
+                        ("flow.sellCount5m", float(sells)),
+                        ("flow.buyUsd5m", buy_usd),
+                        ("flow.sellUsd5m", sell_usd),
+                        ("flow.imbalance", imbalance),
+                        ("flow.txVelocity5m", total / 5.0),
+                        ("liquidity.usd", liquidity_usd),
+                        ("liquidity.marketCapToLiquidity", market_cap_to_liquidity),
+                        ("liquidity.fdvToLiquidity", fdv_to_liquidity),
+                        ("liquidity.volume24hToMarketCap", volume_24h_to_market_cap),
+                        ("liquidity.volume24hToLiquidity", volume_24h_to_liquidity),
+                        ("market.cmcRank", _optional_float(config.get("cmcRank"))),
+                        ("market.circulatingSupply", _optional_float(config.get("circulatingSupply"))),
+                        ("market.cmcPercentChange7d", _optional_float(config.get("cmcPercentChange7d"))),
+                        ("market.cmcVolumeChange24h", _optional_float(config.get("cmcVolumeChange24h"))),
+                        ("market.marketCapDominance", _optional_float(config.get("marketCapDominance"))),
+                    ) if value is not None
+                ),
+                provenance=provenance,
                 chain_id=str(config.get("chainId", "ethereum")),
                 dex_id=str(config.get("dexId", "unknown")),
                 pair_address=str(config.get("pairAddress", config.get("poolId", ""))),
@@ -188,3 +257,28 @@ def _semantic_type(activity: float, liquidity: float, risk: float) -> str:
     if liquidity >= 0.62:
         return "food"
     return "market"
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lightweight_signal(name: str, value: float, observed_at_ms: int, source: str) -> Signal:
+    # Discovery facts are exposed for inspection. They are not direct motor
+    # commands and do not encode a bullish recommendation.
+    normalized = min(1.0, max(0.0, value / (1.0 + abs(value))))
+    return Signal(name, value, normalized, 0.5, 0.0, 1.0, 1.0, source, observed_at_ms)

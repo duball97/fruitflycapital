@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from malecns.market.coinmarketcap_client import CoinMarketCapClient
 from malecns.market.dexscreener_client import DexScreenerClient
 from malecns.market.universe import (
     DexScreenerUniverseProvider,
@@ -21,10 +22,14 @@ def _pair(address: str = "0xpair", *, token: str = "0xtoken", liquidity: float =
         "baseToken": {"address": token, "name": "Example Token", "symbol": "EXM"},
         "quoteToken": {"address": "0xusdc", "name": "USD Coin", "symbol": "USDC"},
         "priceUsd": "1.25",
-        "txns": {"m5": {"buys": 4, "sells": 2}, "h1": {"buys": 40, "sells": 20}},
+        "priceNative": "0.0004",
+        "fdv": 2_000_000,
+        "marketCap": 1_250_000,
+        "txns": {"m5": {"buys": 4, "sells": 2}, "h1": {"buys": 40, "sells": 20}, "h24": {"buys": 400, "sells": 200}},
         "volume": {"m5": 1200, "h1": 25_000, "h24": 300_000},
         "priceChange": {"m5": 0.5, "h1": 3.2, "h24": 4.1},
         "liquidity": {"usd": liquidity, "base": 1000, "quote": 1000},
+        "boosts": {"active": 2},
         "pairCreatedAt": 1_700_000_000_000,
         "info": {"imageUrl": "https://example.test/exm.png", "websites": [{"url": "https://example.test"}], "socials": [{"type": "twitter", "url": "https://x.test/exm"}]},
     }
@@ -46,6 +51,65 @@ def test_dexscreener_client_batches_token_lookup_at_thirty_addresses():
     assert requested[1] == "/tokens/v1/ethereum/0xtoken30"
 
 
+def test_coinmarketcap_client_caches_classic_top_listings():
+    calls = 0
+
+    def fetch(url: str, _timeout: float, headers: dict[str, str]):
+        nonlocal calls
+        calls += 1
+        assert url.endswith("/v3/cryptocurrency/listings/latest?start=1&limit=100&convert=USD")
+        assert headers["X-CMC_PRO_API_KEY"] == "test-key"
+        return {"data": [{"id": 1, "symbol": "BTC", "cmc_rank": 1}]}
+
+    client = CoinMarketCapClient(api_key="test-key", fetcher=fetch)
+    assert client.latest_listings() == client.latest_listings()
+    assert calls == 1
+
+
+def test_coinmarketcap_exact_platform_address_seeds_dexscreener_resolution():
+    pair = {**_pair(token="0xcmc-token"), "marketCap": None}
+
+    def dex_fetch(url: str, _timeout: float):
+        path = urlparse(url).path
+        if path == "/token-profiles/latest/v1" or path == "/token-profiles/recent-updates/v1":
+            return []
+        if path.startswith("/tokens/v1/"):
+            assert "0xcmc-token" in path
+            return [pair]
+        raise AssertionError(path)
+
+    def cmc_fetch(_url: str, _timeout: float, _headers: dict[str, str]):
+        return {
+            "data": [{
+                "id": 123,
+                "slug": "example-token",
+                "cmc_rank": 42,
+                "circulating_supply": 1_000_000,
+                "platform": {"slug": "ethereum", "token_address": "0xcmc-token"},
+                "quote": {"USD": {
+                    "price": 1.5,
+                    "market_cap": 2_000_000,
+                    "percent_change_7d": 12.0,
+                    "volume_change_24h": 8.0,
+                    "market_cap_dominance": 0.2,
+                }},
+            }],
+        }
+
+    provider = DexScreenerUniverseProvider(
+        DexScreenerClient(fetcher=dex_fetch),
+        chains=("ethereum",),
+        cmc_client=CoinMarketCapClient(api_key="test-key", fetcher=cmc_fetch),
+    )
+    universe = provider.refresh(now_ms=1_700_010_000_000)
+
+    candidate = universe.core_markets[0]
+    assert candidate.cmc_rank == 42
+    assert candidate.market_cap_usd == 2_000_000
+    assert candidate.cmc_percent_change_7d == 12
+    assert candidate.provenance[-1]["provider"] == "coinmarketcap"
+
+
 def test_candidate_normalizes_pair_identity_and_preserves_provider_fields():
     candidate = candidate_from_pair(_pair(), observed_at_ms=1_700_010_000_000)
 
@@ -57,6 +121,16 @@ def test_candidate_normalizes_pair_identity_and_preserves_provider_fields():
     assert candidate.volume_24h_usd == 300_000
     assert candidate.buys_1h == 40
     assert candidate.price_change_1h == 3.2
+    assert candidate.price_usd == 1.25
+    assert candidate.fdv_usd == 2_000_000
+    assert candidate.market_cap_usd == 1_250_000
+    assert candidate.market_cap_to_liquidity == 5
+    assert candidate.fdv_to_liquidity == 8
+    assert candidate.volume_24h_to_market_cap == 0.24
+    assert candidate.volume_24h_to_liquidity == 1.2
+    assert candidate.txns_24h == 600
+    assert candidate.boosts_active == 2
+    assert candidate.as_dict()["marketCapToLiquidity"] == 5
     assert candidate.image_url == "https://example.test/exm.png"
     assert candidate.as_dict()["marketId"] == "ethereum:0xpair"
 
@@ -114,9 +188,38 @@ def test_universe_accepts_native_base_venue_when_dex_filter_is_empty():
     assert universe.core_markets[0].identity.dex_id == "aerodrome"
 
 
+def test_graph_pool_bootstrap_keeps_ethereum_identity_when_base_is_enabled():
+    requested: list[str] = []
+
+    def fetch(url: str, _timeout: float):
+        path = urlparse(url).path
+        requested.append(path)
+        if path.startswith("/latest/dex/pairs/"):
+            return {"pairs": [_pair("0xgraph-pair")]}
+        if path == "/token-profiles/latest/v1" or path == "/token-profiles/recent-updates/v1":
+            return []
+        raise AssertionError(path)
+
+    provider = DexScreenerUniverseProvider(
+        DexScreenerClient(fetcher=fetch),
+        chains=("ethereum", "base", "robinhood"),
+        pool_bootstrap=lambda **_: [{"id": "0xgraph-pool"}],
+    )
+    universe = provider.refresh(now_ms=1_700_010_000_000)
+
+    assert universe.core_markets[0].market_id == "ethereum:0xgraph-pair"
+    assert "/latest/dex/pairs/ethereum/0xgraph-pool" in requested
+
+
 def test_selector_filters_quality_and_round_manager_locks_selected_markets():
     good = candidate_from_pair(_pair("0xgood", liquidity=250_000), observed_at_ms=1_700_010_000_000)
-    young = candidate_from_pair({**_pair("0xyoung"), "pairCreatedAt": 1_700_009_500_000}, observed_at_ms=1_700_010_000_000)
+    young = candidate_from_pair(
+        {
+            **_pair("0xyoung", token="0xyoung-token"),
+            "pairCreatedAt": 1_700_009_500_000,
+        },
+        observed_at_ms=1_700_010_000_000,
+    )
     assert good is not None and young is not None
     from malecns.market.universe import MarketUniverse
 
@@ -130,7 +233,8 @@ def test_selector_filters_quality_and_round_manager_locks_selected_markets():
     same = manager.active_round(universe, now_ms=1_700_010_100_000)
     next_round = manager.active_round(universe, now_ms=1_700_010_600_001)
 
-    assert [item.market_id for item in first.markets] == ["ethereum:0xgood"]
+    assert {item.market_id for item in first.markets} == {"ethereum:0xgood", "ethereum:0xyoung"}
+    assert [item.market_id for item in first.deep_markets] == ["ethereum:0xgood"]
     assert same.round_number == first.round_number
     assert next_round.round_number != first.round_number
     assert next_round.markets[0].market_id == "ethereum:0xgood"
@@ -157,3 +261,20 @@ def test_round_separates_physical_world_capacity_from_deep_observers():
     assert len(round_state.markets) == 2
     assert len(round_state.deep_markets) == 1
     assert round_state.deep_markets[0].market_id in {item.market_id for item in round_state.markets}
+
+
+def test_world_directory_keeps_tracked_low_liquidity_markets_outside_deep_shortlist():
+    low_quality = candidate_from_pair(_pair("0xlow", liquidity=10), observed_at_ms=1_700_010_000_000)
+    assert low_quality is not None
+    from malecns.market.universe import MarketUniverse
+
+    universe = MarketUniverse((low_quality,), (), 1_700_010_000_000)
+    selector = MarketSelector(
+        MarketEligibility(min_liquidity_usd=100_000, min_volume_24h_usd=100_000, min_pair_age_seconds=3_600),
+        active_count=1,
+        world_capacity=100,
+    )
+    round_state = MarketRoundManager(selector).active_round(universe, now_ms=1_700_010_000_000)
+
+    assert round_state.deep_markets == ()
+    assert [item.market_id for item in round_state.markets] == ["ethereum:0xlow"]

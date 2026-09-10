@@ -26,7 +26,7 @@ export class ParticleField {
   private readonly color = new Color()
   private activeCount = 0
 
-  constructor(private readonly habitats: TokenHabitat[], capacityPerHabitat = 24, maxHabitats = 128) {
+  constructor(private readonly habitats: TokenHabitat[], capacityPerHabitat = 24, maxHabitats = 100) {
     const capacity = Math.max(1, Math.max(habitats.length, maxHabitats) * capacityPerHabitat)
     const geometry = new SphereGeometry(0.004, 4, 3)
     const material = new MeshBasicMaterial({
@@ -44,7 +44,9 @@ export class ParticleField {
 
     for (let index = 0; index < capacity; index += 1) {
       const habitatIndex = index % Math.max(1, maxHabitats)
-      const ring = Math.floor(index / habitats.length)
+      // Live mode starts empty. Avoid divide-by-zero/Infinity seeds before
+      // the first market snapshot arrives.
+      const ring = Math.floor(index / Math.max(1, maxHabitats))
       const kind = ring % 12 < 7 ? 'energy' : ring % 12 < 10 ? 'spark' : 'smoke'
       this.seeds.push({
         habitatIndex,

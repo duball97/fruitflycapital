@@ -87,12 +87,33 @@ class TokenSignalEngine:
         liquidity_delta = None if previous_liquidity_usd is None else liquidity_usd - previous_liquidity_usd
         ratio = volume["1h"] / liquidity_usd if liquidity_usd > 0 else 0.0
         price_in_pair = _price_in_pair(observation.pool, token_side)
+        price_usd = _optional_number(observation.pool.get("priceUsd"))
+        price_native = _optional_number(observation.pool.get("priceNative"))
+        market_cap_usd = _optional_number(observation.pool.get("marketCapUsd", observation.pool.get("marketCap")))
+        fdv_usd = _optional_number(observation.pool.get("fdvUsd", observation.pool.get("fdv")))
+        pair_age_hours = _pair_age_hours(observation.pool, observation.observed_at_ms)
+        cmc_id = _optional_int(observation.pool.get("cmcId"))
+        cmc_slug = _optional_string(observation.pool.get("cmcSlug"))
+        cmc_rank = _optional_int(observation.pool.get("cmcRank"))
+        circulating_supply = _optional_number(observation.pool.get("circulatingSupply"))
+        total_supply = _optional_number(observation.pool.get("totalSupply"))
+        cmc_percent_change_7d = _optional_number(observation.pool.get("cmcPercentChange7d"))
+        cmc_volume_change_24h = _optional_number(observation.pool.get("cmcVolumeChange24h"))
+        market_cap_dominance = _optional_number(observation.pool.get("marketCapDominance"))
+        liquidity_base = _optional_number(observation.pool.get("liquidityBase"))
+        liquidity_quote = _optional_number(observation.pool.get("liquidityQuote"))
+        market_cap_to_liquidity = _ratio(market_cap_usd, liquidity_usd)
+        fdv_to_liquidity = _ratio(fdv_usd, liquidity_usd)
+        volume_24h_usd = _optional_number(observation.pool.get("volume24hUsd"))
+        volume_24h_to_market_cap = _ratio(volume_24h_usd, market_cap_usd)
+        volume_24h_to_liquidity = _ratio(volume_24h_usd, liquidity_usd)
         confidence = 1.0 if observation.swaps or liquidity_usd > 0 else 0.0
         freshness = 1.0
         signals = (
             _signal("market.volume5mUsd", volume["5m"], _nonnegative_norm(volume["5m"], 10_000), 0.85, 0.0, confidence, freshness, observation),
             _signal("market.volume15mUsd", volume["15m"], _nonnegative_norm(volume["15m"], 25_000), 0.7, 0.0, confidence, freshness, observation),
             _signal("market.volume1hUsd", volume["1h"], _nonnegative_norm(volume["1h"], 100_000), 0.65, 0.0, confidence, freshness, observation),
+            _signal("market.volume24hUsd", volume_24h_usd, _nonnegative_norm(volume_24h_usd or 0.0, 500_000), 0.55, 0.0, _available_confidence(volume_24h_usd), freshness, observation),
             _signal("flow.buyCount5m", len(buys_5m), _count_norm(len(buys_5m)), 0.7, 0.0, confidence, freshness, observation),
             _signal("flow.sellCount5m", len(sells_5m), _count_norm(len(sells_5m)), 0.7, 0.0, confidence, freshness, observation),
             # Buy/sell volume is magnitude. Direction is represented separately
@@ -105,6 +126,19 @@ class TokenSignalEngine:
             _signal("liquidity.usd", liquidity_usd, _nonnegative_norm(liquidity_usd, 1_000_000), 0.8, 0.0, confidence, freshness, observation),
             _signal("liquidity.deltaUsd", liquidity_delta, _signed_norm(liquidity_delta or 0.0, 1_000_000), 0.6, (liquidity_delta or 0.0) / 1_000_000, confidence if liquidity_delta is not None else 0.0, freshness, observation),
             _signal("liquidity.volumeLiquidityRatio1h", ratio, _nonnegative_norm(ratio, 1), 0.65, 0.0, confidence, freshness, observation),
+            _signal("market.priceUsd", price_usd, _nonnegative_norm(price_usd or 0.0, 1), 0.35, 0.0, _available_confidence(price_usd), freshness, observation),
+            _signal("market.marketCapUsd", market_cap_usd, _nonnegative_norm(market_cap_usd or 0.0, 1_000_000), 0.75, 0.0, _available_confidence(market_cap_usd), freshness, observation),
+            _signal("market.fdvUsd", fdv_usd, _nonnegative_norm(fdv_usd or 0.0, 1_000_000), 0.7, 0.0, _available_confidence(fdv_usd), freshness, observation),
+            _signal("market.pairAgeHours", pair_age_hours, _nonnegative_norm(pair_age_hours or 0.0, 720), 0.55, 0.0, _available_confidence(pair_age_hours), freshness, observation),
+            _signal("liquidity.marketCapToLiquidity", market_cap_to_liquidity, _nonnegative_norm(market_cap_to_liquidity or 0.0, 100), 0.85, 0.0, _available_confidence(market_cap_to_liquidity), freshness, observation),
+            _signal("liquidity.fdvToLiquidity", fdv_to_liquidity, _nonnegative_norm(fdv_to_liquidity or 0.0, 100), 0.8, 0.0, _available_confidence(fdv_to_liquidity), freshness, observation),
+            _signal("liquidity.volume24hToMarketCap", volume_24h_to_market_cap, _nonnegative_norm(volume_24h_to_market_cap or 0.0, 1), 0.65, 0.0, _available_confidence(volume_24h_to_market_cap), freshness, observation),
+            _signal("liquidity.volume24hToLiquidity", volume_24h_to_liquidity, _nonnegative_norm(volume_24h_to_liquidity or 0.0, 10), 0.75, 0.0, _available_confidence(volume_24h_to_liquidity), freshness, observation),
+            _signal("market.cmcRank", cmc_rank, _rank_norm(cmc_rank), 0.5, 0.0, _available_confidence(cmc_rank), freshness, observation),
+            _signal("market.circulatingSupply", circulating_supply, _nonnegative_norm(circulating_supply or 0.0, 1_000_000_000), 0.35, 0.0, _available_confidence(circulating_supply), freshness, observation),
+            _signal("market.cmcPercentChange7d", cmc_percent_change_7d, _signed_norm(cmc_percent_change_7d or 0.0, 100), 0.65, (cmc_percent_change_7d or 0.0) / 100, _available_confidence(cmc_percent_change_7d), freshness, observation),
+            _signal("market.cmcVolumeChange24h", cmc_volume_change_24h, _signed_norm(cmc_volume_change_24h or 0.0, 100), 0.6, (cmc_volume_change_24h or 0.0) / 100, _available_confidence(cmc_volume_change_24h), freshness, observation),
+            _signal("market.marketCapDominance", market_cap_dominance, _nonnegative_norm(market_cap_dominance or 0.0, 100), 0.3, 0.0, _available_confidence(market_cap_dominance), freshness, observation),
         )
         state = TokenState(
             id=observation.token_id,
@@ -114,9 +148,23 @@ class TokenSignalEngine:
             observed_at_ms=observation.observed_at_ms,
             market=MarketState(
                 price_in_pair=price_in_pair,
+                price_usd=price_usd,
+                price_native=price_native,
+                market_cap_usd=market_cap_usd,
+                fdv_usd=fdv_usd,
+                pair_age_hours=pair_age_hours,
+                cmc_id=cmc_id,
+                cmc_slug=cmc_slug,
+                cmc_rank=cmc_rank,
+                circulating_supply=circulating_supply,
+                total_supply=total_supply,
+                cmc_percent_change_7d=cmc_percent_change_7d,
+                cmc_volume_change_24h=cmc_volume_change_24h,
+                market_cap_dominance=market_cap_dominance,
                 volume_5m_usd=volume["5m"],
                 volume_15m_usd=volume["15m"],
                 volume_1h_usd=volume["1h"],
+                volume_24h_usd=volume_24h_usd,
             ),
             flow=FlowState(
                 buy_count_5m=len(buys_5m),
@@ -131,6 +179,12 @@ class TokenSignalEngine:
                 liquidity_usd=liquidity_usd,
                 liquidity_delta_usd=liquidity_delta,
                 volume_liquidity_ratio_1h=ratio,
+                liquidity_base=liquidity_base,
+                liquidity_quote=liquidity_quote,
+                market_cap_to_liquidity=market_cap_to_liquidity,
+                fdv_to_liquidity=fdv_to_liquidity,
+                volume_24h_to_market_cap=volume_24h_to_market_cap,
+                volume_24h_to_liquidity=volume_24h_to_liquidity,
             ),
             holders=HoldersState(),
             security=SecurityState(),
@@ -298,6 +352,24 @@ def _price_in_pair(pool: dict[str, Any], token_side: str) -> float | None:
     return number if number > 0 else None
 
 
+def _pair_age_hours(pool: dict[str, Any], observed_at_ms: int) -> float | None:
+    created = _optional_number(pool.get("pairCreatedAt"))
+    if created is None or created <= 0:
+        return None
+    created_ms = created if created >= 1_000_000_000_000 else created * 1000
+    return max(0.0, (observed_at_ms - created_ms) / 3_600_000.0)
+
+
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def _available_confidence(value: float | None) -> float:
+    return 1.0 if value is not None else 0.0
+
+
 def _signal(
     name: str,
     value: Any,
@@ -326,6 +398,37 @@ def _number(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _rank_norm(value: int | None) -> float:
+    if value is None or value <= 0:
+        return 0.0
+    return 1.0 / (1.0 + (value - 1) / 25.0)
 
 
 def _nonnegative_norm(value: float, scale: float) -> float:

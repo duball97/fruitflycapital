@@ -6,6 +6,7 @@ import {ITransparentUpgradeableProxy, TransparentUpgradeableProxy} from "@openze
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {FruitFlyFundVault} from "../src/FruitFlyFundVault.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 
 contract FruitFlyFundVaultTest is Test {
     MockUSDC usdc;
@@ -28,7 +29,7 @@ contract FruitFlyFundVaultTest is Test {
             admin,
             initialization
         );
-        vault = FruitFlyFundVault(address(proxy));
+        vault = FruitFlyFundVault(payable(address(proxy)));
         usdc.mint(alice, 1_000e6);
         usdc.mint(bob, 1_000e6);
         usdc.mint(charlie, 1_000e6);
@@ -137,6 +138,61 @@ contract FruitFlyFundVaultTest is Test {
         vm.prank(alice); vm.expectRevert("invalid redemption"); vault.requestRedeem(0);
     }
 
+    function testPlainEthTransferToWethVaultWrapsAndMintsShares() public {
+        MockWETH weth = new MockWETH();
+        FruitFlyFundVault wethVault = _deployVault(address(weth));
+        vm.deal(alice, 1 ether);
+
+        vm.prank(alice);
+        (bool success,) = address(wethVault).call{value: 0.1 ether}("");
+
+        assertTrue(success);
+        assertEq(weth.balanceOf(address(wethVault)), 0.1 ether);
+        assertEq(wethVault.balanceOf(alice), 0.1 ether);
+        assertEq(wethVault.totalNavAsset(), 0.1 ether);
+    }
+
+    function testExplicitEthDepositCanMintToReceiver() public {
+        MockWETH weth = new MockWETH();
+        FruitFlyFundVault wethVault = _deployVault(address(weth));
+        vm.deal(alice, 1 ether);
+
+        vm.prank(alice);
+        wethVault.depositETH{value: 0.1 ether}(bob);
+
+        assertEq(weth.balanceOf(address(wethVault)), 0.1 ether);
+        assertEq(wethVault.balanceOf(bob), 0.1 ether);
+        assertEq(alice.balance, 0.9 ether);
+    }
+
+    function testSendingEthToWethDoesNotMintFundShares() public {
+        MockWETH weth = new MockWETH();
+        FruitFlyFundVault wethVault = _deployVault(address(weth));
+        vm.deal(alice, 1 ether);
+
+        vm.prank(alice);
+        (bool success,) = address(weth).call{value: 0.1 ether}("");
+
+        assertTrue(success);
+        assertEq(weth.balanceOf(alice), 0.1 ether);
+        assertEq(wethVault.balanceOf(alice), 0);
+        assertEq(wethVault.totalNavAsset(), 0);
+    }
+
+    function _deployVault(address asset) private returns (FruitFlyFundVault deployed) {
+        FruitFlyFundVault implementation = new FruitFlyFundVault();
+        bytes memory initialization = abi.encodeCall(
+            FruitFlyFundVault.initialize,
+            (asset, treasury, admin)
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(implementation),
+            admin,
+            initialization
+        );
+        deployed = FruitFlyFundVault(payable(address(proxy)));
+    }
+
     function testMultipleInvestorsAndRoundingDoNotCreateFreeShares() public {
         vm.prank(alice); vault.deposit(100e6, alice);
         vm.prank(admin); vault.reportStrategyNav(100e6);
@@ -160,7 +216,7 @@ contract FruitFlyFundVaultTest is Test {
             bytes("")
         );
 
-        FruitFlyFundVaultV2 upgraded = FruitFlyFundVaultV2(address(vault));
+        FruitFlyFundVaultV2 upgraded = FruitFlyFundVaultV2(payable(address(vault)));
         assertEq(upgraded.version(), 2);
         assertEq(upgraded.balanceOf(alice), 100e18);
         assertEq(upgraded.totalNavUsdc(), 125e6);

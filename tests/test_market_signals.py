@@ -176,6 +176,35 @@ def test_financial_sensory_mapping_is_bounded_and_traceable():
         assert 0 <= value <= 1
 
 
+def test_optional_valuation_and_depth_metrics_stay_nullable_and_traceable():
+    observation = _observation()
+    enriched_pool = {
+        **observation.pool,
+        "priceUsd": "1.25",
+        "marketCapUsd": "1250000",
+        "fdvUsd": "2000000",
+        "volume24hUsd": "300000",
+        "pairCreatedAt": 9_999_000,
+        "liquidityBase": "1000",
+        "liquidityQuote": "1000",
+    }
+    state = TokenSignalEngine().build_state(replace(observation, pool=enriched_pool))
+
+    assert state.market.market_cap_usd == 1_250_000
+    assert state.market.fdv_usd == 2_000_000
+    assert state.liquidity.market_cap_to_liquidity == pytest.approx(2.5)
+    assert state.liquidity.fdv_to_liquidity == pytest.approx(4.0)
+    assert state.liquidity.volume_24h_to_market_cap == pytest.approx(0.24)
+    assert state.liquidity.volume_24h_to_liquidity == pytest.approx(0.6)
+    assert {feature.feature_id for feature in state.financial.features} >= {
+        "market.marketCap",
+        "market.fdv",
+        "liquidity.marketCapToLiquidity",
+        "liquidity.fdvToLiquidity",
+        "liquidity.volume24hToMarketCap",
+    }
+
+
 def test_feature_freshness_decays_and_future_observations_are_rejected():
     state = TokenSignalEngine().build_state(_observation())
     engine = FinancialFactorEngine()

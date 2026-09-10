@@ -12,9 +12,23 @@ export interface Signal {
 
 export interface MarketState {
   priceInPair: number | null
+  priceUsd?: number | null
+  priceNative?: number | null
+  marketCapUsd?: number | null
+  fdvUsd?: number | null
+  pairAgeHours?: number | null
+  cmcId?: number | null
+  cmcSlug?: string | null
+  cmcRank?: number | null
+  circulatingSupply?: number | null
+  totalSupply?: number | null
+  cmcPercentChange7d?: number | null
+  cmcVolumeChange24h?: number | null
+  marketCapDominance?: number | null
   volume5mUsd: number
   volume15mUsd: number
   volume1hUsd: number
+  volume24hUsd?: number | null
 }
 
 export interface FlowState {
@@ -31,6 +45,12 @@ export interface LiquidityState {
   liquidityUsd: number
   liquidityDeltaUsd: number | null
   volumeLiquidityRatio1h: number
+  liquidityBase?: number | null
+  liquidityQuote?: number | null
+  marketCapToLiquidity?: number | null
+  fdvToLiquidity?: number | null
+  volume24hToMarketCap?: number | null
+  volume24hToLiquidity?: number | null
 }
 
 export interface HoldersState {

@@ -38,6 +38,10 @@ class FeatureNormalizer:
             return _clip(math.log1p(max(0.0, numeric)) / math.log1p(reference))
         if method == "log1p_absolute":
             return _clip(math.log1p(max(0.0, numeric)) / math.log1p(max(scale, 1e-9)))
+        if method == "rank_inverse":
+            # Lower CMC rank is better. Keep the signal bounded and avoid
+            # treating rank as a price or return forecast.
+            return _clip(1.0 / (1.0 + max(0.0, numeric - 1.0) / max(scale, 1e-9)))
         raise ValueError(f"unknown normalization method: {method}")
 
 

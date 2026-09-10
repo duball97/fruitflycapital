@@ -132,6 +132,7 @@ export class BrainSocket {
           this.latestActivity.set(message.flyId, {
             flightCommand: message.flightCommand,
             maleCnsCommand: message.maleCnsCommand,
+            steeringReference7d: message.steeringReference7d,
             lowLevelFlightCommand: message.lowLevelFlightCommand,
             flybodyJointAction: message.flybodyJointAction,
             physicalVelocity: message.physicalVelocity,

@@ -49,7 +49,7 @@ not from a hidden target or scripted path. All particles are instances of one
 pooled `InstancedMesh`; fly trails are one dynamic `LineSegments` buffer.
 
 The market scene uses physical market habitats as semantic objects placed on
-the street-city floor. Food habitats use fruit/banana props, rot habitats use
+the presentation street floor inside the supplied city. Food habitats use fruit/banana props, rot habitats use
 spoiled scraps, trash habitats use cans and bags, and quieter markets use
 crates. The city GLB is tinted for night, the Canva sky is assigned to
 `scene.background`, and a restrained teal fog reduces the distant hard edge.
@@ -58,6 +58,24 @@ market-data request cannot turn a missing habitat into a fake prop or target.
 In live mode the frontend starts empty and waits for the authoritative market
 snapshot; fixture habitats exist only when a local test scenario is explicitly
 selected.
+
+### City placement tuning
+
+The imported city is fitted and centered automatically, then receives the
+scene-only offsets in `frontend/src/world/CityBackdrop.ts`:
+
+```ts
+offsetX: 0,
+offsetY: -0.10, // 10 cm lower than the normalized city ground
+offsetZ: 0,
+rotationY: 0,
+scaleMultiplier: 1,
+```
+
+Adjust those values to tune the visual model. `offsetY` is in world metres;
+negative moves the GLB down. These controls do not move habitats, flies, or
+the physics arena. The supplied city remains unrotated so its street plan is
+preserved.
 
 ## Presentation and debug modes
 

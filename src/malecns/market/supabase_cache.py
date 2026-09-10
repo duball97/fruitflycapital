@@ -205,6 +205,27 @@ def _candidate_row(candidate: MarketCandidate) -> dict[str, Any]:
         # which intentionally stores provider metadata in those JSON fields.
         "provenance": list(candidate.provenance),
         "payload": payload,
+        "price_usd": candidate.price_usd,
+        "price_native": candidate.price_native,
+        "fdv_usd": candidate.fdv_usd,
+        "market_cap_usd": candidate.market_cap_usd,
+        "liquidity_base": candidate.liquidity_base,
+        "liquidity_quote": candidate.liquidity_quote,
+        "txns_24h": candidate.txns_24h,
+        "boosts_active": candidate.boosts_active,
+        "pair_age_hours": candidate.pair_age_hours,
+        "market_cap_to_liquidity": candidate.market_cap_to_liquidity,
+        "fdv_to_liquidity": candidate.fdv_to_liquidity,
+        "volume_24h_to_market_cap": candidate.volume_24h_to_market_cap,
+        "volume_24h_to_liquidity": candidate.volume_24h_to_liquidity,
+        "cmc_id": candidate.cmc_id,
+        "cmc_slug": candidate.cmc_slug,
+        "cmc_rank": candidate.cmc_rank,
+        "circulating_supply": candidate.circulating_supply,
+        "total_supply": candidate.total_supply,
+        "cmc_percent_change_7d": candidate.cmc_percent_change_7d,
+        "cmc_volume_change_24h": candidate.cmc_volume_change_24h,
+        "market_cap_dominance": candidate.market_cap_dominance,
     }
 
 
@@ -243,6 +264,27 @@ def _candidate_from_dict(value: Any) -> MarketCandidate:
         socials=tuple(value.get("socials") or ()),
         source=str(value.get("source", "dexscreener")),
         provenance=tuple(value.get("provenance") or ()),
+        price_usd=_optional_float(value.get("priceUsd")),
+        price_native=_optional_float(value.get("priceNative")),
+        fdv_usd=_optional_float(value.get("fdvUsd")),
+        market_cap_usd=_optional_float(value.get("marketCapUsd")),
+        liquidity_base=_optional_float(value.get("liquidityBase")),
+        liquidity_quote=_optional_float(value.get("liquidityQuote")),
+        txns_24h=_optional_int(value.get("txns24h")),
+        boosts_active=_optional_int(value.get("boostsActive")),
+        pair_age_hours=_optional_float(value.get("pairAgeHours")),
+        market_cap_to_liquidity=_optional_float(value.get("marketCapToLiquidity")),
+        fdv_to_liquidity=_optional_float(value.get("fdvToLiquidity")),
+        volume_24h_to_market_cap=_optional_float(value.get("volume24hToMarketCap")),
+        volume_24h_to_liquidity=_optional_float(value.get("volume24hToLiquidity")),
+        cmc_id=_optional_int(value.get("cmcId")),
+        cmc_slug=_optional_string(value.get("cmcSlug")),
+        cmc_rank=_optional_int(value.get("cmcRank")),
+        circulating_supply=_optional_float(value.get("circulatingSupply")),
+        total_supply=_optional_float(value.get("totalSupply")),
+        cmc_percent_change_7d=_optional_float(value.get("cmcPercentChange7d")),
+        cmc_volume_change_24h=_optional_float(value.get("cmcVolumeChange24h")),
+        market_cap_dominance=_optional_float(value.get("marketCapDominance")),
     )
 
 
@@ -252,3 +294,10 @@ def _optional_float(value: Any) -> float | None:
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None

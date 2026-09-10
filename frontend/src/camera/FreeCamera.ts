@@ -11,15 +11,18 @@ export class FreeCamera {
     // enough room context for orbit/pan/zoom exploration.
     // Aim the opening view below the horizon so the room floor fills the
     // frame instead of exposing the scene background above its far edge.
-    this.camera.position.set(1.42, 1.02, 1.48)
+    // Start just outside the street canyon and look down its floor. The
+    // previous orbit point was inside a building volume in the supplied GLB,
+    // which made the opening view look like a black wall with hidden habitats.
+    this.camera.position.set(2.05, 1.32, 2.45)
     this.controls = new OrbitControls(this.camera, domElement)
-    this.controls.target.set(0, 0.18, 0)
+    this.controls.target.set(0, 0.06, 0)
     this.controls.enableDamping = true
     this.controls.enablePan = true
     this.controls.screenSpacePanning = true
     this.controls.zoomToCursor = true
     this.controls.minDistance = 0.005
-    this.controls.maxDistance = 3.2
+    this.controls.maxDistance = 7.5
   }
 
   focusOn(position: Vector3) {

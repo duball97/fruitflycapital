@@ -20,6 +20,15 @@
         "liquidity.volumeRatio": 0.20
       }
     },
+    "valuation_quality": {
+      "valueType": "quality",
+      "features": {
+        "valuation.marketCapLiquidityQuality": 0.35,
+        "valuation.fdvLiquidityQuality": 0.35,
+        "valuation.volumeToMarketCap": 0.15,
+        "valuation.volumeToLiquidity": 0.15
+      }
+    },
     "market_quality": {
       "valueType": "quality",
       "features": {
@@ -32,8 +41,10 @@
     "momentum": {
       "valueType": "signed",
       "features": {
-        "flow.imbalance": 0.60,
-        "flow.acceleration": 0.40
+        "flow.imbalance": 0.45,
+        "flow.acceleration": 0.30,
+        "market.cmcPercentChange7d": 0.15,
+        "market.cmcVolumeChange24h": 0.10
       }
     },
     "flow": {

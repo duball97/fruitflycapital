@@ -92,6 +92,15 @@ export interface LowLevelFlightCommand {
   pitchTorque: number
   rollTorque: number
   wingbeatFrequencyHz?: number
+  steeringReference7d?: {
+    vector: number[]
+    dimension: number
+    futureSteps: number
+    refDisplacementCm: [number, number, number]
+    refRootQuatWxyz: [number, number, number, number]
+    displacementFrame: string
+    quaternionFrame: string
+  }
 }
 
 export interface PhysicalFlightTelemetry {
@@ -104,6 +113,7 @@ export interface PhysicalFlightTelemetry {
 export interface BrainActivity extends PhysicalFlightTelemetry {
   flightCommand: FlightCommand
   maleCnsCommand?: FlightCommand
+  steeringReference7d?: LowLevelFlightCommand['steeringReference7d']
   lowLevelFlightCommand?: LowLevelFlightCommand
   descendingRates: Record<string, number>
   spikeCounts: Record<string, number>
@@ -153,6 +163,7 @@ export interface BrainOutputMessage {
   stimulation?: MaleCNSSensoryStimulation
   flightCommand?: FlightCommand
   maleCnsCommand?: FlightCommand
+  steeringReference7d?: LowLevelFlightCommand['steeringReference7d']
   lowLevelFlightCommand?: LowLevelFlightCommand
   flybodyJointAction?: number[]
   physicalVelocity?: { x: number; y: number; z: number }

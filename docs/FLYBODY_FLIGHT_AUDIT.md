@@ -2,88 +2,186 @@
 
 ## Decision
 
-NeuroSwarm must keep navigation in the MaleCNS path. Flybody is the motor
-execution layer: it may generate wing beats, stabilize the body, and convert a
-bounded motor intent into joint actions, but it must never receive a token ID,
-market score, habitat ranking, target coordinate, or portfolio state.
+NeuroSwarm navigation stays in the MaleCNS path. Flybody is the low-level
+motor execution layer: it may generate wingbeats, stabilize the body, and
+convert a steering reference into joint actions. It must never receive a
+token ID, market score, habitat ranking, target coordinate, or portfolio
+state.
 
-The repository currently has the reusable browser-side boundary in
-`src/malecns/motor/flight_adapter.py`. It accepts only neural readouts and
-emits a bounded low-level flight command. The optional MuJoCo backend accepts
-Flybody's native actuator vector separately; it does not invent a mapping from
-market data to joints.
-
-## Upstream files inspected
-
-| Upstream component | Finding |
-| --- | --- |
-| `flybody/fly_envs.py` | `flight_imitation` and `vision_guided_flight` each expose one user action. |
-| `flybody/tasks/pattern_generators.py` | `WingBeatPatternGenerator` produces a continuous wing pattern. The defaults are 218 Hz, a +/-5% frequency range, 201 discrete frequencies, and six wing-joint outputs (three per wing). |
-| `flybody/tasks/flight_imitation.py` | The single action is clipped to `[-1, 1]`, changes requested wingbeat frequency, and adds WPG position error to the six wing controls. It is not a target-navigation controller. |
-| `flybody/tasks/vision_flight.py` | The vision task has the same one-dimensional wingbeat control boundary. Its vision/task observables are for the trained task policy and are not part of NeuroSwarm navigation. |
-| `flybody/agents/network_factory_vis.py` | The two-level controller restores a separately downloaded low-level checkpoint. Its high-level network emits a seven-dimensional steering command; this vision policy must not choose NeuroSwarm habitat targets. |
-| `flybody/download_data.py` | Checkpoints are downloaded separately from Janelia Figshare (`controller-reuse-checkpoints` or `trained-policies`). No pretrained checkpoint is included in this checkout. |
-
-## What is installed here
-
-- The canonical Flybody XML and OBJ meshes are vendored and used by the
-  renderer.
-- A TypeScript WingBeatPattern bridge preserves the upstream WPG control idea
-  for visual wing motion.
-- `MaleCNSFlightAdapter` is the explicit neural-readout-to-motor boundary.
-- `MuJoCoFlybody` is an optional wrapper for the native actuator vector.
-- The actual trained Flybody controller checkpoint and a running MuJoCo pose
-  server are **not** installed. Therefore the current browser is not allowed
-  to claim that it is running the pretrained RL policy.
-
-The adapter is a continuous low-level cruise primitive, not a target-seeking
-preview. Neural thrust and turn readouts determine its bounded modulation;
-wingbeat generation and stabilization remain the low-level responsibility.
-When the upstream checkpoint is installed, it can replace the low-level
-implementation behind this same adapter boundary without changing the market
-or CNS layers.
-
-## Independence and performance plan
-
-One immutable low-level policy can be shared by 16 CNS agents. The policy
-weights are shared; each agent must retain independent CNS state, recurrent
-state, random stream, WPG phase, and MuJoCo physics state. Sharing those state
-objects would make agents appear identical.
-
-The upstream constants use a MuJoCo physics timestep of approximately `5e-5`
-seconds and a control timestep of approximately `2e-4` seconds. This checkout
-has not benchmarked 1, 4, 8, and 16 full MuJoCo bodies, so no throughput claim
-is made. The required benchmark order is 1 -> 4 -> 8 -> 16. If 16 full bodies
-are too expensive, batch low-level inference, step physics at a lower control
-frequency, or simulate 16 canonical bodies and attach render-only followers.
-
-## Telemetry boundary
-
-Telemetry is intentionally separate:
+The implemented boundary is `MaleCNSFlightAdapter` in
+`src/malecns/motor/flight_adapter.py`:
 
 ```text
-MaleCNS readouts
-  -> maleCnsCommand
-  -> lowLevelFlightCommand
-  -> flybodyJointAction (only when native Flybody physics is connected)
-  -> physicalVelocity / physicalPosition
+FlySensors -> MaleCNS -> documented descending readouts
+          -> MaleCNSFlightAdapter -> bounded 7D steering reference
+          -> frozen Flybody flight-imitation policy (when installed)
+          -> WPG / wing joints -> MuJoCo pose
 ```
 
-The first two stages are available in the realtime brain response. Native
-joint and physical-pose fields remain optional until the MuJoCo worker is
-connected; they must not be fabricated by the browser.
+The browser-compatible scalar fields remain in telemetry during the migration,
+but they are compatibility fields. They are not the upstream high-level
+interface.
 
-## Required validation experiment
+## What the upstream code actually does
 
-Before calling the flight path biologically validated, record a fixed sensory
-sequence and compare:
+The vendored source was audited at the current repository revision. The
+relevant components are:
 
-1. sensory frame and stimulated neuron IDs;
-2. MaleCNS spikes and documented descending-neuron rates;
-3. decoded CNS command;
-4. low-level command and wingbeat phase;
-5. native joint action, physical velocity, and position.
+| Component | Finding |
+| --- | --- |
+| `flybody/agents/network_factory_vis.py` | `TwoLevelController` replaces the low-level observation block named `walker/ref_displacement` + `walker/ref_root_quat` with its steering output. With one current reference, this is 7 values. |
+| `flybody/tasks/base.py` | `ref_displacement` is a future root-position difference transformed into the fly's egocentric frame. `ref_root_quat` is the reference root orientation expressed relative to the current root orientation. |
+| `flybody/tasks/flight_imitation.py` | The task adds those two observables, while its one user action is separately used to modulate WPG frequency. That scalar is not navigation. |
+| `flybody/tasks/pattern_generators.py` | WPG creates the continuous wing pattern. The default base frequency is 218 Hz, with six wing-joint outputs (three per wing). |
+| `flybody/fly_envs.py` | The stock `flight_imitation` default uses `future_steps=5`; a 7D steering input therefore requires an explicitly constructed `future_steps=0` low-level environment. |
 
-The decisive test is that changing the sensory stimulus changes the CNS
-readout and consequently the motor output, while the low-level controller
-never receives market semantics or a target coordinate.
+## Exact 7D semantics
+
+For the V1 contract (`future_steps=0`):
+
+```text
+[ dx, dy, dz, qw, qx, qy, qz ]
+```
+
+### `walker/ref_displacement`
+
+The upstream code computes:
+
+```text
+reference_root_position - current_fly_root_position
+then transform into the current fly's egocentric frame
+```
+
+It is a relative displacement, not a world-space target and not a velocity.
+The Flybody model uses centimetre-scale CGS units: the source documents
+trajectory speed in cm/s and terminal height in cm. The project therefore
+serializes this field as `refDisplacementCm` and keeps browser world metres
+separate from the native Flybody contract.
+
+### `walker/ref_root_quat`
+
+The upstream code computes the relative orientation with
+`get_dquat_local(current_root_quat, reference_root_quat)`. It is a unit
+quaternion in `[w, x, y, z]` order, expressed in the current fly-local frame.
+It is not Euler yaw/pitch/roll. A neutral reference is exactly:
+
+```text
+[ 0, 0, 0, 1, 0, 0, 0 ]
+```
+
+For `future_steps > 0`, the block is repeated for each reference frame and
+its dimension is `7 * (future_steps + 1)`. The adapter is explicitly the
+one-current-reference V1 contract.
+
+## How the original high-level controller constructs references
+
+The upstream vision controller uses a visual/task high-level MLP. Its output
+is initialized close to a no-op ballpark of zero displacement plus identity
+quaternion, then inserted into the low-level observation at the two reference
+observables. The frozen low-level policy receives the resulting observation
+and emits native actions.
+
+NeuroSwarm deliberately removes that upstream navigation decision. The
+MaleCNS adapter now supplies the same observation block from neural readouts:
+
+| Reference component | V1 source | Status |
+| --- | --- | --- |
+| forward `dx` | normalized MaleCNS forward/wing/takeoff readout | project calibration assumption, bounded to 0.5 cm by default |
+| lateral `dy` | none | fixed at zero until a documented lateral mapping exists |
+| vertical `dz` | none | fixed at zero; no fabricated vertical DN mapping |
+| heading quaternion | normalized bilateral yaw readout | project calibration assumption, bounded to +/-0.35 rad |
+| roll/pitch quaternion components | none | fixed at zero |
+
+The adapter does not know which habitat is attractive and does not receive a
+habitat coordinate. Habitat odor and visual signals influence the neural
+readouts upstream; only the resulting, documented neural output crosses this
+boundary.
+
+## Update frequencies
+
+The upstream constants are:
+
+```text
+MuJoCo physics timestep:  5e-5 s  (20 kHz)
+Flybody control timestep: 2e-4 s  (5 kHz)
+```
+
+The WPG is updated inside the flight task at the control timestep. The
+upstream `TwoLevelController` does not define a separate navigation cadence;
+it is called by the policy loop. NeuroSwarm's realtime MaleCNS window is much
+slower and therefore supplies a zero-order-held steering reference between
+neural updates. That hold interval is a project runtime choice, not an
+upstream biological or Flybody constant.
+
+## Checkpoint and runtime status
+
+No trained Flybody checkpoint is included in this repository. The upstream
+download script exposes public Janelia Figshare archives, including
+`controller-reuse-checkpoints` and `trained-policies`. The controller-reuse
+archive is the first candidate for the low-level policy because the upstream
+two-level factory restores a low-level DMPO policy from a checkpoint.
+
+The exact checkpoint member/version still has to be resolved by downloading
+and listing that archive, then constructing a matching
+`flight_imitation(future_steps=0)` environment spec. Until that probe passes,
+the browser must not claim that it is running the frozen pretrained policy.
+
+The native low-level policy also has not yet been proven to sustain airborne
+flight from a neutral steering reference. A neutral steering reference means
+“track the current pose/orientation”; it does not itself assert lift. This
+must be tested from Flybody's initialized airborne pose with the WPG active,
+using the exact restored policy and recording height, velocity, joint action,
+and termination.
+
+## Neural versus low-level responsibility
+
+```text
+NEURAL / MALECNS
+  sensory encoding
+  neural spikes
+  descending locomotor readouts
+  navigation and trajectory modulation
+
+FLYBODY LOW LEVEL
+  steering-reference tracking
+  wingbeat pattern generation
+  wing-joint actuation
+  lift and aerodynamic stabilization
+  MuJoCo integration
+```
+
+The vision/high-level RL controller may be studied to understand the
+interface, but it must not choose NeuroSwarm targets. A single restored
+low-level policy may be shared across 16 independent CNS agents only if each
+agent keeps independent CNS state, steering hold state, WPG phase, and
+MuJoCo physics state.
+
+## Required real-policy probe
+
+Before claiming biological flight control, run one canonical fly first, then
+4, 8, and 16:
+
+1. Build the low-level environment with `future_steps=0`.
+2. Restore the public controller-reuse checkpoint with the matching network
+   factory.
+3. Feed a neutral 7D reference from an initialized airborne pose.
+4. Feed a bounded forward reference and then a bounded yaw reference.
+5. Record `maleCnsCommand`, `steeringReference7d`,
+   `flybodyJointAction`, `physicalVelocity`, and `physicalPosition`.
+6. Repeat with fixed sensory input and different neural input, proving that
+   only the MaleCNS-derived reference changes navigation.
+
+If the exact checkpoint cannot run in the deployment environment, use the
+existing WPG/simplified trajectory renderer only as an explicitly labelled
+diagnostic fallback. It must not be presented as the pretrained low-level
+policy.
+
+## Sources
+
+- Upstream two-level controller: `third_party/flybody/flybody/agents/network_factory_vis.py`
+- Upstream reference observables: `third_party/flybody/flybody/tasks/base.py`
+- Upstream flight task and timestep configuration:
+  `third_party/flybody/flybody/tasks/flight_imitation.py` and
+  `third_party/flybody/flybody/tasks/constants.py`
+- Public data/checkpoint URLs:
+  `third_party/flybody/flybody/download_data.py`

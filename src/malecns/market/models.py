@@ -68,6 +68,30 @@ class MarketCandidate:
     socials: tuple[dict[str, Any], ...]
     source: str
     provenance: tuple[dict[str, Any], ...] = ()
+    # Optional market context supplied by DexScreener. These remain nullable:
+    # an absent market cap is not the same thing as a zero market cap, and FDV
+    # must never be silently substituted for circulating market cap.
+    price_usd: float | None = None
+    price_native: float | None = None
+    fdv_usd: float | None = None
+    market_cap_usd: float | None = None
+    liquidity_base: float | None = None
+    liquidity_quote: float | None = None
+    txns_24h: int | None = None
+    boosts_active: int | None = None
+    pair_age_hours: float | None = None
+    market_cap_to_liquidity: float | None = None
+    fdv_to_liquidity: float | None = None
+    volume_24h_to_market_cap: float | None = None
+    volume_24h_to_liquidity: float | None = None
+    cmc_id: int | None = None
+    cmc_slug: str | None = None
+    cmc_rank: int | None = None
+    circulating_supply: float | None = None
+    total_supply: float | None = None
+    cmc_percent_change_7d: float | None = None
+    cmc_volume_change_24h: float | None = None
+    market_cap_dominance: float | None = None
 
     @property
     def market_id(self) -> str:
@@ -108,6 +132,27 @@ class MarketCandidate:
             "socials": list(self.socials),
             "source": self.source,
             "provenance": list(self.provenance),
+            "priceUsd": self.price_usd,
+            "priceNative": self.price_native,
+            "fdvUsd": self.fdv_usd,
+            "marketCapUsd": self.market_cap_usd,
+            "liquidityBase": self.liquidity_base,
+            "liquidityQuote": self.liquidity_quote,
+            "txns24h": self.txns_24h,
+            "boostsActive": self.boosts_active,
+            "pairAgeHours": self.pair_age_hours,
+            "marketCapToLiquidity": self.market_cap_to_liquidity,
+            "fdvToLiquidity": self.fdv_to_liquidity,
+            "volume24hToMarketCap": self.volume_24h_to_market_cap,
+            "volume24hToLiquidity": self.volume_24h_to_liquidity,
+            "cmcId": self.cmc_id,
+            "cmcSlug": self.cmc_slug,
+            "cmcRank": self.cmc_rank,
+            "circulatingSupply": self.circulating_supply,
+            "totalSupply": self.total_supply,
+            "cmcPercentChange7d": self.cmc_percent_change_7d,
+            "cmcVolumeChange24h": self.cmc_volume_change_24h,
+            "marketCapDominance": self.market_cap_dominance,
         }
 
 
@@ -168,9 +213,23 @@ class Signal:
 @dataclass(frozen=True)
 class MarketState:
     price_in_pair: float | None = None
+    price_usd: float | None = None
+    price_native: float | None = None
+    market_cap_usd: float | None = None
+    fdv_usd: float | None = None
+    pair_age_hours: float | None = None
+    cmc_id: int | None = None
+    cmc_slug: str | None = None
+    cmc_rank: int | None = None
+    circulating_supply: float | None = None
+    total_supply: float | None = None
+    cmc_percent_change_7d: float | None = None
+    cmc_volume_change_24h: float | None = None
+    market_cap_dominance: float | None = None
     volume_5m_usd: float = 0.0
     volume_15m_usd: float = 0.0
     volume_1h_usd: float = 0.0
+    volume_24h_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +248,12 @@ class LiquidityState:
     liquidity_usd: float = 0.0
     liquidity_delta_usd: float | None = None
     volume_liquidity_ratio_1h: float = 0.0
+    liquidity_base: float | None = None
+    liquidity_quote: float | None = None
+    market_cap_to_liquidity: float | None = None
+    fdv_to_liquidity: float | None = None
+    volume_24h_to_market_cap: float | None = None
+    volume_24h_to_liquidity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -260,9 +325,23 @@ class TokenState:
             "observedAtMs": self.observed_at_ms,
             "market": {
                 "priceInPair": self.market.price_in_pair,
+                "priceUsd": self.market.price_usd,
+                "priceNative": self.market.price_native,
+                "marketCapUsd": self.market.market_cap_usd,
+                "fdvUsd": self.market.fdv_usd,
+                "pairAgeHours": self.market.pair_age_hours,
+                "cmcId": self.market.cmc_id,
+                "cmcSlug": self.market.cmc_slug,
+                "cmcRank": self.market.cmc_rank,
+                "circulatingSupply": self.market.circulating_supply,
+                "totalSupply": self.market.total_supply,
+                "cmcPercentChange7d": self.market.cmc_percent_change_7d,
+                "cmcVolumeChange24h": self.market.cmc_volume_change_24h,
+                "marketCapDominance": self.market.market_cap_dominance,
                 "volume5mUsd": self.market.volume_5m_usd,
                 "volume15mUsd": self.market.volume_15m_usd,
                 "volume1hUsd": self.market.volume_1h_usd,
+                "volume24hUsd": self.market.volume_24h_usd,
             },
             "flow": {
                 "buyCount5m": self.flow.buy_count_5m,
@@ -277,6 +356,12 @@ class TokenState:
                 "liquidityUsd": self.liquidity.liquidity_usd,
                 "liquidityDeltaUsd": self.liquidity.liquidity_delta_usd,
                 "volumeLiquidityRatio1h": self.liquidity.volume_liquidity_ratio_1h,
+                "liquidityBase": self.liquidity.liquidity_base,
+                "liquidityQuote": self.liquidity.liquidity_quote,
+                "marketCapToLiquidity": self.liquidity.market_cap_to_liquidity,
+                "fdvToLiquidity": self.liquidity.fdv_to_liquidity,
+                "volume24hToMarketCap": self.liquidity.volume_24h_to_market_cap,
+                "volume24hToLiquidity": self.liquidity.volume_24h_to_liquidity,
             },
             "holders": {
                 "status": self.holders.status,

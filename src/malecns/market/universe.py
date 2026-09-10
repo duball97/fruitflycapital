@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any, Iterable, Mapping
 
 from .dexscreener_client import DexScreenerClient
+from .coinmarketcap_client import CoinMarketCapClient
 from .models import MarketCandidate, MarketIdentity
 
 
@@ -61,7 +62,11 @@ class DexScreenerUniverseProvider:
     profile_limit: int = 60
     seed_tokens: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     pool_bootstrap: Callable[..., list[dict[str, Any]]] | None = None
+    cmc_client: CoinMarketCapClient | None = None
+    cmc_limit: int = 100
     last_bootstrap_error: str | None = field(default=None, init=False)
+    last_cmc_error: str | None = field(default=None, init=False)
+    last_cmc_count: int = field(default=0, init=False)
 
     def refresh(self, *, now_ms: int | None = None, force: bool = False) -> MarketUniverse:
         observed_at_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
@@ -77,10 +82,27 @@ class DexScreenerUniverseProvider:
             if chain in allowed_chains:
                 core_addresses.setdefault(chain, []).extend(addresses)
 
+        cmc_context: dict[tuple[str, str], Mapping[str, Any]] = {}
+        self.last_cmc_error = None
+        self.last_cmc_count = 0
+        if self.cmc_client is not None:
+            try:
+                cmc_listings = self.cmc_client.latest_listings(limit=self.cmc_limit, force=force)
+                self.last_cmc_count = len(cmc_listings)
+                cmc_context = _cmc_context(cmc_listings, allowed_chains)
+                for (chain, address) in cmc_context:
+                    core_addresses.setdefault(chain, []).append(address)
+            except Exception as exc:
+                # CMC broad-market ranking is additive. A temporary CMC
+                # failure must not take down DexScreener/Graph discovery.
+                self.last_cmc_error = str(exc)
+
         profile_class: dict[tuple[str, str], str] = {}
         for chain, addresses in core_addresses.items():
             for address in addresses:
                 profile_class[(chain, _norm(address))] = "core"
+        for chain, address in cmc_context:
+            profile_class[(chain, address)] = "core"
         for chain, addresses in recent_addresses.items():
             for address in addresses:
                 profile_class.setdefault((chain, _norm(address)), "recent")
@@ -99,7 +121,10 @@ class DexScreenerUniverseProvider:
             except Exception as exc:
                 bootstrap_pools = []
                 self.last_bootstrap_error = str(exc)
-            default_chain = next(iter(sorted(allowed_chains)), "ethereum")
+            # The configured Graph bootstrap is currently an Ethereum
+            # Uniswap-style pool index. Do not let the alphabetical order of
+            # the enabled chains relabel those pool IDs as Base or Robinhood.
+            default_chain = "ethereum" if "ethereum" in allowed_chains else next(iter(sorted(allowed_chains)), "ethereum")
             for pool in bootstrap_pools:
                 if not isinstance(pool, Mapping):
                     continue
@@ -113,7 +138,7 @@ class DexScreenerUniverseProvider:
                     self.last_bootstrap_error = str(exc)
                     continue
                 for pair in dex_pairs:
-                    candidate = candidate_from_pair(pair, observed_at_ms=observed_at_ms)
+                    candidate = candidate_from_pair(pair, observed_at_ms=observed_at_ms, cmc_context=cmc_context)
                     if candidate is None or (allowed_dexes and _norm(candidate.identity.dex_id) not in allowed_dexes):
                         continue
                     current = core_pairs.get(candidate.market_id)
@@ -131,6 +156,7 @@ class DexScreenerUniverseProvider:
                     pair,
                     profile_class=profile_class,
                     observed_at_ms=observed_at_ms,
+                    cmc_context=cmc_context,
                 )
                 if candidate is None or (allowed_dexes and _norm(candidate.identity.dex_id) not in allowed_dexes):
                     continue
@@ -173,6 +199,23 @@ class MarketEligibility:
         age_seconds = max(0.0, (current_ms - candidate.pair_created_at_ms) / 1000.0)
         return age_seconds >= self.min_pair_age_seconds
 
+    def accepts_for_world(self, candidate: MarketCandidate, *, now_ms: int | None = None) -> bool:
+        """Keep tracked markets visible without calling them investable.
+
+        World inclusion still requires a real chain/pair/token identity, but
+        deliberately does not apply liquidity, volume, or pair-age thresholds.
+        Those thresholds belong to deep analysis and the execution guard, not
+        to the city directory. A new/illiquid habitat can be visible while
+        remaining ineligible for execution.
+        """
+        if _norm(candidate.identity.chain_id) not in {_norm(value) for value in self.chains}:
+            return False
+        if self.dex_ids and _norm(candidate.identity.dex_id) not in {_norm(value) for value in self.dex_ids}:
+            return False
+        if not candidate.identity.pair_address or not candidate.represented_token_address:
+            return False
+        return True
+
 
 @dataclass(frozen=True)
 class SelectedMarket:
@@ -188,7 +231,7 @@ class MarketSelector:
     # Kept as active_count for compatibility with existing callers; it is the
     # number of markets sent to a deep observer, not the physical world size.
     active_count: int = 12
-    world_capacity: int = 128
+    world_capacity: int = 100
 
     def eligible(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[MarketCandidate, ...]:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
@@ -206,7 +249,30 @@ class MarketSelector:
         return self._ranked(universe, now_ms=now_ms)[: max(0, self.active_count)]
 
     def select_world(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[MarketCandidate, ...]:
-        return tuple(item.candidate for item in self._ranked(universe, now_ms=now_ms)[: max(0, self.world_capacity)])
+        # The physical city is a market directory, not an execution shortlist.
+        # Keep chain/DEX/identity and minimum age checks, but do not hide a
+        # tracked market merely because its liquidity or volume is below the
+        # stricter deep-observer/execution thresholds.
+        current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        scored = [
+            SelectedMarket(candidate, _discovery_score(candidate))
+            for candidate in self.world_eligible(universe, now_ms=current_ms)
+        ]
+        scored.sort(key=lambda item: (-item.discovery_score, item.candidate.market_id))
+        return tuple(item.candidate for item in scored[: max(0, self.world_capacity)])
+
+    def world_eligible(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[MarketCandidate, ...]:
+        current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        candidates = [
+            candidate for candidate in universe.all_candidates
+            if self.eligibility.accepts_for_world(candidate, now_ms=current_ms)
+        ]
+        by_token: dict[str, MarketCandidate] = {}
+        for candidate in candidates:
+            previous = by_token.get(candidate.token_id)
+            if previous is None or _candidate_quality(candidate) > _candidate_quality(previous):
+                by_token[candidate.token_id] = candidate
+        return tuple(sorted(by_token.values(), key=lambda item: item.market_id))
 
     def _ranked(self, universe: MarketUniverse, *, now_ms: int | None = None) -> list[SelectedMarket]:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
@@ -307,11 +373,13 @@ class DexScreenerMarketDiscovery:
             profile_limit=int(os.getenv("NEUROSWARM_MARKET_PROFILE_LIMIT", "60")),
             seed_tokens=seeds,
             pool_bootstrap=graph_client.top_pools if graph_client is not None else None,
+            cmc_client=CoinMarketCapClient.from_env(),
+            cmc_limit=int(os.getenv("CMC_LISTINGS_LIMIT", "100")),
         )
         selector = MarketSelector(
             eligibility,
             active_count=int(os.getenv("NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT", "12")),
-            world_capacity=int(os.getenv("NEUROSWARM_MARKET_WORLD_CAPACITY", "128")),
+            world_capacity=int(os.getenv("NEUROSWARM_MARKET_WORLD_CAPACITY", "100")),
         )
         from .supabase_cache import SupabaseMarketCache
 
@@ -334,11 +402,22 @@ class DexScreenerMarketDiscovery:
                     self.last_error = f"cache read: {exc}"
                 if cached is not None:
                     self._universe, cached_round = cached
-                    self.rounds._current = cached_round
-                    self.rounds._round_counter = max(self.rounds._round_counter, cached_round.round_number)
-                    self._last_refresh_monotonic = now_monotonic
-                    self._last_cached_round_started_ms = cached_round.started_at_ms
-                    return cached_round
+                    # A previous deployment may have persisted a small round
+                    # (for example the old five-habitat prototype). Do not
+                    # reuse that snapshot after the configured city capacity
+                    # has increased; perform a fresh discovery instead.
+                    desired_world = min(
+                        max(0, self.rounds.selector.world_capacity),
+                        max(0, self.universe_provider.core_target),
+                    )
+                    if desired_world > 0 and len(cached_round.markets) < desired_world:
+                        self._universe = None
+                    else:
+                        self.rounds._current = cached_round
+                        self.rounds._round_counter = max(self.rounds._round_counter, cached_round.round_number)
+                        self._last_refresh_monotonic = now_monotonic
+                        self._last_cached_round_started_ms = cached_round.started_at_ms
+                        return cached_round
             try:
                 self._universe = self.universe_provider.refresh(now_ms=current_ms, force=force)
                 self._last_refresh_monotonic = now_monotonic
@@ -387,11 +466,33 @@ class DexScreenerMarketDiscovery:
             "chainId": candidate.identity.chain_id,
             "dexId": candidate.identity.dex_id,
             "pairAddress": candidate.identity.pair_address,
+            "observedAtMs": int(candidate.provenance[0].get("observedAtMs", 0)) if candidate.provenance else 0,
             "lightweight": True,
             "liquidityUsd": candidate.liquidity_usd,
             "volume5mUsd": candidate.volume_5m_usd,
             "volume1hUsd": candidate.volume_1h_usd,
             "volume24hUsd": candidate.volume_24h_usd,
+            "priceUsd": candidate.price_usd,
+            "priceNative": candidate.price_native,
+            "marketCapUsd": candidate.market_cap_usd,
+            "fdvUsd": candidate.fdv_usd,
+            "liquidityBase": candidate.liquidity_base,
+            "liquidityQuote": candidate.liquidity_quote,
+            "txns24h": candidate.txns_24h,
+            "boostsActive": candidate.boosts_active,
+            "pairAgeHours": candidate.pair_age_hours,
+            "marketCapToLiquidity": candidate.market_cap_to_liquidity,
+            "fdvToLiquidity": candidate.fdv_to_liquidity,
+            "volume24hToMarketCap": candidate.volume_24h_to_market_cap,
+            "volume24hToLiquidity": candidate.volume_24h_to_liquidity,
+            "cmcId": candidate.cmc_id,
+            "cmcSlug": candidate.cmc_slug,
+            "cmcRank": candidate.cmc_rank,
+            "circulatingSupply": candidate.circulating_supply,
+            "totalSupply": candidate.total_supply,
+            "cmcPercentChange7d": candidate.cmc_percent_change_7d,
+            "cmcVolumeChange24h": candidate.cmc_volume_change_24h,
+            "marketCapDominance": candidate.market_cap_dominance,
             "buys5m": candidate.buys_5m,
             "sells5m": candidate.sells_5m,
         }
@@ -400,9 +501,13 @@ class DexScreenerMarketDiscovery:
         round_state = self.active_round(now_ms=now_ms)
         return {
             "source": "dexscreener",
+            "worldCapacity": self.rounds.selector.world_capacity,
+            "deepObserverCount": self.rounds.selector.active_count,
             "universe": self._universe.as_dict() if self._universe else None,
             "round": round_state.as_dict(),
             "lastError": self.last_error,
+            "cmcRankedCount": self.universe_provider.last_cmc_count,
+            "cmcError": self.universe_provider.last_cmc_error,
         }
 
 
@@ -411,6 +516,7 @@ def candidate_from_pair(
     *,
     profile_class: Mapping[tuple[str, str], str] | None = None,
     observed_at_ms: int | None = None,
+    cmc_context: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
 ) -> MarketCandidate | None:
     """Normalize one DexScreener pair payload without adding derived bias."""
 
@@ -433,6 +539,20 @@ def candidate_from_pair(
     socials = _dict_tuple(info.get("socials"))
     timestamp_ms = int(time.time() * 1000) if observed_at_ms is None else int(observed_at_ms)
     created_ms = _timestamp_ms(pair.get("pairCreatedAt"))
+    price_usd = _optional_number(pair.get("priceUsd"))
+    price_native = _optional_number(pair.get("priceNative"))
+    fdv_usd = _optional_number(pair.get("fdv"))
+    market_cap_usd = _optional_number(pair.get("marketCap"))
+    liquidity_usd = _number(liquidity.get("usd"))
+    volume_24h_usd = _optional_number(volume.get("h24"))
+    pair_age_hours = None
+    if created_ms is not None and timestamp_ms >= created_ms:
+        pair_age_hours = (timestamp_ms - created_ms) / 3_600_000.0
+    market_cap_to_liquidity = _ratio(market_cap_usd, liquidity_usd)
+    fdv_to_liquidity = _ratio(fdv_usd, liquidity_usd)
+    volume_24h_to_market_cap = _ratio(volume_24h_usd, market_cap_usd)
+    volume_24h_to_liquidity = _ratio(volume_24h_usd, liquidity_usd)
+    boosts = pair.get("boosts") if isinstance(pair.get("boosts"), Mapping) else {}
     provenance = (
         {
             "provider": "dexscreener",
@@ -441,6 +561,21 @@ def candidate_from_pair(
             "url": _optional_string(pair.get("url")),
         },
     )
+    cmc = (cmc_context or {}).get((chain_id, base_address), {})
+    cmc_quote = cmc.get("quote", {}).get("USD", {}) if isinstance(cmc.get("quote"), Mapping) else {}
+    cmc_market_cap = _optional_number(cmc_quote.get("market_cap")) if isinstance(cmc_quote, Mapping) else None
+    cmc_price = _optional_number(cmc_quote.get("price")) if isinstance(cmc_quote, Mapping) else None
+    if market_cap_usd is None:
+        market_cap_usd = cmc_market_cap
+    if price_usd is None:
+        price_usd = cmc_price
+    if cmc:
+        provenance = (*provenance, {
+            "provider": "coinmarketcap",
+            "cmcId": cmc.get("id"),
+            "cmcRank": cmc.get("cmc_rank"),
+            "slug": cmc.get("slug"),
+        })
     return MarketCandidate(
         identity=MarketIdentity(chain_id, dex_id, pair_address),
         base_token_address=base_address,
@@ -449,7 +584,7 @@ def candidate_from_pair(
         quote_token_address=quote_address,
         quote_token_symbol=_optional_string(quote.get("symbol")),
         represented_token_address=base_address,
-        liquidity_usd=_number(liquidity.get("usd")) or 0.0,
+        liquidity_usd=liquidity_usd,
         volume_5m_usd=_optional_number(volume.get("m5")),
         volume_1h_usd=_optional_number(volume.get("h1")),
         volume_24h_usd=_optional_number(volume.get("h24")),
@@ -466,6 +601,27 @@ def candidate_from_pair(
         socials=socials,
         source="dexscreener",
         provenance=provenance,
+        price_usd=price_usd,
+        price_native=price_native,
+        fdv_usd=fdv_usd,
+        market_cap_usd=market_cap_usd,
+        liquidity_base=_optional_number(liquidity.get("base")),
+        liquidity_quote=_optional_number(liquidity.get("quote")),
+        txns_24h=_nested_txn_total(txns, "h24"),
+        boosts_active=_optional_int(boosts.get("active")),
+        pair_age_hours=pair_age_hours,
+        market_cap_to_liquidity=market_cap_to_liquidity,
+        fdv_to_liquidity=fdv_to_liquidity,
+        volume_24h_to_market_cap=volume_24h_to_market_cap,
+        volume_24h_to_liquidity=volume_24h_to_liquidity,
+        cmc_id=_optional_int(cmc.get("id")),
+        cmc_slug=_optional_string(cmc.get("slug")),
+        cmc_rank=_optional_int(cmc.get("cmc_rank")),
+        circulating_supply=_optional_number(cmc.get("circulating_supply")),
+        total_supply=_optional_number(cmc.get("total_supply")),
+        cmc_percent_change_7d=_optional_number(cmc_quote.get("percent_change_7d")) if isinstance(cmc_quote, Mapping) else None,
+        cmc_volume_change_24h=_optional_number(cmc_quote.get("volume_change_24h")) if isinstance(cmc_quote, Mapping) else None,
+        market_cap_dominance=_optional_number(cmc_quote.get("market_cap_dominance")) if isinstance(cmc_quote, Mapping) else None,
     )
 
 
@@ -479,6 +635,29 @@ def _profile_addresses(profiles: Iterable[Mapping[str, Any]], chains: set[str], 
         if len(result.get(chain_id, ())) >= max(0, limit):
             continue
         result.setdefault(chain_id, []).append(address)
+    return result
+
+
+def _cmc_context(
+    listings: Iterable[Mapping[str, Any]],
+    chains: set[str],
+) -> dict[tuple[str, str], Mapping[str, Any]]:
+    """Index CMC listings only when they carry an exact chain address.
+
+    CMC symbols are intentionally never used as identifiers: symbols can
+    collide, while a chain/address pair can be resolved against a real DEX
+    pair by DexScreener.
+    """
+
+    result: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for listing in listings:
+        platform = listing.get("platform") if isinstance(listing.get("platform"), Mapping) else None
+        if platform is None:
+            continue
+        chain = _norm(platform.get("slug") or platform.get("name"))
+        address = _optional_norm(platform.get("token_address"))
+        if chain in chains and address:
+            result[(chain, address)] = listing
     return result
 
 
@@ -515,6 +694,23 @@ def _discovery_score(candidate: MarketCandidate) -> float:
 def _nested_int(value: Mapping[str, Any], outer: str, inner: str) -> int | None:
     child = value.get(outer)
     return _optional_int(child.get(inner)) if isinstance(child, Mapping) else None
+
+
+def _nested_txn_total(value: Mapping[str, Any], outer: str) -> int | None:
+    child = value.get(outer)
+    if not isinstance(child, Mapping):
+        return None
+    buys = _optional_int(child.get("buys"))
+    sells = _optional_int(child.get("sells"))
+    if buys is None and sells is None:
+        return None
+    return (buys or 0) + (sells or 0)
+
+
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
 
 
 def _dict_tuple(value: Any) -> tuple[dict[str, Any], ...]:
