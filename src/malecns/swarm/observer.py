@@ -186,7 +186,7 @@ class SwarmObserver:
         self,
         expected_agents: int,
         *,
-        sustained_dwell_s: float = 5.0,
+        sustained_dwell_s: float = 0.6,
         congregation_radius_m: float = 0.12,
         max_sample_gap_s: float = 2.0,
         distance_history_size: int = 600,
@@ -278,7 +278,7 @@ class SwarmObserver:
                 track.contact_time_s += dt_s
             if (
                 habitat.contact
-                and track.current_visit_dwell_s >= 0.6
+                and track.current_visit_dwell_s >= self.sustained_dwell_s
                 and not track.buy_issued_for_visit
             ):
                 self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)

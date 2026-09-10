@@ -347,10 +347,10 @@ export class TokenHabitat {
     // field made the floor-level habitat effectively unsmellable before a fly
     // had any chance to descend, so keep a readable vertical gradient while
     // preserving spatial separation between nearby sources.
-    // A broad plume gives an airborne fly time to follow a local bilateral
-    // gradient. The final contact radius still remains physical and is not
-    // widened by this sensory calibration.
-    const sigma = 0.58 + this.properties.physicalRadiusM * 0.7
+    // Keep the plume readable from the air, but local enough that adjacent
+    // places do not turn the whole floor into one saturated landing zone.
+    // Contact remains physical and is not widened by this sensory calibration.
+    const sigma = 0.44 + this.properties.physicalRadiusM * 0.7
     const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma))
     const fluctuation = 1 + Math.sin(timeSeconds * (0.7 + this.properties.chaos * 2.0) + this.group.position.x * 4.0) * this.properties.chaos * 0.08
     return {

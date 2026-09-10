@@ -36,7 +36,9 @@ export class FlyBody {
   // authority so an odor-triggered zero-lift command reaches the floor in a
   // few seconds instead of looking frozen for most of the demo.
   readonly maxVerticalForceN = 0.00016
-  readonly gravityN = 0.0000872
+  // Match the neutral 0.5 vertical command so an exploring fly does not
+  // slowly sink onto the floor between habitat visits.
+  readonly gravityN = 0.00008
   // The previous value made a boundary turn take many seconds at this
   // millimetre-scale inertia. This remains a small rigid-body torque, but it
   // gives the shared actuator interface enough authority to leave a wall

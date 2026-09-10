@@ -241,14 +241,15 @@ intentLogPanel.setAttribute('aria-label', 'Fly buy and sell intent log')
 intentLogPanel.innerHTML = `
   <div class="intent-log-header">
     <div>
-      <div class="intent-log-kicker">FRUITFLY CAPITAL · BEHAVIOR LOG</div>
-      <div class="intent-log-title">BUY / SELL INTENTS</div>
+      <div class="intent-log-kicker">FRUITFLY CAPITAL · TRADING LOG</div>
+      <div class="intent-log-title">BUY / SELL ACTIVITY</div>
     </div>
-    <div class="intent-log-mode">PROPOSAL ONLY<br>NO EXECUTION</div>
+    <div class="intent-log-mode">RECORDED TRADES<br>BEHAVIOR TAB</div>
   </div>
   <div class="intent-log-summary"><span class="intent-buy-count">BUY 0</span><span class="intent-sell-count">SELL 0</span><span class="intent-log-live">LIVE</span></div>
   <div class="intent-log-motion">FLIGHT · CRUISE 0 · DESCENDING 0 · LANDED 0 · CLOSEST —</div>
   <div class="intent-log-holdings"><div class="intent-log-holdings-heading"><span>FUND HOLDINGS</span><a href="/portfolio/">FULL PORTFOLIO →</a></div><div class="intent-log-holdings-list">Waiting for live portfolio data…</div></div>
+  <div class="intent-log-tabs" role="tablist" aria-label="Trading log view"><button type="button" class="intent-log-tab" data-log-view="trades" role="tab" aria-selected="false">BUY / SELL</button><button type="button" class="intent-log-tab is-active" data-log-view="behavior" role="tab" aria-selected="true">BEHAVIOR INTENTS</button></div>
   <label class="intent-log-search"><span>SEARCH LOG</span><input type="search" placeholder="Token, fly, buy or sell…" aria-label="Search behavior log" /></label>
   <div class="intent-log-list"></div>
 `
@@ -260,11 +261,27 @@ const intentLogLive = intentLogPanel.querySelector<HTMLSpanElement>('.intent-log
 const intentLogMotion = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-motion')!
 const intentLogHoldingsList = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-holdings-list')!
 const intentLogSearch = intentLogPanel.querySelector<HTMLInputElement>('.intent-log-search input')!
+const intentLogTabs = Array.from(intentLogPanel.querySelectorAll<HTMLButtonElement>('.intent-log-tab'))
 const intentHistory: BehaviorTradeIntent[] = []
 const seenIntentIds = new Set<string>()
 let buyIntentCount = 0
 let sellIntentCount = 0
 let intentSearchTerm = ''
+// Show the biological source of activity first. The BUY / SELL tab remains
+// available for completed, pending, and confirmed execution records.
+let intentLogView: 'trades' | 'behavior' = 'behavior'
+
+intentLogTabs.forEach((button) => {
+  button.addEventListener('click', () => {
+    intentLogView = button.dataset.logView === 'behavior' ? 'behavior' : 'trades'
+    intentLogTabs.forEach((candidate) => {
+      const active = candidate === button
+      candidate.classList.toggle('is-active', active)
+      candidate.setAttribute('aria-selected', String(active))
+    })
+    renderIntentLog()
+  })
+})
 
 intentLogSearch.addEventListener('input', () => {
   intentSearchTerm = intentLogSearch.value.trim().toLowerCase()
@@ -315,9 +332,63 @@ function formatTokenAmount(value: unknown) {
   return Number.isFinite(amount) ? amount.toLocaleString(undefined, { maximumSignificantDigits: 8 }) : '—'
 }
 
+const zeroAddress = '0x0000000000000000000000000000000000000000'
+
+function tradeActivityRecords() {
+  const fund = brainSocket.portfolio()
+  const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
+  const records: Array<Record<string, unknown> & { source: string; side: 'BUY' | 'SELL'; token: string; tokenAddress: string; flyLabel: string; timeMs: number }> = []
+  const seen = new Set<string>()
+  const add = (item: Record<string, unknown>, source: string) => {
+    const status = String(item.status || '').toLowerCase()
+    if (source !== 'MAINNET' && (status === 'blocked' || status === 'proposed')) return
+    const rawSide = String(item.side || item.type || '').toLowerCase()
+    const tokenIn = String(item.inputToken || item.token_in || '')
+    const tokenOut = String(item.token_out || '')
+    const side: 'BUY' | 'SELL' = rawSide.includes('sell') || tokenOut.toLowerCase() === zeroAddress ? 'SELL' : 'BUY'
+    const tokenAddress = String(item.tokenAddress || (side === 'BUY' ? tokenOut : tokenIn) || '')
+    const habitat = environment.habitats.find((candidate) => candidate.state.tokenAddress?.toLowerCase() === tokenAddress.toLowerCase())
+    const token = String(item.tokenSymbol || habitat?.state.label || (tokenAddress ? `${tokenAddress.slice(0, 6)}…${tokenAddress.slice(-4)}` : 'TOKEN'))
+    const flyIds = Array.isArray(item.flyIds)
+      ? item.flyIds.map(String)
+      : String(item.neuroswarm_decision_id || '').split(',').map((value) => value.trim()).filter(Boolean)
+    const txHash = String(item.txHash || item.tx_hash || '')
+    const executionId = String(item.executionId || item.execution_id || item.trade_id || '')
+    const timeMs = Number(item.timestamp || item.timestampMs || item.timestamp_ms || item.createdMs || autonomous.observedAtMs || 0)
+    const key = txHash || executionId || `${timeMs}:${side}:${tokenAddress}:${flyIds.join(',')}`
+    if (seen.has(key)) return
+    seen.add(key)
+    records.push({ ...item, source, side, token, tokenAddress, flyLabel: flyIds.length ? flyIds.join(' · ') : 'SWARM', timeMs })
+  }
+  const mainnet = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
+  const events = Array.isArray(autonomous.events) ? autonomous.events as Record<string, unknown>[] : []
+  const trades = Array.isArray(fund?.recentTrades) ? fund.recentTrades as Record<string, unknown>[] : []
+  mainnet.forEach((item) => add(item, 'MAINNET'))
+  events.forEach((item) => add(item, 'RUNTIME'))
+  trades.forEach((item) => add(item, 'LEDGER'))
+  return records.sort((left, right) => right.timeMs - left.timeMs)
+}
+
+function formatTradeInput(item: Record<string, unknown>) {
+  const raw = item.inputAmount ?? item.amountIn ?? item.amount_in
+  const inputToken = String(item.inputToken || item.token_in || '')
+  if (inputToken.toLowerCase() === zeroAddress && raw !== undefined) {
+    const amount = Number(raw) / 1e18
+    return Number.isFinite(amount) ? `${amount.toLocaleString(undefined, { maximumSignificantDigits: 8 })} ETH` : '—'
+  }
+  return formatTokenAmount(raw)
+}
+
+function formatTradeOutput(item: Record<string, unknown>) {
+  return formatTokenAmount(item.actualOutputAmount ?? item.amountOut ?? item.amount_out ?? item.expectedOutput)
+}
+
 function renderIntentLog() {
-  intentBuyCount.textContent = `BUY ${buyIntentCount}`
-  intentSellCount.textContent = `SELL ${sellIntentCount}`
+  const tradeRecords = tradeActivityRecords()
+  const tradeBuyCount = tradeRecords.filter((item) => item.side === 'BUY').length
+  const tradeSellCount = tradeRecords.filter((item) => item.side === 'SELL').length
+  intentBuyCount.textContent = `BUY ${intentLogView === 'trades' ? tradeBuyCount : buyIntentCount}`
+  intentSellCount.textContent = `SELL ${intentLogView === 'trades' ? tradeSellCount : sellIntentCount}`
   intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
   const fund = brainSocket.portfolio()
   const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
@@ -337,6 +408,36 @@ function renderIntentLog() {
     }
   }
   intentLogList.replaceChildren()
+  if (intentLogView === 'trades') {
+    const visibleTrades = tradeRecords.filter((item) => {
+      if (!intentSearchTerm) return true
+      return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status, item.source].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+    })
+    if (visibleTrades.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'intent-log-empty'
+      empty.textContent = tradeRecords.length === 0
+        ? `No completed or pending buys/sells yet · ${buyIntentCount} BUY / ${sellIntentCount} SELL proposals in Behavior Intents.`
+        : 'No matching buys or sells.'
+      intentLogList.append(empty)
+      return
+    }
+    for (const trade of visibleTrades.slice(0, 40)) {
+      const row = document.createElement('div')
+      row.className = `intent-log-row ${trade.side === 'SELL' ? 'sell' : 'buy'}`
+      const time = trade.timeMs > 0 ? new Date(trade.timeMs).toLocaleTimeString([], { hour12: false }) : '—'
+      const status = String(trade.status || (trade.source === 'MAINNET' ? 'BROADCAST' : 'RECORDED')).toUpperCase()
+      row.innerHTML = '<div class="intent-log-row-top"><strong></strong><span></span><em></em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>'
+      row.querySelector('strong')!.textContent = `${trade.side} ${trade.token}`
+      row.querySelector('span')!.textContent = `${time} · ${trade.flyLabel}`
+      row.querySelector('em')!.textContent = `${trade.source} · ${status}`
+      row.querySelector('.intent-log-token')!.textContent = `${formatTradeInput(trade)} → ${formatTradeOutput(trade)} ${trade.token}`
+      row.querySelector('.intent-log-holding')!.textContent = trade.tokenAddress ? `${trade.tokenAddress.slice(0, 10)}…${trade.tokenAddress.slice(-6)}` : 'TOKEN ADDRESS PENDING'
+      row.querySelector('.intent-log-details')!.textContent = trade.txHash || trade.tx_hash ? `TX ${String(trade.txHash || trade.tx_hash).slice(0, 14)}…` : 'No transaction hash · local ledger record'
+      intentLogList.append(row)
+    }
+    return
+  }
   const visibleIntents = intentHistory.filter((intent) => {
     if (!intentSearchTerm) return true
     const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
@@ -463,7 +564,9 @@ const world = new World(scene, agents, environment)
 visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
 // Only the primary bodies enter this observer. Render followers are visual
 // embodiments and must never become extra portfolio votes or trade events.
-const swarmObserver = new SwarmObserver(SWARM_SIZE)
+// A qualifying buy requires sustained contact, not a transient startup
+// overlap. Keep this client threshold aligned with the server observer.
+const swarmObserver = new SwarmObserver(SWARM_SIZE, 2.5)
 
 function updateFlightMotionStatus() {
   const cruise = agents.filter((agent) => agent.landingState === 'cruise').length

@@ -24,7 +24,7 @@ from .brain.realtime import LiveMaleCNSRuntime, RealtimeRuntimeUnavailable, defa
 from .brain.sensory_encoding import default_encoder
 from .motor.flight_decoder import FlightMotorDecoder
 from .market.signal_engine import MarketSignalEngine
-from .swarm.observer import FlyObservation, HabitatObservation
+from .swarm.observer import FlyObservation, HabitatObservation, SwarmObserver
 from .fund.pipeline import SwarmDecisionPipeline
 from .fund.service import FundService
 from .fund.autonomous import AutonomousTradingRuntime
@@ -40,7 +40,11 @@ REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_c
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
 SWARM_SIZE = 16
-SWARM_DECISIONS = SwarmDecisionPipeline(max(1, SWARM_SIZE))
+BEHAVIOR_DWELL_SECONDS = max(0.6, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "2.5")))
+SWARM_DECISIONS = SwarmDecisionPipeline(
+    max(1, SWARM_SIZE),
+    observer=SwarmObserver(max(1, SWARM_SIZE), sustained_dwell_s=BEHAVIOR_DWELL_SECONDS),
+)
 FUND_SERVICE = FundService.from_env()
 AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)
 

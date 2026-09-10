@@ -32,6 +32,9 @@ body { background: #050d13; }
 .intent-log-holdings-heading a { color: var(--sage-bright); font-size: 7px; }
 .intent-log-holdings-list { display: flex; flex-wrap: wrap; gap: 4px 9px; margin-top: 7px; color: var(--ink); font-size: 8px; line-height: 1.4; }
 .intent-log-holdings-list span { white-space: nowrap; }
+.intent-log-tabs { display: flex; gap: 5px; margin-top: 9px; }
+.intent-log-tab { padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.035); color: var(--ink-faint); font: 8px ui-monospace, monospace; letter-spacing: .06em; cursor: pointer; }
+.intent-log-tab.is-active { border-color: var(--line-strong); background: rgba(182,211,195,.12); color: var(--ink); }
 .intent-log-search { display: flex; align-items: center; gap: 8px; margin-top: 9px; color: var(--ink-faint); font-size: 8px; letter-spacing: .1em; }
 .intent-log-search input { min-width: 0; flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; outline: none; background: rgba(255,255,255,.045); color: var(--ink); font: 9px ui-monospace, monospace; }
 .intent-log-search input::placeholder { color: var(--ink-faint); }
@@ -591,6 +594,8 @@ body:has(#portfolio-app) { min-height: 100vh; overflow: auto; background: #050d1
   .intent-log-summary { margin-top: 7px; padding-bottom: 6px; }
   .intent-log-motion { margin-top: 6px; font-size: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .intent-log-holdings { margin-top: 7px; padding: 6px 0; }
+  .intent-log-tabs { margin-top: 7px; }
+  .intent-log-tab { min-height: 34px; padding-inline: 8px; }
   .intent-log-search { margin-top: 6px; }
   .intent-log-search input { min-height: 34px; }
   .intent-log-list { max-height: 15dvh; margin-top: 6px; }

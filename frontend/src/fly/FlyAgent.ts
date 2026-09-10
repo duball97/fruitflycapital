@@ -101,9 +101,13 @@ export class FlyAgent {
     // otherwise a neutral websocket frame is visually indistinguishable from
     // a frozen simulation and it can never discover an odor source.
     const cruiseDrive = Math.max(0.42, Math.min(0.78, 0.48 + odor * 0.48))
+    // A grounded explorer needs a short lift impulse to re-enter the air.
+    // Once airborne, the neutral command is enough to maintain altitude.
+    const cruiseLift = this.body.contact.ground ? 0.82 : 0.5
     return {
       ...command,
       forwardThrust: Math.max(command.forwardThrust, cruiseDrive),
+      verticalThrust: Math.max(command.verticalThrust, cruiseLift),
       // The local bilateral signal gets priority over stale/noisy CNS frames
       // during discovery, while the neural yaw command remains a bounded
       // influence rather than being discarded.
@@ -149,7 +153,7 @@ export class FlyAgent {
       return {
         ...command,
         forwardThrust: 0,
-        verticalThrust: 0.52,
+        verticalThrust: 0.5,
         yawTorque: command.yawTorque * 0.22,
         pitchTorque: 0,
         rollTorque: 0,
