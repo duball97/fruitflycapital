@@ -1,4 +1,4 @@
-import { CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, RingGeometry, Vector3 } from 'three'
+import { CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, TorusGeometry, Vector3 } from 'three'
 import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
@@ -34,8 +34,11 @@ export class TokenHabitat {
   private readonly pile: Mesh
   private readonly coin: Mesh
   private readonly pressureRing: Mesh
+  private readonly innerRing: Mesh
+  private readonly outerRing: Mesh
   private readonly signalColumn: Mesh
   private readonly signalCap: Mesh
+  private readonly signalLight: PointLight
   private enabled = true
 
   constructor(state: TokenState, position: Vector3, color: number) {
@@ -57,6 +60,22 @@ export class TokenHabitat {
     this.coin.position.y = 0.05
     this.coin.castShadow = true
     this.group.add(this.coin)
+
+    this.innerRing = new Mesh(
+      new TorusGeometry(0.078, 0.004, 8, 36),
+      new MeshPhysicalMaterial({ color, emissive: color, emissiveIntensity: 0.35, metalness: 0.62, roughness: 0.24, clearcoat: 0.65, clearcoatRoughness: 0.2 }),
+    )
+    this.innerRing.rotation.x = Math.PI / 2
+    this.innerRing.position.y = 0.056
+    this.group.add(this.innerRing)
+
+    this.outerRing = new Mesh(
+      new TorusGeometry(0.104, 0.0022, 6, 40),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.18, depthWrite: false }),
+    )
+    this.outerRing.rotation.x = Math.PI / 2
+    this.outerRing.position.y = 0.058
+    this.group.add(this.outerRing)
 
     this.pressureRing = new Mesh(
       new RingGeometry(0.078, 0.083, 32),
@@ -80,6 +99,9 @@ export class TokenHabitat {
     this.signalCap.position.y = 0.178
     this.signalCap.visible = false
     this.group.add(this.signalCap)
+    this.signalLight = new PointLight(color, 0, 0.5, 2)
+    this.signalLight.position.y = 0.11
+    this.group.add(this.signalLight)
     this.setScenario('different')
   }
 
@@ -101,6 +123,10 @@ export class TokenHabitat {
     ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
     ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
     ;(this.pressureRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.18 + visual.chaos * 0.35 : 0.07
+    ;(this.outerRing.material as MeshBasicMaterial).opacity = this.enabled ? 0.12 + visual.chaos * 0.2 : 0.04
+    ;(this.innerRing.material as MeshPhysicalMaterial).emissiveIntensity = this.enabled ? 0.24 + visual.brightness * 0.55 : 0.08
+    this.pile.scale.setScalar(Math.max(0.72, visual.resourcePileRadiusM / 0.06))
+    this.signalLight.intensity = this.enabled ? 0.08 + visual.brightness * 0.65 + visual.particleActivity * 0.35 : 0
     this.signalColumn.visible = this.enabled && visual.visualMotionIntensity > 0.04
     this.signalCap.visible = this.signalColumn.visible
     const columnMaterial = this.signalColumn.material as MeshStandardMaterial
@@ -117,6 +143,10 @@ export class TokenHabitat {
     this.coin.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.04 * pulse)
     this.pressureRing.scale.setScalar(0.94 + visual.chaos * 0.22 + visual.visualMotionIntensity * 0.08 * pulse)
     this.pressureRing.rotation.z = timeSeconds * (0.03 + visual.chaos * 0.24)
+    this.innerRing.scale.setScalar(0.98 + visual.visualMotionIntensity * 0.06 * pulse)
+    this.outerRing.scale.setScalar(0.96 + visual.chaos * 0.35 + visual.visualMotionIntensity * 0.12 * pulse)
+    this.outerRing.rotation.z = -timeSeconds * (0.015 + visual.visualMotionIntensity * 0.08)
+    this.signalLight.intensity = this.enabled ? 0.08 + visual.brightness * 0.65 + visual.particleActivity * (0.22 + pulse * 0.18) : 0
     if (this.signalColumn.visible) {
       const columnScale = 0.5 + visual.particleActivity * 1.4 + visual.chaos * 0.4
       this.signalColumn.scale.set(1, columnScale * pulse, 1)

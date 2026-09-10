@@ -17,6 +17,7 @@ import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProc
 import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
 import { vectorToWire } from './networking/protocol'
+import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 
 const configuredFlightDriver = import.meta.env.VITE_FLIGHT_DRIVER
 const flightDriver: 'malecns' | 'preview' = configuredFlightDriver === 'malecns' ? 'malecns' : 'preview'
@@ -155,6 +156,8 @@ const debug = new DebugRenderer(app, 'FLY #001', 'right')
 let debugPanelVisible = false
 debug.setPanelVisible(debugPanelVisible)
 world.add(debug.group)
+
+const brainActivityPanel = new BrainActivityPanel(app)
 
 const trails = new FlyTrails(agents)
 world.add(trails.mesh)
@@ -360,6 +363,7 @@ function animate(now: number) {
   })
   const selectedAgent = agents[selectedIndex]!
   debug.update(selectedAgent, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(selectedAgent.id), brainSocket.activityFor(selectedAgent.id))
+  brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
   if (world.elapsedSeconds >= nextCausalUiAt) {
     updateCausalStatus(selectedAgent)
     nextCausalUiAt += 0.25

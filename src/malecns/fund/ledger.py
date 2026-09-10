@@ -34,6 +34,9 @@ class FundLedger:
         self.connection = sqlite3.connect(str(self.path), check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        existing_trade_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(trades)")}
+        if "realized_pnl_usd" not in existing_trade_columns:
+            self.connection.execute("ALTER TABLE trades ADD COLUMN realized_pnl_usd REAL")
         self.connection.commit()
 
     def close(self) -> None:

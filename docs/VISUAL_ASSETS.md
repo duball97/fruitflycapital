@@ -28,3 +28,14 @@ Habitat particles are pooled instances and fly trails share one dynamic line
 buffer. The scene has no unrelated decorative fly population. The four
 additional render-only bodies attached to each primary CNS agent are explicitly
 labelled followers and do not add brains, sensors, or consensus votes.
+
+## Canva background
+
+- **Asset:** `frontend/public/design/fruit-fly-capital-canva-background.png`
+- **Format:** 16:9 PNG, text-free, suitable for Canva upload or a pitch-deck
+  background
+- **Intent:** dark graphite market-ecology atmosphere with restrained emerald,
+  cyan, and warm-gold light; the center and upper-left remain usable for
+  overlaid brand copy
+- **Provenance:** generated for this project; it is a presentation asset, not
+  a biological or market-data input
