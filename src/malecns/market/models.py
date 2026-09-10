@@ -9,7 +9,10 @@ until a provider supplies those facts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .features.models import FinancialState
 
 
 @dataclass(frozen=True)
@@ -200,8 +203,15 @@ class HoldersState:
 class SecurityState:
     status: str = "unavailable"
     honeypot: bool | None = None
+    sellable: bool | None = None
     contract_verified: bool | None = None
     owner_control: str | None = None
+    buy_tax_bps: int | None = None
+    sell_tax_bps: int | None = None
+    blacklist_mechanic: bool | None = None
+    mint_capability: bool | None = None
+    proxy: bool | None = None
+    security_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -236,6 +246,7 @@ class TokenState:
     chain_id: str = "ethereum"
     dex_id: str = "uniswap"
     pair_address: str | None = None
+    financial: "FinancialState | None" = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -276,8 +287,15 @@ class TokenState:
             "security": {
                 "status": self.security.status,
                 "honeypot": self.security.honeypot,
+                "sellable": self.security.sellable,
                 "contractVerified": self.security.contract_verified,
                 "ownerControl": self.security.owner_control,
+                "buyTaxBps": self.security.buy_tax_bps,
+                "sellTaxBps": self.security.sell_tax_bps,
+                "blacklistMechanic": self.security.blacklist_mechanic,
+                "mintCapability": self.security.mint_capability,
+                "proxy": self.security.proxy,
+                "securityFlags": list(self.security.security_flags),
             },
             "social": {
                 "status": self.social.status,
@@ -288,6 +306,7 @@ class TokenState:
                 "status": self.lore.status,
                 "catalysts": list(self.lore.catalysts),
             },
+            "financial": self.financial.as_dict() if self.financial else None,
             "signals": [signal.as_dict() for signal in self.signals],
             "provenance": list(self.provenance),
         }

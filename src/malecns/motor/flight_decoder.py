@@ -15,6 +15,7 @@ import pandas as pd
 
 from ..loader import normalize_neurons, read_feather
 from .flight_registry import flight_population_ids
+from .flight_adapter import LowLevelFlightCommand, MaleCNSFlightAdapter
 
 
 @dataclass(frozen=True)
@@ -45,13 +46,20 @@ class FlightDecodeResult:
     command: FlightCommand
     descending_rates_hz: dict[str, float]
     spike_counts: dict[str, int]
+    low_level_command: LowLevelFlightCommand
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "flightCommand": self.command.as_dict(),
+            "maleCnsCommand": self.command.as_dict(),
+            "lowLevelFlightCommand": self.low_level_command.as_dict(),
             "descendingRates": self.descending_rates_hz,
             "spikeCounts": self.spike_counts,
         }
+
+    def as_actuators(self) -> dict[str, float]:
+        """Return the command consumed by the browser/MuJoCo body."""
+        return self.low_level_command.as_dict()
 
 
 class FlightMotorDecoder:
@@ -80,29 +88,39 @@ class FlightMotorDecoder:
         saccade = self._mean(rates, self.populations.get("saccade", ()))
         takeoff = self._mean(rates, self.populations.get("escape_takeoff", ()))
         landing = self._mean(rates, self.populations.get("landing", ()))
+        forward = self._mean(rates, self.populations.get("forward_readout", ()))
 
         # DNa01/DNa02 are the existing bilateral turn readout candidates in
         # this project. Positive yaw is the right-side-minus-left-side sign;
         # this sign convention is OUR_ASSUMPTION, not a new neural edge.
         yaw = _clip((saccade_right - saccade_left) / self.reference_rate_hz)
-        # DNg02 population activity is the only selected population with
-        # direct flight wing-amplitude evidence. Use it as an abstract thrust
-        # drive, not as a claim of direct one-neuron force control.
-        thrust = _clip(max(wing, takeoff) / self.reference_rate_hz, 0.0, 1.0)
+        # DNg02 is a wing-amplitude candidate; DNp09/DNp28 are the documented
+        # forward readout candidates. They are neural intent, not direct force.
+        thrust = _clip(max(wing, takeoff, forward) / self.reference_rate_hz, 0.0, 1.0)
         # No exact MaleCNS one-to-one pitch/roll or stop command is asserted.
+        neural_command = FlightCommand(thrust=thrust, yaw=yaw, pitch=0.0, roll=0.0)
+        low_level_command = MaleCNSFlightAdapter().adapt(
+            thrust=neural_command.thrust,
+            yaw=neural_command.yaw,
+            pitch=neural_command.pitch,
+            roll=neural_command.roll,
+            active_rate_hz=max(rates.values(), default=0.0),
+        )
         result = FlightDecodeResult(
-            command=FlightCommand(thrust=thrust, yaw=yaw, pitch=0.0, roll=0.0),
+            command=neural_command,
             descending_rates_hz={
                 "turn_left": left,
                 "turn_right": right,
                 "saccade_left": saccade_left,
                 "saccade_right": saccade_right,
                 "wing_amplitude": wing,
+                "forward": forward,
                 "saccade": saccade,
                 "escape_takeoff": takeoff,
                 "landing": landing,
             },
             spike_counts=counts,
+            low_level_command=low_level_command,
         )
         return result
 

@@ -4,7 +4,6 @@ import { Environment } from './world/Environment'
 import { World } from './world/World'
 import { BrainSocket } from './networking/BrainSocket'
 import type { FlyAgent } from './fly/FlyAgent'
-import { KeyboardState } from './fly/FlyController'
 import { FlyPopulation } from './fly/FlyPopulation'
 import { DebugRenderer } from './rendering/DebugRenderer'
 import { FreeCamera } from './camera/FreeCamera'
@@ -16,12 +15,12 @@ import { BODIES_PER_BRAIN, SWARM_SIZE, VISUAL_FLY_COUNT } from './fly/SwarmConfi
 import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProcessing'
 import { FlyTrails } from './world/FlyTrails'
 import { PresentationCamera, type PresentationCameraMode } from './camera/PresentationCamera'
-import { vectorToWire } from './networking/protocol'
+import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 
-const configuredFlightDriver = import.meta.env.VITE_FLIGHT_DRIVER
-const flightDriver: 'malecns' | 'preview' = configuredFlightDriver === 'malecns' ? 'malecns' : 'preview'
-
+// The public experience is intentionally autonomous. Manual actuation remains
+// available only inside the controller module for isolated developer tests; it
+// is not selectable from the product UI or environment configuration.
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
 
@@ -60,11 +59,6 @@ const demoStatus = document.createElement('div')
 demoStatus.className = 'demo-status'
 app.append(demoStatus)
 
-const presentationToggle = document.createElement('button')
-presentationToggle.className = 'presentation-toggle'
-presentationToggle.textContent = 'SHOW DETAILS'
-app.append(presentationToggle)
-
 const status = document.createElement('div')
 status.className = 'socket-status debug-only'
 app.append(status)
@@ -72,10 +66,6 @@ const logButton = document.createElement('button')
 logButton.className = 'log-button debug-only'
 logButton.textContent = 'DOWNLOAD SELECTED FLY LOG'
 app.append(logButton)
-const modeButton = document.createElement('button')
-modeButton.className = 'mode-button debug-only'
-app.append(modeButton)
-
 const scene = new Scene()
 const renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' })
 renderer.setPixelRatio(1)
@@ -84,32 +74,6 @@ renderer.shadowMap.enabled = false
 
 const environment = new Environment()
 environment.setupLighting(scene)
-
-const scenarioPanel = document.createElement('div')
-scenarioPanel.className = 'scenario-panel debug-only'
-const scenarioTitle = document.createElement('span')
-scenarioTitle.textContent = 'COIN SIGNALS · DIFFERENT SIGNALS'
-scenarioPanel.append(scenarioTitle)
-const scenarioButtons: Array<[string, HTMLButtonElement]> = []
-for (const [scenario, label] of [
-  ['off', 'NEUTRAL'],
-  ['different', 'DIFFERENT SIGNALS'],
-  ['swapped', 'RELOCATED COINS'],
-  ['live', 'LIVE GRAPH'],
-] as const) {
-  const button = document.createElement('button')
-  button.textContent = label
-  button.setAttribute('aria-pressed', String(scenario === environment.scenario))
-  button.addEventListener('click', () => {
-    environment.setHabitatScenario(scenario)
-    lastMarketUiStatus = ''
-    scenarioButtons.forEach(([candidate, candidateButton]) => candidateButton.setAttribute('aria-pressed', String(candidate === scenario)))
-    scenarioTitle.textContent = `COIN SIGNALS · ${label}`
-  })
-  scenarioButtons.push([scenario, button])
-  scenarioPanel.append(button)
-}
-app.append(scenarioPanel)
 
 const causalStatus = document.createElement('div')
 causalStatus.className = 'causal-status debug-only'
@@ -121,7 +85,6 @@ populationStatus.className = 'population-status debug-only'
 populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}`
 app.append(populationStatus)
 
-const keyboard = new KeyboardState()
 const brainUrl = import.meta.env.VITE_BRAIN_WS_URL ?? 'ws://127.0.0.1:8765'
 const brainSocket = new BrainSocket(brainUrl)
 const flightLog = new FlightLogger()
@@ -131,11 +94,10 @@ let lastMarketUiStatus = ''
 
 // The pilot population is deliberately a numbered set of real CNS agents.
 // Additional bodies are explicitly render-only followers of these primaries.
-const population = new FlyPopulation({ keyboard, brainSocket, brainUpdateHz, size: SWARM_SIZE, driver: flightDriver })
-const { agents, renderers: flyRenderers, controllers, followers } = population
+const population = new FlyPopulation({ brainSocket, brainUpdateHz, size: SWARM_SIZE })
+const { agents, renderers: flyRenderers, followers } = population
 const followerRenderers = followers.map((follower) => follower.renderer)
 const visualRenderers = [...flyRenderers, ...followerRenderers]
-modeButton.addEventListener('click', () => population.selectedController.toggleMode())
 
 const world = new World(scene, agents, environment)
 visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
@@ -148,7 +110,7 @@ let canonicalBodiesReady = false
 void Promise.all(visualRenderers.map((flyRenderer) => flyRenderer.ready)).then(() => {
   const firstRenderer = flyRenderers[0]
   const allCanonical = visualRenderers.every((flyRenderer) => flyRenderer.assetStatus === 'canonical')
-  bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'asset fallback · inspect console'} · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
+  bodyStatus.textContent = `BODY · ${allCanonical ? `canonical Flybody loaded · ${firstRenderer?.meshCount ?? 0} XML geoms × ${VISUAL_FLY_COUNT} visual flies` : 'canonical Flybody asset error · see console'} · ${SWARM_SIZE} independent brains · ${BODIES_PER_BRAIN} bodies/brain`
   canonicalBodiesReady = true
 })
 
@@ -185,20 +147,9 @@ performanceStatus.className = 'performance-status debug-only'
 performanceStatus.textContent = 'PERF · measuring…'
 app.append(performanceStatus)
 
-// Keep the first view calm and understandable. Detailed telemetry remains
-// available on demand for development, but a previous debug toggle must not
-// make every reload look like an internal diagnostic screen.
-let presentationMode: 'demo' | 'debug' = 'demo'
-
-function setPresentationMode(mode: 'demo' | 'debug') {
-  presentationMode = mode
-  app!.classList.toggle('presentation-demo', mode === 'demo')
-  app!.classList.toggle('presentation-debug', mode === 'debug')
-  presentationToggle.textContent = mode === 'demo' ? 'SHOW DETAILS' : 'HIDE DETAILS'
-}
-
-setPresentationMode(presentationMode)
-presentationToggle.addEventListener('click', () => setPresentationMode(presentationMode === 'demo' ? 'debug' : 'demo'))
+// Keep the public view calm. Detailed telemetry remains in the DOM for
+// developer inspection, but there is no user-facing debug switch.
+app.classList.add('presentation-demo')
 
 const cameraTargetPanel = document.createElement('div')
 cameraTargetPanel.className = 'camera-target-panel debug-only'
@@ -274,36 +225,6 @@ function resize() {
 }
 window.addEventListener('resize', resize)
 
-window.addEventListener('keydown', (event) => {
-  if (event.repeat) return
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return
-  if (event.code === 'KeyM') controllers[selectedIndex]!.toggleMode()
-  if (event.code === 'Backquote') setPresentationMode(presentationMode === 'demo' ? 'debug' : 'demo')
-  if (event.code === 'KeyP') {
-    renderQuality = renderQuality === 'performance' ? 'demo' : 'performance'
-    pipeline.setQuality(renderQuality)
-    window.localStorage.setItem('ffc.renderQuality', renderQuality)
-  }
-  if (event.code === 'KeyV') {
-    debugVectorsVisible = !debugVectorsVisible
-    debug.setVectorsVisible(debugVectorsVisible)
-  }
-  if (event.code === 'KeyI') {
-    debugPanelVisible = !debugPanelVisible
-    debug.setPanelVisible(debugPanelVisible)
-  }
-  const cameraKey = Number(event.code.replace('Digit', ''))
-  if (cameraKey >= 1 && cameraKey <= 4) cameraIndex = cameraKey - 1
-  if (cameraKey === 5) {
-    cameraIndex = 4
-    presentation.setMode('token')
-  }
-  if (cameraKey === 6) {
-    cameraIndex = 4
-    presentation.setMode('director')
-  }
-})
-
 brainSocket.onStatusChange((next) => {
   status.innerHTML = `<span class="status-dot ${next}"></span> brain socket ${next} <span class="socket-url">${brainUrl}</span>`
   if (next === 'connected') brainSocket.requestEnvironment()
@@ -330,7 +251,7 @@ function animate(now: number) {
   trails.update(agents, selectedIndex, delta)
   updateStartupGate(delta)
   const marketEnvironment = brainSocket.environmentUpdate()
-  if (environment.scenario === 'live' && marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
+  if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
   updateMarketStatus(marketEnvironment)
 
   if (world.elapsedSeconds >= nextSwarmTelemetryAt) {
@@ -362,37 +283,35 @@ function animate(now: number) {
     flyRenderer.update(agents[index]!, world.elapsedSeconds)
   })
   const selectedAgent = agents[selectedIndex]!
-  debug.update(selectedAgent, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(selectedAgent.id), brainSocket.activityFor(selectedAgent.id))
-  brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
-  if (world.elapsedSeconds >= nextCausalUiAt) {
+  // Diagnostics are intentionally not part of the product view. Avoid doing
+  // hidden DOM/raster work or ArrowHelper math on every frame when the panels
+  // are disabled; this matters with 80 canonical Flybody renderers.
+  if (debugPanelVisible || debugVectorsVisible) {
+    debug.update(selectedAgent, world.elapsedSeconds, brainSocket.getStatus(), brainSocket.stimulationFor(selectedAgent.id), brainSocket.activityFor(selectedAgent.id))
+  }
+  if (debugPanelVisible) {
+    brainActivityPanel.update(selectedAgent, brainSocket.activityFor(selectedAgent.id), brainSocket.stimulationFor(selectedAgent.id), world.elapsedSeconds)
+  }
+  if (debugPanelVisible && world.elapsedSeconds >= nextCausalUiAt) {
     updateCausalStatus(selectedAgent)
     nextCausalUiAt += 0.25
   }
-  const liveBrains = agents.reduce((count, agent) => count + (brainSocket.activityFor(agent.id)?.source === 'brian2-malecns-v1-realtime-3hop' ? 1 : 0), 0)
-  const cnsActive = agents.reduce((count, agent) => {
-    const activity = brainSocket.activityFor(agent.id)
-    return count + (activity?.source === 'brian2-malecns-v1-realtime-3hop' && Object.values(activity.spikeCounts).some((count) => count > 0) ? 1 : 0)
-  }, 0)
-  const cnsMotorControlled = agents.reduce((count, agent) => {
-    if (agent.mode !== 'malecns') return count
-    const activity = brainSocket.activityFor(agent.id)
-    const command = agent.actuators.get()
-    const nonNeutral = command.forwardThrust > 0 || Math.abs(command.yawTorque) > 0 || Math.abs(command.pitchTorque) > 0 || Math.abs(command.rollTorque) > 0
-    return count + (activity?.source === 'brian2-malecns-v1-realtime-3hop' && nonNeutral ? 1 : 0)
-  }, 0)
-  const previewDriven = agents.reduce((count, agent) => {
-    if (agent.mode !== 'preview') return count
-    const command = agent.actuators.get()
-    return count + (command.forwardThrust > 0 || Math.abs(command.yawTorque) > 0 || Math.abs(command.pitchTorque) > 0 || Math.abs(command.rollTorque) > 0 ? 1 : 0)
-  }, 0)
-  const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
-  populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>CNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE} · PREVIEW DRIVE ${previewDriven}/${SWARM_SIZE}`
-  const previewCount = agents.reduce((count, agent) => count + (agent.mode === 'preview' ? 1 : 0), 0)
-  const manualCount = agents.reduce((count, agent) => count + (agent.mode === 'manual' ? 1 : 0), 0)
-  const malecnsCount = agents.reduce((count, agent) => count + (agent.mode === 'malecns' ? 1 : 0), 0)
-  modeButton.textContent = `DRIVER · ${previewCount ? `PREVIEW ${previewCount}` : ''}${malecnsCount ? ` CNS ${malecnsCount}` : ''}${manualCount ? ` MANUAL ${manualCount}` : ''} · #${String(selectedIndex + 1).padStart(3, '0')}`
-  modeButton.title = `Selected fly driver. Preview is explicitly non-neural sensory flight; MaleCNS uses the decoded Brian2 command; manual is keyboard debug. Click to cycle.`
-
+  if (debugPanelVisible) {
+    const liveBrains = agents.reduce((count, agent) => count + (isLiveBrainSource(brainSocket.activityFor(agent.id)?.source) ? 1 : 0), 0)
+    const cnsActive = agents.reduce((count, agent) => {
+      const activity = brainSocket.activityFor(agent.id)
+      return count + (activity !== null && isLiveBrainSource(activity.source) && Object.values(activity.spikeCounts).some((count) => count > 0) ? 1 : 0)
+    }, 0)
+    const cnsMotorControlled = agents.reduce((count, agent) => {
+      if (agent.mode !== 'malecns') return count
+      const activity = brainSocket.activityFor(agent.id)
+      const command = agent.actuators.get()
+      const nonNeutral = command.forwardThrust > 0 || Math.abs(command.yawTorque) > 0 || Math.abs(command.pitchTorque) > 0 || Math.abs(command.rollTorque) > 0
+      return count + (isLiveBrainSource(activity?.source) && nonNeutral ? 1 : 0)
+    }, 0)
+    const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
+    populationStatus.innerHTML = `<strong>NEUROSWARM</strong><br>VISIBLE FLIES ${VISUAL_FLY_COUNT} · INDEPENDENT BRAINS ${SWARM_SIZE} · BODIES / BRAIN ${BODIES_PER_BRAIN}<br>CNS RUNTIMES ${liveBrains}/${SWARM_SIZE} · CNS ACTIVE ${cnsActive}/${SWARM_SIZE} · MOVING ${movingAgents}/${SWARM_SIZE}<br>MALECNS DRIVE ${cnsMotorControlled}/${SWARM_SIZE}`
+  }
   activeCamera = cameras[cameraIndex] ?? cameras[0]!
   if (cameraIndex === 0) free.update()
   const followedAgent = cameraTargetAgent()
@@ -409,13 +328,13 @@ function animate(now: number) {
     flyRenderer.setLod(lod)
   })
 
-  const marketLabel = environment.scenario === 'live'
-    ? marketEnvironment?.status === 'ok' ? 'LIVE MARKET' : 'LIVE MARKET SETUP'
-    : environment.scenario === 'different' ? 'DEMO SIGNALS' : environment.scenario === 'swapped' ? 'RELOCATED COINS' : 'NEUTRAL'
-  const driverLabel = selectedAgent.mode === 'preview' ? 'SENSOR-DRIVEN DEMO' : selectedAgent.mode === 'malecns' ? 'MALECNS DRIVER' : 'MANUAL DEBUG'
-  demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS · ${BODIES_PER_BRAIN} BODIES / BRAIN</span><span>${marketLabel} · ${driverLabel}</span>`
+  const marketLabel = marketEnvironment?.status === 'ok'
+    ? `${marketEnvironment.habitats.length} TOKEN PLACES`
+    : 'WAITING FOR TOKEN DATA'
+  const brainLabel = brainSocket.getStatus() === 'connected' ? 'AUTONOMOUS FLY BRAINS' : 'CONNECTING TO FLY BRAINS'
+  demoStatus.innerHTML = `<strong>NEUROSWARM</strong><span>${VISUAL_FLY_COUNT} FLIES · ${SWARM_SIZE} INDEPENDENT BRAINS</span><span>${marketLabel} · ${brainLabel}</span>`
   pipeline.render(delta, activeCamera)
-  if (world.elapsedSeconds >= nextPerfUiAt) {
+  if (debugPanelVisible && world.elapsedSeconds >= nextPerfUiAt) {
     const lodCounts = visualRenderers.reduce((counts, flyRenderer) => {
       const lod = flyRenderer.currentLod
       counts[lod] += 1
@@ -454,14 +373,12 @@ function updateStartupGate(delta: number) {
 }
 
 function updateMarketStatus(environmentUpdate: ReturnType<BrainSocket['environmentUpdate']>) {
-  if (environment.scenario !== 'live') return
   const status = environmentUpdate?.status ?? 'waiting'
   const detail = environmentUpdate?.error ?? environmentUpdate?.reason ?? 'waiting for the Python market feed'
   const uiStatus = `${status}:${detail}`
   if (uiStatus === lastMarketUiStatus) return
   lastMarketUiStatus = uiStatus
-  scenarioTitle.textContent = `COIN SIGNALS · LIVE GRAPH · ${status.toUpperCase()}`
-  scenarioPanel.title = detail
+  demoStatus.title = detail
 }
 
 function updateCausalStatus(agent: FlyAgent) {
@@ -469,9 +386,7 @@ function updateCausalStatus(agent: FlyAgent) {
   const activity = brainSocket.activityFor(agent.id)
   const frame = agent.sensors.getFrame()
   const command = agent.actuators.get()
-  const brainStep = agent.mode === 'preview'
-    ? `sensory flight preview · CNS telemetry ${activity?.source === 'brian2-malecns-v1-realtime-3hop' ? 'live' : 'waiting'}`
-    : activity?.source === 'brian2-malecns-v1-realtime-3hop'
+  const brainStep = activity !== null && isLiveBrainSource(activity.source)
     ? `Brian2 output · DN ${Object.values(activity.descendingRates).some((rate) => rate > 0) ? 'active' : 'quiet'}`
     : activity
       ? 'decoder-only output · no live Brian2 provider'
@@ -479,7 +394,7 @@ function updateCausalStatus(agent: FlyAgent) {
   causalStatus.innerHTML = [
     `<strong>CAUSE MAP · ${agent.id}</strong> · ${brainStep}`,
     `senses: vision L/R ${frame.leftEye.meanLuminance.toFixed(2)}/${frame.rightEye.meanLuminance.toFixed(2)} · odor ${frame.odor.concentration.toFixed(2)} · wall ${frame.contact.wall}`,
-    `${agent.mode === 'preview' ? 'CNS telemetry' : 'spikes/DN'}: ${stimulation ? `${stimulation.visual.length} visual + ${stimulation.olfactory.length} odor` : 'not encoded yet'} → ${agent.mode === 'preview' ? 'local sensors → preview' : 'spikes/DN'} → command ${command.forwardThrust.toFixed(2)} thrust · ${command.yawTorque.toFixed(2)} yaw · ${command.pitchTorque.toFixed(2)} pitch`,
+    `spikes/DN: ${stimulation ? `${stimulation.visual.length} visual + ${stimulation.olfactory.length} odor` : 'not encoded yet'} → decoded MaleCNS output → command ${command.forwardThrust.toFixed(2)} thrust · ${command.yawTorque.toFixed(2)} yaw · ${command.pitchTorque.toFixed(2)} pitch`,
   ].join('<br>')
 }
 

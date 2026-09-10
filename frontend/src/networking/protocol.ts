@@ -1,6 +1,10 @@
 import type { Quaternion, Vector3 } from 'three'
 
-export type FlyMode = 'manual' | 'malecns' | 'preview' | 'off'
+export type FlyMode = 'manual' | 'malecns' | 'off'
+
+export function isLiveBrainSource(source: string | undefined): boolean {
+  return source?.startsWith('brian2-malecns-v1-realtime-') ?? false
+}
 
 export interface EyeSample {
   direction: { x: number; y: number; z: number }
@@ -81,8 +85,26 @@ export interface FlightCommand {
   roll: number
 }
 
-export interface BrainActivity {
+export interface LowLevelFlightCommand {
+  forwardThrust: number
+  verticalThrust: number
+  yawTorque: number
+  pitchTorque: number
+  rollTorque: number
+  wingbeatFrequencyHz?: number
+}
+
+export interface PhysicalFlightTelemetry {
+  /** Present only when a native Flybody/MuJoCo worker reports these values. */
+  flybodyJointAction?: number[]
+  physicalVelocity?: { x: number; y: number; z: number }
+  physicalPosition?: { x: number; y: number; z: number }
+}
+
+export interface BrainActivity extends PhysicalFlightTelemetry {
   flightCommand: FlightCommand
+  maleCnsCommand?: FlightCommand
+  lowLevelFlightCommand?: LowLevelFlightCommand
   descendingRates: Record<string, number>
   spikeCounts: Record<string, number>
   source?: string
@@ -130,6 +152,11 @@ export interface BrainOutputMessage {
   source?: string
   stimulation?: MaleCNSSensoryStimulation
   flightCommand?: FlightCommand
+  maleCnsCommand?: FlightCommand
+  lowLevelFlightCommand?: LowLevelFlightCommand
+  flybodyJointAction?: number[]
+  physicalVelocity?: { x: number; y: number; z: number }
+  physicalPosition?: { x: number; y: number; z: number }
   descendingRates?: Record<string, number>
   spikeCounts?: Record<string, number>
   spikeRates?: Record<string, number>
@@ -152,6 +179,7 @@ export interface EnvironmentUpdateMessage {
       chaos: number
       attractiveOdor: number
       aversiveDanger: number
+      semanticType?: 'food' | 'rot' | 'trash' | 'market' | string
       signals?: Array<{
         name: string
         value: unknown
@@ -163,6 +191,7 @@ export interface EnvironmentUpdateMessage {
         source: string
         observedAtMs: number
       }>
+      financialTrace?: Record<string, unknown> | null
       provenance?: Array<Record<string, unknown>>
     }>
     rawMarketFieldsForwardedToFly: false

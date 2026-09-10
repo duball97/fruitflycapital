@@ -1,17 +1,16 @@
 import { BrainSocket } from '../networking/BrainSocket'
 import { FlyAgent } from './FlyAgent'
-import { KeyboardState, MaleCNSController, ManualController, SensoryFlightPreviewController, SwitchableController } from './FlyController'
+import { MaleCNSController } from './FlyController'
 import { FlyRenderer } from '../rendering/FlyRenderer'
 import { SWARM_SIZE, swarmFlyId, swarmSpawnPosition } from './SwarmConfig'
 import { BODIES_PER_BRAIN } from './SwarmConfig'
 import { VisualFlyFollower } from './VisualFlyFollower'
+import { Vector3 } from 'three'
 
 export interface FlyPopulationOptions {
-  keyboard: KeyboardState
   brainSocket: BrainSocket
   brainUpdateHz: number
   size?: number
-  driver?: 'malecns' | 'preview'
 }
 
 /**
@@ -21,7 +20,7 @@ export interface FlyPopulationOptions {
  */
 export class FlyPopulation {
   readonly agents: FlyAgent[] = []
-  readonly controllers: SwitchableController[] = []
+  readonly controllers: MaleCNSController[] = []
   readonly renderers: FlyRenderer[] = []
   readonly followers: VisualFlyFollower[] = []
   private _selectedIndex = 0
@@ -32,13 +31,15 @@ export class FlyPopulation {
 
     for (let index = 0; index < size; index += 1) {
       const id = swarmFlyId(index)
-      const manual = new ManualController(options.keyboard, () => index === this._selectedIndex)
-      const malecns = new MaleCNSController(options.brainSocket, id, options.brainUpdateHz, index * 0.05)
-      const preview = new SensoryFlightPreviewController(options.brainSocket, id, options.brainUpdateHz, index * 0.37)
-      const controller = new SwitchableController(manual, malecns, preview)
-      controller.setMode(options.driver ?? 'preview')
+      const controller = new MaleCNSController(options.brainSocket, id, options.brainUpdateHz, index * 0.05)
       this.controllers.push(controller)
       const agent = new FlyAgent(id, controller, swarmSpawnPosition(index))
+      // Independent agents do not share an initial heading. This is an
+      // initial-condition difference, not a hidden navigation policy: after
+      // spawn, every heading change still comes only from that fly's actuator
+      // command. Without it, identical far-field sensory frames make a
+      // healthy population look like one cloned trajectory.
+      agent.body.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), -0.72 + index * 0.31)
       this.agents.push(agent)
       this.renderers.push(new FlyRenderer())
       for (let slot = 1; slot < BODIES_PER_BRAIN; slot += 1) {
@@ -57,10 +58,6 @@ export class FlyPopulation {
 
   get selectedAgent() {
     return this.agents[this._selectedIndex]!
-  }
-
-  get selectedController() {
-    return this.controllers[this._selectedIndex]!
   }
 
   select(index: number) {

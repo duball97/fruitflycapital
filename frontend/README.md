@@ -47,30 +47,27 @@ Feather files in the repository root:
 ```bash
 ./.venv312/bin/malecns-realtime-cache \
   --data-dir data/raw \
-  --output-dir data/runtime/malecns-realtime-3hop
+  --output-dir data/runtime/malecns-realtime-3hop --path-hops 3
 ```
 
 The adapter encodes each embodied sensor frame into exact MaleCNS sensory IDs,
 advances one persistent Brian2 runtime per connected fly ID, and decodes that
 window's `spikeRates`/`spikeCounts` into the normalized `FlightCommand` through
 `FlightMotorDecoder`. The browser starts sixteen independent agents named
-`fly-001` through `fly-016`; there is no special A/B pair. Manual flight is
-fully local and applies only to the selected fly for debugging. If the cache is
-absent, MaleCNS mode returns zero decoded flight drive and reports the missing
-source instead of fabricating spikes. See `../docs/SWARM_ARCHITECTURE.md` and
-`../docs/LIVE_CNS_LOOP.md`.
+`fly-001` through `fly-016`; there is no special A/B pair. Every browser agent
+uses the MaleCNS controller. If the cache is absent, the command remains
+neutral and the diagnostic UI reports the missing source instead of fabricating
+spikes. See `../docs/SWARM_ARCHITECTURE.md` and `../docs/LIVE_CNS_LOOP.md`.
 
 The browser sends each numbered fly's compact brain frame at 2 Hz by default.
 Set
 `VITE_BRAIN_UPDATE_HZ` when testing a different cadence; this is a transport
 cadence choice, not a neural-parameter change.
 
-The default visible driver is `VITE_FLIGHT_DRIVER=preview`. This is an
-explicitly labelled, non-neural sensor-only flight benchmark: it uses local
-eye/antenna/optic-flow/contact observations and the same actuator interface so
-the canonical Flybody agents visibly fly while the bounded neural lift path is
-being validated. Set `VITE_FLIGHT_DRIVER=malecns` to use only the decoded
-Brian2 command; the current honest result may then be neutral thrust.
+All browser agents use the decoded Brian2 command. If the live runtime is
+unavailable or the selected MaleCNS output populations are quiet, the command
+remains neutral and the UI reports that state. There is no manual or synthetic
+preview driver in the product surface.
 
 The current default is sixteen independent brains and eighty visible bodies:
 each brain owns one primary body plus four render-only followers. Set
@@ -83,14 +80,9 @@ budget.
 
 ## Controls
 
-The product surface is mouse/UI-first. Use the top-right `INSPECT FLY` selector
-to choose any of the sixteen agents, then `FOCUS`, `FOLLOW`, `FREE`, `SWARM`,
-`TOKEN`, or `AUTO` to choose the view. In free orbit, left-drag rotates,
-right-drag pans, and the mouse wheel zooms toward the cursor. The mode button
-cycles the selected agent through the explicitly labelled preview driver,
-MaleCNS, and manual debug mode. Legacy
-keyboard shortcuts remain available only as an internal QA path and are not
-shown in the interface.
+The product surface is autonomous and mouse-first. In the default free camera,
+left-drag rotates, right-drag pans, and the mouse wheel zooms toward the cursor.
+The browser does not expose a manual flight or preview switch.
 
 The renderer reconstructs Flybody's articulated abdomen, thorax, head, eyes,
 antennae, halteres, legs, and wing assemblies while retaining `FlyBody`,
@@ -98,31 +90,23 @@ antennae, halteres, legs, and wing assemblies while retaining `FlyBody`,
 the existing rigid-body path until an optional MuJoCo pose server is attached.
 
 The arena is intentionally restrained: an invisible bounded flight volume, a
-readable floor, three differentiated coin piles, and two locally bundled CC0
-context props. The sixteen primary agents and their render-only followers all
-use the same canonical Flybody XML/OBJ source; no unrelated decorative swarm
-is created. Habitat particles and fly trails use pooled GPU buffers.
+readable floor, and up to 128 differentiated market habitats. Each habitat is
+presented as a compact food, rot, trash, or market-smell source derived from
+its encoded signals. Unrelated props are not rendered. The sixteen primary
+agents and their render-only followers all use the same canonical Flybody
+XML/OBJ source. Habitat particles and fly trails use pooled GPU buffers.
 
 The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,
 sensors, or telemetry.
 
 At startup, all sixteen agents begin in a deterministic distant launch
-formation. In the default preview driver, each body samples its own local
-vision, antenna odor, optic flow, and contact state, then steers through the
-same `FlyActuators -> FlyBody` interface used by MaleCNS. The preview's
-forward/lift drive is not a neural result. In MaleCNS mode, the compact sensor
-summary goes to that fly's own brain stream, and a quiet selected DN
-population correctly produces a neutral command. The selected causal panel
-exposes the local sensor values, exact encoded `R8d`/`ORN_DA1` counts, neural
-telemetry, and which driver produced the command.
-
-Use `NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` to change only the
-habitat sensory fields. These are mock habitats, not live token data. `LIVE
-GRAPH` uses the optional provider-neutral market adapter. The Graph
-configuration requires both a pool ID and the represented token address so
-buy/sell direction is resolved relative to that token. See
-`../docs/MARKET_SIGNAL_ARCHITECTURE.md`.
+formation. Each primary body's compact sensor summary goes to that fly's own
+brain stream, and the live token habitat fields become the fly's visual and
+olfactory environment. The selected causal panel exposes the local sensor
+values, exact encoded `R8d`/`ORN_DA1` counts, neural telemetry, and the command
+returned by that fly's MaleCNS runtime. Live market discovery is the only
+normal habitat source; local fixtures are reserved for developer tests.
 It also shows the SENSORY -> CNS -> descending activity -> FLIGHT COMMAND
 pipeline and a downloadable JSON flight log. The sensor contract
 intentionally excludes food, target, and obstacle coordinates. Sensor details

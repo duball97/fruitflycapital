@@ -58,7 +58,6 @@ body { background: #aab8b2; }
 .brain-panel-heading strong { color: #78d7ff; letter-spacing: .12em; }
 .brain-source { color: #f0c976; font-size: 9px; white-space: nowrap; }
 .brain-source[data-state="live"] { color: #6bf0ae; }
-.brain-source[data-state="preview"] { color: #f0c976; }
 .brain-panel-agent { margin-top: 4px; color: #e3edf2; }
 .brain-flow-row { display: grid; grid-template-columns: 62px 1fr 68px 1fr; align-items: center; gap: 7px; margin-top: 7px; color: #7592a4; font-size: 9px; }
 .brain-flow-track { display: block; height: 6px; overflow: hidden; border: 1px solid #315168; border-radius: 99px; background: #0a1823; }

@@ -43,8 +43,15 @@ export interface HoldersState {
 export interface SecurityState {
   status: 'unavailable' | 'available'
   honeypot: boolean | null
+  sellable?: boolean | null
   contractVerified: boolean | null
   ownerControl: string | null
+  buyTaxBps?: number | null
+  sellTaxBps?: number | null
+  blacklistMechanic?: boolean | null
+  mintCapability?: boolean | null
+  proxy?: boolean | null
+  securityFlags?: string[]
 }
 
 export interface SocialState {
@@ -77,4 +84,5 @@ export interface TokenState {
   lore: LoreState
   signals: Signal[]
   provenance: Array<Record<string, unknown>>
+  financial?: Record<string, unknown> | null
 }

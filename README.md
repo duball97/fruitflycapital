@@ -32,21 +32,18 @@ share the primary actuator intent with small deterministic spacing and timing
 variation, but do not sense, run a brain, or add votes.
 
 The realtime adapter currently runs a documented source-reachable three-hop
-MaleCNS circuit of roughly 6,641 neurons and 65,110 retained weighted edges per
-runtime. It does not step the full 211,577-neuron, 151,856,684-edge graph for
+MaleCNS circuit of roughly 6,641 neurons and 65,110 retained weighted edges
+per runtime. It does not step the full 211,577-neuron, 151,856,684-edge graph for
 each fly. The UI therefore separates `AGENTS`, `CNS RUNTIMES`, `CNS ACTIVE`,
 `MOVING`, and `DRIVE` instead of implying that neural activity equals movement.
 
-The literal MaleCNS decoder has evidence-constrained turning/flight readouts,
-but the live DNg02 wing-amplitude path has not yet produced sustained thrust in
-the realtime smoke result. The browser therefore starts in an explicitly
-labelled `PREVIEW` driver so the Flybody population is visibly flying while
-the neural result remains inspectable. Preview movement uses only each fly's
-local eye/antenna/optic-flow/contact observations and the same
-`FlyActuators -> FlyBody` interface; it does not receive token coordinates or
-issue a hidden “go to coin” command. Set `VITE_FLIGHT_DRIVER=malecns` to run
-the literal decoded neural command, where a neutral command is still an
-honest possible result until a validated lift pathway is established.
+The literal MaleCNS decoder has evidence-constrained turning/flight readouts.
+The browser starts in that real `MALECNS` driver: each fly's embodied
+eye/antenna/optic-flow/contact observations are encoded, simulated by its
+independent Brian2 runtime, decoded, and sent through the shared
+`FlyActuators -> FlyBody` interface. It does not receive token coordinates or
+issue a hidden “go to coin” command. If the validated pathway is quiet, the
+command remains neutral and the UI reports that state.
 
 The population size is configurable with `frontend/.env`:
 
@@ -93,7 +90,10 @@ until that mapping is scientifically specified.
 ## Deployment boundary
 
 The Three.js client can be deployed to Vercel as a Vite site. Set Vercel's
-project root to `frontend`, use `npm run build`, and publish `dist`. Set
+project root to `frontend`, use `npm run build`, and publish `dist`. Commit
+both the normal vendored `third_party/flybody/` directory and the
+`frontend/public/models/flybody` link; the build now fails if the canonical XML
+or any referenced OBJ is absent. Set
 `VITE_BRAIN_WS_URL` to a public `wss://` endpoint in the deployed environment;
 the local `ws://127.0.0.1:8765` default only works on the developer's machine.
 
@@ -105,10 +105,19 @@ server to Vercel would require a Function/WebSocket entrypoint, externalized
 runtime state, and a separate capacity plan. Keep Graph and Uniswap credentials
 on that server; never expose them as `VITE_` variables.
 
+When DexScreener discovery is enabled, the backend can persist the discovered
+market list and locked arena round in Supabase. Run
+[`supabase/migrations/001_market_cache.sql`](supabase/migrations/001_market_cache.sql)
+once, then set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Render along
+with `NEUROSWARM_MARKET_DISCOVERY_ENABLED=true`. Names, symbols, image URLs,
+links, metrics, and provenance are cached server-side; the service-role key is
+never sent to Vercel. See [`supabase/README.md`](supabase/README.md).
+
 ## Fund / treasury layer
 
 Fruit Fly Capital includes a safe fund boundary under `contracts/` and
-`src/malecns/fund/`. The Foundry vault uses explicit USDC/FFC share accounting,
+`src/malecns/fund/`. The Foundry vault uses explicit WETH/FFC share accounting
+on Robinhood Chain testnet,
 authorized external NAV reporting, and asynchronous withdrawals. The Python
 ledger and portfolio engine keep book state distinct from on-chain state; the
 Privy client is server-side and execution defaults to dry-run. See
@@ -120,7 +129,8 @@ cd contracts && forge test --offline -vvv
 ```
 
 No frontend control can sign or broadcast a transaction, and no mainnet
-deployment is automated.
+deployment is automated. The deployment script uses the configured real
+Robinhood Chain testnet WETH asset; MockUSDC is test-only.
 
 Bootstrap for a biologically grounded MaleCNS *Drosophila* swarm project. The
 product is Fruit Fly Capital / NeuroSwarm: biological agents in an onchain
@@ -156,7 +166,7 @@ from the official local Feather files before starting the adapter:
 ```bash
 ./.venv312/bin/malecns-realtime-cache \
   --data-dir data/raw \
-  --output-dir data/runtime/malecns-realtime-3hop
+  --output-dir data/runtime/malecns-realtime-3hop --path-hops 3
 ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
@@ -293,15 +303,15 @@ and [docs/MODEL_ASSUMPTIONS.md](docs/MODEL_ASSUMPTIONS.md).
 ## 3D fly world
 
 The `frontend/` directory contains the Three.js/Vite embodied-world prototype.
-It uses a 2 m x 1 m x 2 m arena, a 120 Hz rigid-body step, four camera modes,
-manual keyboard flight, and a WebSocket actuator boundary for the Python
-MaleCNS process. See [frontend/README.md](frontend/README.md) for launch
-commands. `FlightMotorDecoder` provides the documented, rate-only
+It uses a 2 m x 1 m x 2 m arena, a 120 Hz rigid-body step, mouse orbit camera
+controls, and a WebSocket actuator boundary for the Python MaleCNS process.
+See [frontend/README.md](frontend/README.md) for launch commands.
+`FlightMotorDecoder` provides the documented, rate-only
 MaleCNS-to-actuator boundary for exact annotated flight populations. With the
 realtime cache present, the adapter owns one persistent Brian2 runtime per
 connected `fly-NNN` ID and returns live spike counts/rates; without it, the
-adapter stays neutral and reports that source explicitly. Manual flight remains
-fully live.
+adapter stays neutral and reports that source explicitly. The public application
+does not substitute manual or preview movement.
 See [docs/LIVE_CNS_LOOP.md](docs/LIVE_CNS_LOOP.md) and
 [docs/FLIGHT_MOTOR_MAPPING.md](docs/FLIGHT_MOTOR_MAPPING.md) for evidence and
 limitations.
@@ -314,7 +324,8 @@ The optional live feed is deliberately layered:
 
 ```text
 DexScreener -> MarketUniverse -> eligibility -> locked MarketRound
-            -> selected Ethereum/Uniswap pairs
+            -> up to 128 physical market habitats
+            -> 12 deep Ethereum/Uniswap observer configs
 GraphProvider -> RawTokenObservation -> TokenSignalEngine -> Signal[]
               -> HabitatEncoder -> physical habitat fields -> fly sensors
 ```
@@ -323,23 +334,31 @@ DexScreener now supplies server-side market discovery through the documented
 public API. It decides which markets enter the arena, not which market is
 attractive to a fly: selection scores, rankings, bullish labels, expected
 returns, coordinates, and trading recommendations never enter the habitat or
-brain path. The default round exposes up to eight eligible markets and locks
-them for ten minutes. The Graph remains the deeper swap/pool observer for
-selected Ethereum/Uniswap pairs. See
+brain path. The default round exposes up to 128 eligible markets and locks
+them for ten minutes; up to 12 receive deep Graph observation while the rest
+receive lightweight DexScreener-derived state. See
 [docs/MARKET_SIGNAL_ARCHITECTURE.md](docs/MARKET_SIGNAL_ARCHITECTURE.md).
 
 Enable it in the Python server environment:
 
 ```bash
 NEUROSWARM_MARKET_DISCOVERY_ENABLED=true
-NEUROSWARM_MARKET_CHAINS=ethereum
-NEUROSWARM_MARKET_DEX_IDS=uniswap,uniswap-v3
+NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood
+NEUROSWARM_MARKET_DEX_IDS=
 NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=
 ```
 
 The latest/recent profile feeds can seed discovery when they contain the
 configured chain. For a stable project-specific universe, provide explicit
 comma-separated token addresses (or `chainId:address` entries). The discovery
+configuration includes Base and Robinhood by default; leaving
+`NEUROSWARM_MARKET_DEX_IDS` blank accepts the native DEX venues returned by
+DexScreener on those chains.
+
+On Render, set these same values in the service environment and redeploy:
+`NEUROSWARM_MARKET_DISCOVERY_ENABLED=true`,
+`NEUROSWARM_MARKET_CHAINS=ethereum,base,robinhood`, and leave
+`NEUROSWARM_MARKET_DEX_IDS` empty.
 report can be inspected with:
 
 ```bash
@@ -364,12 +383,13 @@ The current milestone is a sixteen-brain population pilot rendered as eighty
 canonical Flybody bodies. Each primary has its own body, sensor frame,
 actuator state, unique `fly-NNN` brain ID, and server-side RNG stream. Four
 render-only followers are attached to each primary; they do not sense, create
-brain runtimes, or add consensus votes. The three synthetic `TokenHabitat`
-instances expose
+brain runtimes, or add consensus votes. Live mode dynamically creates one
+`TokenHabitat` per market ID up to the world capacity. Each habitat exposes
 only physical proxies—visual brightness/motion, attractive odor, and aversive
-danger. They do not call APIs or represent real tokens. Switch among
-`NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` in the scene to inspect
-the sensory changes.
+danger. The local test scenarios can still create eight fixture habitats; those
+fixtures do not call APIs or represent real tokens. Switch among
+The normal scene uses live discovered market habitats; fixture scenarios are
+reserved for developer tests and are not part of the product surface.
 
 ## Swarm behavior and fund boundary
 
@@ -405,10 +425,9 @@ for the per-fly causal chain and runtime-capacity interpretation.
 
 ## Why the flies do not go to the boxes yet
 
-The cardboard box and trash cans are optional local CC0 **context props**. They
-are not token habitats, do not emit the attractive odor field, and are not
-targets. The three colored coin piles are the synthetic token habitats used by
-the current prototype.
+The browser scene contains only token habitats: each colored coin pile is a
+physical market city with its own market/sensory state. The frontend has no
+decorative target props and does not substitute them for markets.
 
 The movement path is intentionally:
 

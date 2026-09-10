@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
+import {ITransparentUpgradeableProxy, TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {FruitFlyFundVault} from "../src/FruitFlyFundVault.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 
@@ -16,7 +18,17 @@ contract FruitFlyFundVaultTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        vault = new FruitFlyFundVault(address(usdc), treasury, admin);
+        FruitFlyFundVault implementation = new FruitFlyFundVault();
+        bytes memory initialization = abi.encodeCall(
+            FruitFlyFundVault.initialize,
+            (address(usdc), treasury, admin)
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(implementation),
+            admin,
+            initialization
+        );
+        vault = FruitFlyFundVault(address(proxy));
         usdc.mint(alice, 1_000e6);
         usdc.mint(bob, 1_000e6);
         usdc.mint(charlie, 1_000e6);
@@ -29,7 +41,18 @@ contract FruitFlyFundVaultTest is Test {
         vm.prank(alice); vault.deposit(100e6, alice);
         assertEq(vault.balanceOf(alice), 100e18);
         assertEq(vault.navPerShareUsdc(), 1e6);
+        assertEq(vault.name(), "Fruit Fly Capital Fund Share");
+        assertEq(vault.symbol(), "FFC");
         console2.log("first deposit shares", vault.balanceOf(alice));
+    }
+
+    function testProxyAndImplementationCannotBeInitializedTwice() public {
+        vm.expectRevert();
+        vault.initialize(address(usdc), treasury, admin);
+
+        FruitFlyFundVault implementation = new FruitFlyFundVault();
+        vm.expectRevert();
+        implementation.initialize(address(usdc), treasury, admin);
     }
 
     function testSecondDepositorAtInitialNav() public {
@@ -122,5 +145,37 @@ contract FruitFlyFundVaultTest is Test {
         assertLe(vault.totalSupply(), 100e18 + 1e12);
         assertEq(vault.totalNavUsdc(), usdc.balanceOf(address(vault)) + vault.reportedStrategyNavUsdc());
         vm.prank(charlie); vm.expectRevert("invalid deposit"); vault.deposit(0, charlie);
+    }
+
+    function testProxyUpgradePreservesStateAndRoles() public {
+        vm.prank(alice); vault.deposit(100e6, alice);
+        vm.prank(admin); vault.reportStrategyNav(25e6);
+
+        FruitFlyFundVaultV2 nextImplementation = new FruitFlyFundVaultV2();
+        address proxyAdminAddress = address(uint160(uint256(vm.load(address(vault), _adminSlot()))));
+        vm.prank(admin);
+        ProxyAdmin(proxyAdminAddress).upgradeAndCall(
+            ITransparentUpgradeableProxy(address(vault)),
+            address(nextImplementation),
+            bytes("")
+        );
+
+        FruitFlyFundVaultV2 upgraded = FruitFlyFundVaultV2(address(vault));
+        assertEq(upgraded.version(), 2);
+        assertEq(upgraded.balanceOf(alice), 100e18);
+        assertEq(upgraded.totalNavUsdc(), 125e6);
+        assertEq(address(upgraded.accountingAsset()), address(usdc));
+        assertEq(upgraded.strategyTreasury(), treasury);
+        assertTrue(upgraded.hasRole(upgraded.DEFAULT_ADMIN_ROLE(), admin));
+    }
+
+    function _adminSlot() private pure returns (bytes32) {
+        return 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    }
+}
+
+contract FruitFlyFundVaultV2 is FruitFlyFundVault {
+    function version() external pure returns (uint256) {
+        return 2;
     }
 }

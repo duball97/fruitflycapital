@@ -89,6 +89,31 @@ def test_universe_uses_profiles_as_seed_universe_and_filters_dex():
     assert universe.as_dict()["candidateCount"] == 1
 
 
+def test_universe_accepts_native_base_venue_when_dex_filter_is_empty():
+    pair = {**_pair(), "chainId": "base", "dexId": "aerodrome"}
+
+    def fetch(url: str, _timeout: float):
+        path = urlparse(url).path
+        if path == "/token-profiles/latest/v1":
+            return [{"chainId": "base", "tokenAddress": "0xtoken"}]
+        if path == "/token-profiles/recent-updates/v1":
+            return []
+        if path.startswith("/tokens/v1/"):
+            return [pair]
+        raise AssertionError(path)
+
+    provider = DexScreenerUniverseProvider(
+        DexScreenerClient(fetcher=fetch),
+        chains=("base", "robinhood"),
+        dex_ids=(),
+    )
+    universe = provider.refresh(now_ms=1_700_010_000_000)
+
+    assert len(universe.core_markets) == 1
+    assert universe.core_markets[0].identity.chain_id == "base"
+    assert universe.core_markets[0].identity.dex_id == "aerodrome"
+
+
 def test_selector_filters_quality_and_round_manager_locks_selected_markets():
     good = candidate_from_pair(_pair("0xgood", liquidity=250_000), observed_at_ms=1_700_010_000_000)
     young = candidate_from_pair({**_pair("0xyoung"), "pairCreatedAt": 1_700_009_500_000}, observed_at_ms=1_700_010_000_000)
@@ -113,3 +138,22 @@ def test_selector_filters_quality_and_round_manager_locks_selected_markets():
     selected = selector.select(universe, now_ms=1_700_010_000_000)[0]
     assert selected.discovery_score > 0
     assert "discoveryScore" not in selected.candidate.as_dict()
+
+
+def test_round_separates_physical_world_capacity_from_deep_observers():
+    first = candidate_from_pair(_pair("0xone", token="0xone-token"), observed_at_ms=1_700_010_000_000)
+    second = candidate_from_pair(_pair("0xtwo", token="0xtwo-token", liquidity=150_000), observed_at_ms=1_700_010_000_000)
+    assert first is not None and second is not None
+    from malecns.market.universe import MarketUniverse
+
+    universe = MarketUniverse((first, second), (), 1_700_010_000_000)
+    selector = MarketSelector(
+        MarketEligibility(min_liquidity_usd=100_000, min_volume_24h_usd=100_000, min_pair_age_seconds=3_600),
+        active_count=1,
+        world_capacity=2,
+    )
+    round_state = MarketRoundManager(selector, round_seconds=600).active_round(universe, now_ms=1_700_010_000_000)
+
+    assert len(round_state.markets) == 2
+    assert len(round_state.deep_markets) == 1
+    assert round_state.deep_markets[0].market_id in {item.market_id for item in round_state.markets}

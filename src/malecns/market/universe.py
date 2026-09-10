@@ -52,8 +52,10 @@ class DexScreenerUniverseProvider:
     """Build a bounded market universe from documented DexScreener feeds."""
 
     client: DexScreenerClient
-    chains: tuple[str, ...] = ("ethereum",)
-    dex_ids: tuple[str, ...] = ("uniswap", "uniswap-v3")
+    # Keep Ethereum for continuity, while including the chains used by the
+    # deployed demo. An empty dex_ids tuple means all DEXs on those chains.
+    chains: tuple[str, ...] = ("ethereum", "base", "robinhood")
+    dex_ids: tuple[str, ...] = ()
     core_target: int = 100
     recent_target: int = 20
     profile_limit: int = 60
@@ -112,7 +114,7 @@ class DexScreenerUniverseProvider:
                     continue
                 for pair in dex_pairs:
                     candidate = candidate_from_pair(pair, observed_at_ms=observed_at_ms)
-                    if candidate is None or _norm(candidate.identity.dex_id) not in allowed_dexes:
+                    if candidate is None or (allowed_dexes and _norm(candidate.identity.dex_id) not in allowed_dexes):
                         continue
                     current = core_pairs.get(candidate.market_id)
                     if current is None or _candidate_quality(candidate) > _candidate_quality(current):
@@ -130,7 +132,7 @@ class DexScreenerUniverseProvider:
                     profile_class=profile_class,
                     observed_at_ms=observed_at_ms,
                 )
-                if candidate is None or _norm(candidate.identity.dex_id) not in allowed_dexes:
+                if candidate is None or (allowed_dexes and _norm(candidate.identity.dex_id) not in allowed_dexes):
                     continue
                 target = core_pairs if _candidate_class(candidate, profile_class) == "core" else recent_pairs
                 current = target.get(candidate.market_id)
@@ -146,8 +148,8 @@ class DexScreenerUniverseProvider:
 class MarketEligibility:
     """Quality and scope checks used before selecting active arena markets."""
 
-    chains: tuple[str, ...] = ("ethereum",)
-    dex_ids: tuple[str, ...] = ("uniswap", "uniswap-v3")
+    chains: tuple[str, ...] = ("ethereum", "base", "robinhood")
+    dex_ids: tuple[str, ...] = ()
     min_liquidity_usd: float = 100_000.0
     min_volume_24h_usd: float = 100_000.0
     min_pair_age_seconds: int = 3_600
@@ -156,7 +158,9 @@ class MarketEligibility:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         if _norm(candidate.identity.chain_id) not in {_norm(value) for value in self.chains}:
             return False
-        if _norm(candidate.identity.dex_id) not in {_norm(value) for value in self.dex_ids}:
+        # DEX filtering is optional so Base and Robinhood can use their native
+        # venues without being silently removed by an Ethereum-only list.
+        if self.dex_ids and _norm(candidate.identity.dex_id) not in {_norm(value) for value in self.dex_ids}:
             return False
         if not candidate.identity.pair_address or not candidate.represented_token_address:
             return False
@@ -181,7 +185,10 @@ class SelectedMarket:
 @dataclass
 class MarketSelector:
     eligibility: MarketEligibility = field(default_factory=MarketEligibility)
-    active_count: int = 8
+    # Kept as active_count for compatibility with existing callers; it is the
+    # number of markets sent to a deep observer, not the physical world size.
+    active_count: int = 12
+    world_capacity: int = 128
 
     def eligible(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[MarketCandidate, ...]:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
@@ -196,13 +203,19 @@ class MarketSelector:
         return tuple(sorted(by_token.values(), key=lambda item: item.market_id))
 
     def select(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[SelectedMarket, ...]:
+        return self._ranked(universe, now_ms=now_ms)[: max(0, self.active_count)]
+
+    def select_world(self, universe: MarketUniverse, *, now_ms: int | None = None) -> tuple[MarketCandidate, ...]:
+        return tuple(item.candidate for item in self._ranked(universe, now_ms=now_ms)[: max(0, self.world_capacity)])
+
+    def _ranked(self, universe: MarketUniverse, *, now_ms: int | None = None) -> list[SelectedMarket]:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         scored = [
             SelectedMarket(candidate, _discovery_score(candidate))
             for candidate in self.eligible(universe, now_ms=current_ms)
         ]
         scored.sort(key=lambda item: (-item.discovery_score, item.candidate.market_id))
-        return tuple(scored[: max(0, self.active_count)])
+        return scored
 
 
 @dataclass(frozen=True)
@@ -211,6 +224,7 @@ class MarketRound:
     started_at_ms: int
     expires_at_ms: int
     markets: tuple[MarketCandidate, ...]
+    deep_markets: tuple[MarketCandidate, ...] = ()
 
     def is_active(self, now_ms: int) -> bool:
         return int(now_ms) < self.expires_at_ms
@@ -221,6 +235,7 @@ class MarketRound:
             "startedAtMs": self.started_at_ms,
             "expiresAtMs": self.expires_at_ms,
             "markets": [market.as_dict() for market in self.markets],
+            "deepMarkets": [market.as_dict() for market in self.deep_markets],
         }
 
 
@@ -235,14 +250,16 @@ class MarketRoundManager:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         if not force and self._current is not None and self._current.is_active(current_ms):
             return self._current
-        selected = self.selector.select(universe, now_ms=current_ms)
+        deep_selected = self.selector.select(universe, now_ms=current_ms)
+        world_selected = self.selector.select_world(universe, now_ms=current_ms)
         self._round_counter += 1
         duration_ms = max(1, int(self.round_seconds)) * 1000
         self._current = MarketRound(
             round_number=self._round_counter,
             started_at_ms=current_ms,
             expires_at_ms=current_ms + duration_ms,
-            markets=tuple(item.candidate for item in selected),
+            markets=tuple(world_selected),
+            deep_markets=tuple(item.candidate for item in deep_selected),
         )
         return self._current
 
@@ -254,8 +271,10 @@ class DexScreenerMarketDiscovery:
     universe_provider: DexScreenerUniverseProvider
     rounds: MarketRoundManager
     refresh_seconds: float = 300.0
+    cache: Any | None = None
     _universe: MarketUniverse | None = field(default=None, init=False, repr=False)
     _last_refresh_monotonic: float = field(default=0.0, init=False, repr=False)
+    _last_cached_round_started_ms: int | None = field(default=None, init=False, repr=False)
     last_error: str | None = field(default=None, init=False)
 
     @classmethod
@@ -263,8 +282,9 @@ class DexScreenerMarketDiscovery:
         enabled = os.getenv("NEUROSWARM_MARKET_DISCOVERY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return None
-        chains = _csv(os.getenv("NEUROSWARM_MARKET_CHAINS", "ethereum")) or ("ethereum",)
-        dex_ids = _csv(os.getenv("NEUROSWARM_MARKET_DEX_IDS", "uniswap,uniswap-v3")) or ("uniswap", "uniswap-v3")
+        chains = _csv(os.getenv("NEUROSWARM_MARKET_CHAINS", "ethereum,base,robinhood")) or ("ethereum", "base", "robinhood")
+        configured_dex_ids = os.getenv("NEUROSWARM_MARKET_DEX_IDS", "").strip()
+        dex_ids = _csv(configured_dex_ids) if configured_dex_ids else ()
         seeds = _seed_tokens(os.getenv("NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES", ""), chains[0])
         client = DexScreenerClient(
             base_url=os.getenv("DEXSCREENER_API_BASE_URL", "https://api.dexscreener.com").strip() or "https://api.dexscreener.com",
@@ -288,17 +308,37 @@ class DexScreenerMarketDiscovery:
             seed_tokens=seeds,
             pool_bootstrap=graph_client.top_pools if graph_client is not None else None,
         )
-        selector = MarketSelector(eligibility, active_count=int(os.getenv("NEUROSWARM_MARKET_ACTIVE_COUNT", "8")))
+        selector = MarketSelector(
+            eligibility,
+            active_count=int(os.getenv("NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT", "12")),
+            world_capacity=int(os.getenv("NEUROSWARM_MARKET_WORLD_CAPACITY", "128")),
+        )
+        from .supabase_cache import SupabaseMarketCache
+
         return cls(
             provider,
             MarketRoundManager(selector, round_seconds=int(os.getenv("NEUROSWARM_MARKET_ROUND_SECONDS", "600"))),
-            refresh_seconds=float(os.getenv("NEUROSWARM_MARKET_DISCOVERY_REFRESH_SECONDS", "300")),
+            refresh_seconds=float(os.getenv("NEUROSWARM_MARKET_CACHE_TTL_SECONDS", os.getenv("NEUROSWARM_MARKET_DISCOVERY_REFRESH_SECONDS", "300"))),
+            cache=SupabaseMarketCache.from_env(),
         )
 
     def active_round(self, *, now_ms: int | None = None, force: bool = False) -> MarketRound:
         current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         now_monotonic = time.monotonic()
         if force or self._universe is None or now_monotonic - self._last_refresh_monotonic >= self.refresh_seconds:
+            if not force and self._universe is None and self.cache is not None:
+                try:
+                    cached = self.cache.load_active(current_ms)
+                except Exception as exc:
+                    cached = None
+                    self.last_error = f"cache read: {exc}"
+                if cached is not None:
+                    self._universe, cached_round = cached
+                    self.rounds._current = cached_round
+                    self.rounds._round_counter = max(self.rounds._round_counter, cached_round.round_number)
+                    self._last_refresh_monotonic = now_monotonic
+                    self._last_cached_round_started_ms = cached_round.started_at_ms
+                    return cached_round
             try:
                 self._universe = self.universe_provider.refresh(now_ms=current_ms, force=force)
                 self._last_refresh_monotonic = now_monotonic
@@ -307,29 +347,51 @@ class DexScreenerMarketDiscovery:
                 self.last_error = str(exc)
                 if self._universe is None:
                     raise
-        return self.rounds.active_round(self._universe, now_ms=current_ms, force=force)
+        round_state = self.rounds.active_round(self._universe, now_ms=current_ms, force=force)
+        if self.cache is not None and round_state.started_at_ms != self._last_cached_round_started_ms:
+            try:
+                self.cache.save(self._universe, round_state)
+                self._last_cached_round_started_ms = round_state.started_at_ms
+            except Exception as exc:
+                # Persistence must never take the live market feed down.
+                self.last_error = f"cache write: {exc}"
+        return round_state
 
     def graph_habitat_configs(self, *, now_ms: int | None = None, force: bool = False) -> list[dict[str, Any]]:
         """Convert selected candidates to the existing GraphProvider contract."""
 
-        result: list[dict[str, Any]] = []
-        for candidate in self.active_round(now_ms=now_ms, force=force).markets:
-            if _norm(candidate.identity.chain_id) != "ethereum":
-                continue
-            if _norm(candidate.identity.dex_id) not in {"uniswap", "uniswap-v3"}:
-                continue
-            result.append(
-                {
-                    "id": candidate.market_id,
-                    "label": candidate.base_token_symbol or candidate.market_id,
-                    "poolId": candidate.identity.pair_address,
-                    "tokenAddress": candidate.represented_token_address,
-                    "chainId": candidate.identity.chain_id,
-                    "dexId": candidate.identity.dex_id,
-                    "pairAddress": candidate.identity.pair_address,
-                }
-            )
-        return result
+        return [
+            self._config_for(candidate)
+            for candidate in self.active_round(now_ms=now_ms, force=force).deep_markets
+            if _norm(candidate.identity.chain_id) == "ethereum"
+            and _norm(candidate.identity.dex_id) in {"uniswap", "uniswap-v3"}
+        ]
+
+    def world_habitat_configs(self, *, now_ms: int | None = None, force: bool = False) -> list[dict[str, Any]]:
+        """Convert every physically present market to a lightweight config."""
+
+        return [self._config_for(candidate) for candidate in self.active_round(now_ms=now_ms, force=force).markets]
+
+    @staticmethod
+    def _config_for(candidate: MarketCandidate) -> dict[str, Any]:
+        return {
+            "id": candidate.market_id,
+            "label": candidate.base_token_symbol or candidate.market_id,
+            "marketName": candidate.base_token_name,
+            "imageUrl": candidate.image_url,
+            "poolId": candidate.identity.pair_address,
+            "tokenAddress": candidate.represented_token_address,
+            "chainId": candidate.identity.chain_id,
+            "dexId": candidate.identity.dex_id,
+            "pairAddress": candidate.identity.pair_address,
+            "lightweight": True,
+            "liquidityUsd": candidate.liquidity_usd,
+            "volume5mUsd": candidate.volume_5m_usd,
+            "volume1hUsd": candidate.volume_1h_usd,
+            "volume24hUsd": candidate.volume_24h_usd,
+            "buys5m": candidate.buys_5m,
+            "sells5m": candidate.sells_5m,
+        }
 
     def as_dict(self, *, now_ms: int | None = None) -> dict[str, Any]:
         round_state = self.active_round(now_ms=now_ms)

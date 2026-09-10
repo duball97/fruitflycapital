@@ -11,9 +11,10 @@ DexScreener market discovery
     |
     v
 MarketUniverse -> eligibility -> locked MarketRound
-    |
+    |                         |
+    |                         +--> up to 128 physical market habitats
     v
-GraphProvider (selected Ethereum/Uniswap pairs)
+GraphProvider (up to 12 selected Ethereum/Uniswap deep observers)
     |
     v
 RawTokenObservation
@@ -26,6 +27,11 @@ TokenSignalEngine
     |
     +--> Signal[]
            value / normalized / importance / valence / confidence / freshness
+    |
+    v
+FinancialFeatureRegistry -> contextual normalization -> FinancialState
+                           -> InvestabilityGuard + FinancialFactorModel v1
+                           -> capped sensory mapping
     |
     v
 HabitatEncoder
@@ -45,10 +51,17 @@ logic. The habitat model does not depend on DexScreener's response shape, and
 no raw market fields are forwarded to a fly.
 
 The Graph remains the deeper observation provider for selected Ethereum /
-Uniswap pairs. If it is unavailable, DexScreener discovery can still produce a
-market-universe report, but the live physical habitat feed stays empty rather
-than fabricating swap observations. A future holder, security, social, or lore
-provider should add its own explicit observations and provenance.
+Uniswap pairs. The round can contain up to 128 physically present markets,
+while `NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT` bounds the expensive Graph tier.
+The other habitats receive lightweight state from the cached DexScreener row;
+this preserves market identity and a coarse sensory field without pretending
+that a DexScreener summary is a swap-level observation. A future holder,
+security, social, or lore provider should add its own explicit observations and
+provenance.
+
+Financial factor weights and sensory mappings are versioned in
+`config/financial_factors.v1.json` and `config/sensory_mapping.v1.json`; see
+[`docs/FINANCIAL_SENSORY_PIPELINE.md`](FINANCIAL_SENSORY_PIPELINE.md).
 
 ## DexScreener discovery
 
@@ -68,8 +81,9 @@ The profile feeds are a discovery input, not a complete canonical list of all
 Ethereum pools. For a reliable project-specific universe, add explicit seed
 addresses through `NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES`; the provider
 still resolves their actual pairs and statistics. Core and recent targets are
-universe sizes, not numbers of habitats or brains. The default active round is
-eight markets locked for ten minutes.
+universe sizes, not numbers of habitats or brains. The default world round is
+up to 128 markets locked for ten minutes, with up to 12 of those markets sent
+to the deep Graph observer.
 
 When a configured Graph client supports the `pools` query, the discovery
 provider also asks it for high-TVL pool IDs and enriches those IDs through
@@ -77,10 +91,12 @@ DexScreener's pair endpoint. This is a bootstrap/indexing path only; Graph
 does not select a fly preference. If that optional bootstrap fails, profile or
 explicit-seed discovery remains available.
 
-Eligibility defaults are explicit configuration: Ethereum, Uniswap / Uniswap
-V3, at least $100,000 liquidity, at least $100,000 24-hour volume, and a pair
-age of at least one hour. They are operational quality filters for arena
-inclusion, not safety, profitability, or biological claims.
+Eligibility defaults are explicit configuration: Ethereum, Base, and Robinhood,
+all DexScreener venues unless a DEX allowlist is supplied, at least $1,000
+liquidity, at least $1,000 24-hour volume, and a pair age of at least 30 minutes.
+They are operational quality filters for arena inclusion, not safety,
+profitability, or biological claims. The separate `InvestabilityGuard` applies
+the `$10,000` executable-liquidity and hard security rules before execution.
 
 ## TokenState
 

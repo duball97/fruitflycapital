@@ -54,7 +54,7 @@ export class FlyRenderer {
   }
 
   get assetStatus() {
-    return this.loadedCanonical ? 'canonical' : this.lastAssetError ? 'fallback' : 'loading'
+    return this.loadedCanonical ? 'canonical' : this.lastAssetError ? 'error' : 'loading'
   }
 
   get meshCount() {
@@ -119,10 +119,10 @@ export class FlyRenderer {
       this.loadedCanonical = true
     } catch (error) {
       this.lastAssetError = error instanceof Error ? error.message : String(error)
-      this.bodyRoot.visible = true
-      // This fallback is only a loading/error indicator. It is not a second
-      // canonical body asset and should not be used for scientific renders.
-      console.warn(`Flybody canonical asset unavailable: ${this.lastAssetError}`)
+      // Never substitute a different fly. An error is reported in telemetry;
+      // the scene contains either canonical Flybody geometry or no body.
+      this.bodyRoot.visible = false
+      console.error(`Flybody canonical asset unavailable: ${this.lastAssetError}`)
     }
   }
 

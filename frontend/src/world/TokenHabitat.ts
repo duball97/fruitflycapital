@@ -1,4 +1,4 @@
-import { CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, TorusGeometry, Vector3 } from 'three'
+import { BoxGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PointLight, RingGeometry, SphereGeometry, TorusGeometry, Vector3 } from 'three'
 import type { TokenState } from './TokenState'
 
 export interface HabitatProperties {
@@ -10,6 +10,7 @@ export interface HabitatProperties {
   chaos: number
   attractiveOdor: number
   aversiveDanger: number
+  semanticType: 'food' | 'rot' | 'trash' | 'market'
 }
 
 export type HabitatScenario = 'off' | 'different' | 'swapped' | 'live'
@@ -23,6 +24,7 @@ const NEUTRAL_PROPERTIES: HabitatProperties = {
   chaos: 0,
   attractiveOdor: 0,
   aversiveDanger: 0,
+  semanticType: 'market',
 }
 
 export class TokenHabitat {
@@ -39,6 +41,7 @@ export class TokenHabitat {
   private readonly signalColumn: Mesh
   private readonly signalCap: Mesh
   private readonly signalLight: PointLight
+  private readonly semanticGroup = new Group()
   private enabled = true
 
   constructor(state: TokenState, position: Vector3, color: number) {
@@ -47,6 +50,8 @@ export class TokenHabitat {
     this.basePosition.copy(position)
     this.group.name = `TokenHabitat:${state.id}`
     this.group.position.copy(position)
+    this.semanticGroup.name = 'SemanticSmellSource'
+    this.group.add(this.semanticGroup)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
     this.pile.position.y = 0.028
@@ -119,6 +124,8 @@ export class TokenHabitat {
 
   private applyAppearance() {
     const visual = this.enabled ? this.properties : NEUTRAL_PROPERTIES
+    this.semanticGroup.visible = this.enabled
+    this.rebuildSemanticVisual(visual.semanticType)
     const intensity = visual.brightness * (0.7 + visual.visualMotionIntensity * 0.3)
     ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
     ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
@@ -131,6 +138,33 @@ export class TokenHabitat {
     this.signalCap.visible = this.signalColumn.visible
     const columnMaterial = this.signalColumn.material as MeshStandardMaterial
     columnMaterial.emissiveIntensity = 0.25 + visual.brightness * 1.2
+  }
+
+  private rebuildSemanticVisual(type: HabitatProperties['semanticType']) {
+    if (this.semanticGroup.userData.type === type) return
+    this.semanticGroup.clear()
+    this.semanticGroup.userData.type = type
+    const add = (geometry: any, material: MeshStandardMaterial, x: number, y: number, z: number) => {
+      const mesh = new Mesh(geometry, material)
+      mesh.position.set(x, y, z)
+      mesh.castShadow = true
+      this.semanticGroup.add(mesh)
+    }
+    if (type === 'food') {
+      add(new SphereGeometry(0.022, 8, 6), new MeshStandardMaterial({ color: 0xe86f45, roughness: 0.72 }), -0.032, 0.075, 0.014)
+      add(new SphereGeometry(0.018, 8, 6), new MeshStandardMaterial({ color: 0x8ebd4b, roughness: 0.8 }), 0.028, 0.072, -0.012)
+      add(new ConeGeometry(0.012, 0.03, 7), new MeshStandardMaterial({ color: 0x4f783d, roughness: 0.9 }), 0, 0.085, 0.018)
+    } else if (type === 'rot') {
+      add(new SphereGeometry(0.026, 7, 5), new MeshStandardMaterial({ color: 0x334b34, roughness: 0.95 }), -0.028, 0.073, 0.012)
+      add(new SphereGeometry(0.021, 7, 5), new MeshStandardMaterial({ color: 0x6d8240, roughness: 1 }), 0.028, 0.07, -0.01)
+      add(new ConeGeometry(0.018, 0.045, 7), new MeshStandardMaterial({ color: 0x738c54, transparent: true, opacity: 0.42, roughness: 1 }), 0.01, 0.105, 0.012)
+    } else if (type === 'trash') {
+      add(new BoxGeometry(0.044, 0.038, 0.044), new MeshStandardMaterial({ color: 0x58636a, metalness: 0.42, roughness: 0.7 }), -0.028, 0.075, 0.012)
+      add(new CylinderGeometry(0.018, 0.021, 0.042, 10), new MeshStandardMaterial({ color: 0x7c6b53, metalness: 0.25, roughness: 0.88 }), 0.031, 0.077, -0.012)
+    } else {
+      add(new BoxGeometry(0.038, 0.028, 0.038), new MeshStandardMaterial({ color: 0x9c7042, roughness: 0.86 }), -0.025, 0.07, 0.012)
+      add(new BoxGeometry(0.028, 0.02, 0.028), new MeshStandardMaterial({ color: 0x596b7b, metalness: 0.2, roughness: 0.7 }), 0.025, 0.066, -0.012)
+    }
   }
 
   get isEnabled() {
@@ -173,6 +207,15 @@ export class TokenHabitat {
     this.setPosition(this.basePosition)
   }
 
+  dispose() {
+    this.group.traverse((object) => {
+      const mesh = object as Mesh
+      mesh.geometry?.dispose()
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach((material) => material?.dispose())
+    })
+  }
+
   odorAt(position: Vector3, timeSeconds: number) {
     const distance = position.distanceTo(this.group.position)
     const sigma = 0.24 + this.properties.physicalRadiusM * 0.45
@@ -201,7 +244,15 @@ export function propertiesFromState(state: TokenState): HabitatProperties {
     chaos: risk,
     attractiveOdor: Math.min(1, activityLevel * 0.65 + liquidity * 0.2 + Math.max(0, flow) * 0.15),
     aversiveDanger: risk,
+    semanticType: semanticType(activityLevel, liquidity, risk),
   }
+}
+
+function semanticType(activity: number, liquidity: number, risk: number): HabitatProperties['semanticType'] {
+  if (risk >= 0.62) return 'rot'
+  if (activity < 0.28) return 'trash'
+  if (liquidity >= 0.62) return 'food'
+  return 'market'
 }
 
 function signal(state: TokenState, name: string, fallback: number) {

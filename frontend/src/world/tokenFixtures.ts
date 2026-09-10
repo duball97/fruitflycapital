@@ -56,10 +56,39 @@ export const MOCK_TOKEN_STATES: TokenState[] = [
   },
 ]
 
+// Keep a readable local market-city layout even before the market provider
+// returns its first snapshot. These are fixture identities, not trading
+// recommendations; a live environment_update replaces them.
+MOCK_TOKEN_STATES.push(...[
+  ['TOKEN-D', 'WETH / HIGH FLOW', 0.58],
+  ['TOKEN-E', 'USDC / STABLE', 0.12],
+  ['TOKEN-F', 'ARB / VOLATILE', -0.18],
+  ['TOKEN-G', 'LINK / DEEP LIQUIDITY', 0.28],
+  ['TOKEN-H', 'UNI / ACTIVE', 0.36],
+].map(([id, label, flowImbalance], index) => {
+  const base = MOCK_TOKEN_STATES[index % 3]!
+  const flowValue = Number(flowImbalance)
+  return {
+    ...base,
+    id: id as string,
+    label: label as string,
+    flow: { ...base.flow, flowImbalance: flowValue },
+    signals: base.signals.map((item) => item.name === 'flow.imbalance'
+      ? { ...item, normalized: (flowValue + 1) / 2, value: flowValue, valence: flowValue, source: 'mock-fixture-expanded' }
+      : { ...item, source: 'mock-fixture-expanded' }),
+    provenance: [{ provider: 'mock-fixture-expanded' }],
+  }
+}))
+
 export const MOCK_HABITAT_POSITIONS = [
   new Vector3(-0.67, 0, -0.68),
-  new Vector3(0.64, 0, -0.22),
-  new Vector3(0.58, 0, 0.62),
+  new Vector3(-0.04, 0, -0.72),
+  new Vector3(0.64, 0, -0.68),
+  new Vector3(-0.72, 0, -0.05),
+  new Vector3(0, 0, -0.06),
+  new Vector3(0.72, 0, -0.03),
+  new Vector3(-0.48, 0, 0.62),
+  new Vector3(0.48, 0, 0.62),
 ]
 
-export const MOCK_HABITAT_COLORS = [0x4bd6a0, 0x6ca8ff, 0xff6e80]
+export const MOCK_HABITAT_COLORS = [0x4bd6a0, 0x6ca8ff, 0xff6e80, 0xf5c84c, 0xa980ff, 0xff9b5c, 0x56d9d0, 0xff80b8]

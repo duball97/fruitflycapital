@@ -131,6 +131,11 @@ export class BrainSocket {
         if (message.flightCommand && message.descendingRates && message.spikeCounts) {
           this.latestActivity.set(message.flyId, {
             flightCommand: message.flightCommand,
+            maleCnsCommand: message.maleCnsCommand,
+            lowLevelFlightCommand: message.lowLevelFlightCommand,
+            flybodyJointAction: message.flybodyJointAction,
+            physicalVelocity: message.physicalVelocity,
+            physicalPosition: message.physicalPosition,
             descendingRates: message.descendingRates,
             spikeCounts: message.spikeCounts,
             source: message.source,

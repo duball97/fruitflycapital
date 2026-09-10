@@ -26,8 +26,8 @@ export class ParticleField {
   private readonly color = new Color()
   private activeCount = 0
 
-  constructor(private readonly habitats: TokenHabitat[], capacityPerHabitat = 96) {
-    const capacity = Math.max(1, habitats.length * capacityPerHabitat)
+  constructor(private readonly habitats: TokenHabitat[], capacityPerHabitat = 24, maxHabitats = 128) {
+    const capacity = Math.max(1, Math.max(habitats.length, maxHabitats) * capacityPerHabitat)
     const geometry = new SphereGeometry(0.004, 4, 3)
     const material = new MeshBasicMaterial({
       color: 0xffffff,
@@ -43,7 +43,7 @@ export class ParticleField {
     this.mesh.frustumCulled = false
 
     for (let index = 0; index < capacity; index += 1) {
-      const habitatIndex = index % habitats.length
+      const habitatIndex = index % Math.max(1, maxHabitats)
       const ring = Math.floor(index / habitats.length)
       const kind = ring % 12 < 7 ? 'energy' : ring % 12 < 10 ? 'spark' : 'smoke'
       this.seeds.push({
@@ -98,8 +98,9 @@ export class ParticleField {
   }
 
   private particleColor(kind: ParticleSeed['kind'], habitatIndex: number) {
-    if (kind === 'spark') return this.color.setHex(habitatIndex === 2 ? 0xffa066 : 0xffe8a1)
+    const palette = [0x62f0be, 0x86b8ff, 0xff7187, 0xf5c84c, 0xa980ff, 0xff9b5c, 0x56d9d0, 0xff80b8]
+    if (kind === 'spark') return this.color.setHex(palette[habitatIndex % palette.length] ?? 0xffe8a1)
     if (kind === 'smoke') return this.color.setHex(0xaab8bd)
-    return this.color.setHex(habitatIndex === 0 ? 0x62f0be : habitatIndex === 1 ? 0x86b8ff : 0xff7187)
+    return this.color.setHex(palette[habitatIndex % palette.length] ?? 0x62f0be)
   }
 }

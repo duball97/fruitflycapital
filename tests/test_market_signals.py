@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from malecns.market.habitat_encoder import HabitatEncoder
-from malecns.market.models import RawSwapObservation
+from malecns.market.models import RawSwapObservation, SecurityState
+from malecns.market.features.guard import InvestabilityGuard
+from malecns.market.features.factors import FinancialFactorEngine
 from malecns.market.providers import GraphProvider
 from malecns.market.signal_engine import TokenSignalEngine
 
@@ -131,3 +135,72 @@ def test_signal_wire_format_uses_frontend_timestamp_name():
     assert payload["flow"]["buyCount5m"] == 1
     assert payload["liquidity"]["liquidityUsd"] == 500_000
     assert payload["signals"][0]["observedAtMs"] == 10_000_000
+
+
+def test_financial_state_contains_interpretable_factors_and_provenance():
+    state = TokenSignalEngine().build_state(_observation())
+
+    assert state.financial is not None
+    factors = {factor.factor_id: factor for factor in state.financial.factors}
+    assert factors["liquidity_quality"].available
+    assert factors["flow"].available
+    assert not factors["security_quality"].available
+    assert state.financial.features[0].provenance[0]["provider"] == "the-graph"
+    assert all(-1 <= factor.value <= 1 for factor in state.financial.factors)
+
+
+def test_investability_guard_rejects_honeypot_and_low_liquidity_but_not_unknown_security():
+    state = TokenSignalEngine().build_state(_observation())
+    result = InvestabilityGuard(min_executable_liquidity_usd=600_000).evaluate(state)
+    assert not result.eligible
+    assert "liquidity below executable threshold" in result.reasons
+
+    honeypot = replace(state, security=SecurityState(status="available", honeypot=True, sellable=False))
+    result = InvestabilityGuard(min_executable_liquidity_usd=1).evaluate(honeypot)
+    assert not result.eligible
+    assert "confirmed honeypot" in result.reasons
+    assert "token is not sellable" in result.reasons
+
+    unknown = InvestabilityGuard(min_executable_liquidity_usd=1).evaluate(state)
+    assert unknown.eligible
+    assert unknown.severity == "unknown"
+
+
+def test_financial_sensory_mapping_is_bounded_and_traceable():
+    state = TokenSignalEngine().build_state(_observation())
+    habitat = HabitatEncoder().encode(state)
+
+    assert habitat.financial_trace is not None
+    assert habitat.financial_trace["version"] == "sensory-mapping-v1"
+    for value in (habitat.visual_motion_intensity, habitat.brightness, habitat.attractive_odor, habitat.aversive_danger, habitat.chaos):
+        assert 0 <= value <= 1
+
+
+def test_feature_freshness_decays_and_future_observations_are_rejected():
+    state = TokenSignalEngine().build_state(_observation())
+    engine = FinancialFactorEngine()
+    stale = engine.evaluate(state, now_ms=state.observed_at_ms + 300_000)
+    assert stale.features[0].freshness == pytest.approx(1 / 2.718281828, rel=1e-3)
+
+    future = engine.evaluate(state, now_ms=state.observed_at_ms - 1_001)
+    assert future.features == ()
+
+
+def test_lightweight_market_habitat_uses_the_same_financial_mapping():
+    habitat = HabitatEncoder().encode_lightweight({
+        "id": "base:0xpair",
+        "label": "BASE",
+        "tokenAddress": "0xtoken",
+        "poolId": "0xpair",
+        "pairAddress": "0xpair",
+        "chainId": "base",
+        "dexId": "aerodrome",
+        "liquidityUsd": 250_000,
+        "volume5mUsd": 20_000,
+        "volume1hUsd": 100_000,
+        "buys5m": 12,
+        "sells5m": 4,
+    })
+    assert habitat.financial_trace is not None
+    assert habitat.financial_trace["version"] == "sensory-mapping-v1"
+    assert habitat.provenance[0]["provider"] == "dexscreener"

@@ -10,8 +10,9 @@ neural state, sensor encoding, physics units, or actuator semantics.
 - `postprocessing` is the only added runtime dependency. It provides SMAA,
   ACES filmic tone mapping, selective bloom, vignette, and an optional low-cost
   normal/AO pass.
-- No runtime asset URL is required. The optional world props are bundled under
-  `frontend/public/models/polyhaven/` and retain their local CC0 license files.
+- The canonical Flybody XML and its referenced OBJ meshes are vendored under
+  `frontend/public/models/flybody/` through the checked-in `third_party/flybody/`
+  source tree. No optional prop bundle is loaded by the scene.
 
 ## Quality presets
 
@@ -39,15 +40,19 @@ agent bodies, sensors, brains, and trajectories remain unchanged.
 
 ## Habitats and particles
 
-The three token habitats remain coin-pile identities. Their column, ring, and
-particle intensity are derived from the existing provider-neutral
+The world contains up to 128 dynamically keyed market habitats. Their column,
+ring, semantic food/rot/trash/market props, and particle intensity are derived
+from the existing provider-neutral
 `HabitatProperties` (`brightness`, `particleActivity`, `chaos`, and motion),
 not from a hidden target or scripted path. All particles are instances of one
 pooled `InstancedMesh`; fly trails are one dynamic `LineSegments` buffer.
 
-Two restrained local CC0 props (one metal trash can and one cardboard box) are
-loaded asynchronously for scene context. A failed optional prop load cannot
-block the biological world.
+The market scene is intentionally restrained and uses only the physical market
+habitats as semantic objects; unrelated trash and cardboard props are not
+rendered. A failed market-data request cannot turn a missing habitat into a
+fake prop or target. In live mode the frontend starts empty and waits for the
+authoritative market snapshot; fixture habitats exist only when a local test
+scenario is explicitly selected.
 
 ## Presentation and debug modes
 

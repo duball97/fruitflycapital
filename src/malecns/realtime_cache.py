@@ -4,7 +4,7 @@ The full MaleCNS v1.0 weighted graph is the source of truth, but stepping all
 211k annotated neurons and 151M weighted edges at browser cadence is not a
 reasonable first interactive reference.  This builder retains the exact
 weighted paths from the checked-in sensory populations to the annotated flight
-readout populations within a documented three-hop boundary.
+    readout populations within a documented hop boundary.
 
 The connectivity Feather is scanned in batches.  No edge is reweighted,
 normalized, synthesized, or connected across fly copies.
@@ -72,99 +72,65 @@ def _collect_reverse_layers(
     target_ids: set[int],
     *,
     batch_size: int,
-) -> tuple[set[int], set[int]]:
-    """Find the two reverse layers that can reach the output population."""
-    target_array = np.asarray(sorted(target_ids), dtype=np.int64)
-    layer2: set[int] = set()
-    for pre, post, _ in _iter_connectivity(connectivity_path, batch_size):
-        mask = np.isin(post, target_array)
-        layer2.update(int(value) for value in pre[mask])
-    print(f"reverse layer 2: {len(layer2):,} neurons", flush=True)
-
-    layer2_array = np.asarray(sorted(layer2), dtype=np.int64)
-    layer1: set[int] = set()
-    for pre, post, _ in _iter_connectivity(connectivity_path, batch_size):
-        mask = np.isin(post, layer2_array)
-        layer1.update(int(value) for value in pre[mask])
-    print(f"reverse layer 1: {len(layer1):,} neurons", flush=True)
-    return layer1, layer2
+    path_hops: int,
+) -> list[set[int]]:
+    """Find reverse layers 1..N-1 that can reach the output population."""
+    if path_hops < 2:
+        raise ValueError("path_hops must be at least 2")
+    reverse_layers: list[set[int]] = []
+    downstream = set(target_ids)
+    for layer_number in range(1, path_hops):
+        downstream_array = np.asarray(sorted(downstream), dtype=np.int64)
+        upstream: set[int] = set()
+        for pre, post, _ in _iter_connectivity(connectivity_path, batch_size):
+            mask = np.isin(post, downstream_array)
+            upstream.update(int(value) for value in pre[mask])
+        reverse_layers.append(upstream)
+        print(f"reverse layer {layer_number}: {len(upstream):,} neurons", flush=True)
+        downstream = upstream
+    return reverse_layers
 
 
 def _collect_path_edges(
     connectivity_path: Path,
     source_ids: set[int],
-    layer1_all: set[int],
-    layer2_all: set[int],
+    reverse_layers: list[set[int]],
     target_ids: set[int],
     *,
     batch_size: int,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    """Copy exact source/layer/layer/target rows from the official graph."""
-    source_array = np.asarray(sorted(source_ids), dtype=np.int64)
-    layer1_array = np.asarray(sorted(layer1_all), dtype=np.int64)
-    layer2_array = np.asarray(sorted(layer2_all), dtype=np.int64)
-    target_array = np.asarray(sorted(target_ids), dtype=np.int64)
-    # First narrow the reverse candidate layer to nodes actually reached by a
-    # sensory source.  Keeping ``layer1_all`` here would retain millions of
-    # unrelated intermediate edges and would not be the documented source-
-    # reachable path algorithm.
-    first_parts: list[pd.DataFrame] = []
-    for pre, post, weight in _iter_connectivity(connectivity_path, batch_size):
-        first = np.isin(pre, source_array) & np.isin(post, layer1_array)
-        if first.any():
-            first_parts.append(pd.DataFrame({
-                "source_body_id": pre[first],
-                "target_body_id": post[first],
-                "synapse_weight": weight[first],
-            }))
-    first_edges = pd.concat(first_parts, ignore_index=True) if first_parts else pd.DataFrame(
-        columns=["source_body_id", "target_body_id", "synapse_weight"]
-    )
-    layer1 = _unique(first_edges["target_body_id"])
-    print(f"forward layer 1: {len(layer1):,} neurons", flush=True)
+    """Copy exact source/reverse-layer/target rows from the official graph."""
+    empty_columns = ["source_body_id", "target_body_id", "synapse_weight"]
+    current = set(source_ids)
+    path_parts: list[pd.DataFrame] = []
+    path_counts: dict[str, int] = {}
+    # A source reaches reverse layer N-1 first, then N-2, ..., then targets.
+    allowed_posts = list(reversed(reverse_layers)) + [set(target_ids)]
+    for hop, allowed in enumerate(allowed_posts, start=1):
+        current_array = np.asarray(sorted(current), dtype=np.int64)
+        allowed_array = np.asarray(sorted(allowed), dtype=np.int64)
+        parts: list[pd.DataFrame] = []
+        for pre, post, weight in _iter_connectivity(connectivity_path, batch_size):
+            selected = np.isin(pre, current_array) & np.isin(post, allowed_array)
+            if selected.any():
+                parts.append(pd.DataFrame({
+                    "source_body_id": pre[selected],
+                    "target_body_id": post[selected],
+                    "synapse_weight": weight[selected],
+                }))
+        step_edges = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=empty_columns)
+        current = _unique(step_edges["target_body_id"])
+        path_counts[f"hop_{hop}"] = int(len(step_edges))
+        path_parts.append(step_edges)
+        print(f"forward hop {hop}: {len(current):,} neurons / {len(step_edges):,} edges", flush=True)
 
-    # Now narrow the second layer to nodes reached from those actual layer-1
-    # nodes, then retain only their edges into the reverse-reachable layer.
-    layer1_source_array = np.asarray(sorted(layer1), dtype=np.int64)
-    second_parts: list[pd.DataFrame] = []
-    for pre, post, weight in _iter_connectivity(connectivity_path, batch_size):
-        second = np.isin(pre, layer1_source_array) & np.isin(post, layer2_array)
-        if second.any():
-            second_parts.append(pd.DataFrame({
-                "source_body_id": pre[second],
-                "target_body_id": post[second],
-                "synapse_weight": weight[second],
-            }))
-    second_edges = pd.concat(second_parts, ignore_index=True) if second_parts else pd.DataFrame(
-        columns=["source_body_id", "target_body_id", "synapse_weight"]
-    )
-    layer2 = _unique(second_edges["target_body_id"])
-    print(f"forward layer 2: {len(layer2):,} neurons", flush=True)
-
-    # Finally, retain only layer-2 edges that terminate at the exact flight
-    # output population. Each row still carries its original official weight.
-    layer2_source_array = np.asarray(sorted(layer2), dtype=np.int64)
-    third_parts: list[pd.DataFrame] = []
-    for pre, post, weight in _iter_connectivity(connectivity_path, batch_size):
-        third = np.isin(pre, layer2_source_array) & np.isin(post, target_array)
-        if third.any():
-            third_parts.append(pd.DataFrame({
-                "source_body_id": pre[third],
-                "target_body_id": post[third],
-                "synapse_weight": weight[third],
-            }))
-    third_edges = pd.concat(third_parts, ignore_index=True) if third_parts else pd.DataFrame(
-        columns=["source_body_id", "target_body_id", "synapse_weight"]
-    )
-    edges = pd.concat([first_edges, second_edges, third_edges], ignore_index=True)
+    edges = pd.concat(path_parts, ignore_index=True)
     # The source file has one weighted row per body pair. This also makes the
     # path union deterministic if a boundary pair is encountered in two
     # retained path categories.
     edges = edges.drop_duplicates(subset=["source_body_id", "target_body_id"], keep="first")
     return edges, {
-        "source_to_layer1": int(len(first_edges)),
-        "layer1_to_layer2": int(len(second_edges)),
-        "layer2_to_target": int(len(third_edges)),
+        **path_counts,
     }
 
 
@@ -181,6 +147,7 @@ def build_cache(
     *,
     mapping_path: str | Path = MAPPING,
     batch_size: int = 1_000_000,
+    path_hops: int = 3,
 ) -> dict[str, Any]:
     data_root = Path(data_dir)
     output_root = Path(output_dir)
@@ -205,12 +172,11 @@ def build_cache(
     print(f"sources: {len(source_ids):,} exact sensory neurons", flush=True)
     print(f"targets: {len(target_ids):,} exact annotated flight neurons", flush=True)
 
-    layer1_all, layer2_all = _collect_reverse_layers(connectivity_path, target_ids, batch_size=batch_size)
+    reverse_layers = _collect_reverse_layers(connectivity_path, target_ids, path_hops=path_hops, batch_size=batch_size)
     edge_frame, path_counts = _collect_path_edges(
         connectivity_path,
         source_ids,
-        layer1_all,
-        layer2_all,
+        reverse_layers,
         target_ids,
         batch_size=batch_size,
     )
@@ -237,13 +203,12 @@ def build_cache(
             "connectivity": str(connectivity_path),
         },
         "cache_is_analysis_boundary": True,
-        "path_hops": 3,
+        "path_hops": path_hops,
         "source_populations": source_populations,
         "target_populations": target_populations,
         "source_ids": sorted(source_ids),
         "target_ids": sorted(target_ids),
-        "reverse_layer1_count": len(layer1_all),
-        "reverse_layer2_count": len(layer2_all),
+        "reverse_layer_counts": [len(layer) for layer in reverse_layers],
         "node_count": len(neurons.dataframe),
         "edge_count": len(edges.dataframe),
         "path_edge_counts_before_pair_deduplication": path_counts,
@@ -262,10 +227,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data/raw"))
     parser.add_argument("--output-dir", type=Path, default=Path("data/runtime/malecns-realtime-3hop"))
+    parser.add_argument("--path-hops", type=int, default=3)
     parser.add_argument("--mapping", type=Path, default=MAPPING)
     parser.add_argument("--batch-size", type=int, default=1_000_000)
     args = parser.parse_args()
-    build_cache(args.data_dir, args.output_dir, mapping_path=args.mapping, batch_size=args.batch_size)
+    build_cache(args.data_dir, args.output_dir, mapping_path=args.mapping, batch_size=args.batch_size, path_hops=args.path_hops)
     return 0
 
 

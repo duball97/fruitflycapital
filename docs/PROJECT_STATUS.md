@@ -28,48 +28,59 @@ driving it, so the UI and this report keep those claims separate.
 - The interactive runtime currently uses a bounded three-hop MaleCNS subgraph,
   approximately 6,641 neurons and 65,110 weighted edges per runtime, rather
   than the complete CNS graph. This is an explicit performance boundary.
-- The browser now exposes a **NEURAL TRACE** panel in `SHOW DETAILS`. It shows
+- The browser keeps a developer-only **NEURAL TRACE** panel available for
+  inspection. It shows
   the exact output origin, recent spike-window activity, selected descending
   activity, and the decoded actuator command.
-- The canonical proof label is `LIVE BRIAN2 → DECODER`. `PREVIEW → ACTUATOR
-  (NOT NEURAL)` is deliberately labelled as non-neural.
+- The canonical proof label is `LIVE BRIAN2 → DECODER`; no synthetic preview
+  driver is part of the application.
 - The current MaleCNS path has not established sustained, validated ordinary
-  flight output. A neutral command in MaleCNS mode is therefore a real result,
-  not a rendering failure. The preview driver exists only to test the body and
-  sensor loop while this biological gap remains.
+  flight output. A neutral command from the autonomous brain path is therefore a real result,
+  not a rendering failure. The application does not substitute a synthetic
+  movement driver while this biological gap remains.
 
 ### Body and world
 
 - The renderer targets TuragaLab Flybody's canonical XML/OBJ body hierarchy.
-- This checkout currently contains a placeholder under
-  `frontend/public/models/flybody`; the actual Flybody asset bundle is not
-  present here. If the assets are not installed locally, the renderer reports
-  fallback status and cannot honestly be called canonical in that run.
-- The room has an explicit 2 m × 2 m × 1 m physical volume, a floor, three
-  token habitats, simple odor fields, visual sampling, contact sampling, and
-  pooled habitat particles.
-- The habitats are token piles, not trash cans or arbitrary targets. Their
-  brightness, motion, odor, risk, rings, beacon, and particles come from the
-  provider-neutral `TokenState`/signal model or the documented fixture.
+- This checkout contains the upstream Flybody XML and its 85 referenced OBJ
+  meshes under `third_party/flybody`; the browser-facing path is a deliberate
+  symlink at `frontend/public/models/flybody`. The frontend prebuild check
+  verifies the XML and every referenced mesh.
+- The room has an explicit 2 m × 2 m × 1 m physical volume, a floor, up to 128
+  dynamically instantiated token habitats, simple odor fields, visual
+  sampling, contact sampling, and pooled habitat particles.
+- Each habitat is a compact semantic smell source: food, rot, trash, or market
+  crate. The category is a deterministic visual metaphor derived from encoded
+  activity/liquidity/risk; it is not a direct navigation rule. Brightness,
+  motion, odor, risk, and particles come from the provider-neutral
+  `TokenState`/signal model or the documented fixture.
 
 ### Market and fund boundary
 
 - The Graph and DexScreener are market-data providers; they do not directly
   steer a fly or choose a trade.
+- DexScreener discovery has an optional Supabase REST cache. It persists
+  normalized candidates, names, symbols, image URLs, links, pair metrics, and
+  provenance, plus the locked arena round. The active round can be loaded
+  after a backend restart instead of querying discovery immediately.
+- The schema is in `supabase/migrations/001_market_cache.sql`; setup is in
+  `supabase/README.md`. Writes require the server-only service-role key, which
+  is never sent to the browser.
 - The provider-neutral path is raw observation → normalized signals → habitat
   encoder → sensory exposure → CNS/runtime → swarm observations.
 - The swarm layer records visits, approaches, departures, dwell, persistence,
   and congregation before producing a temporal conviction proposal.
 - The fund layer contains a Foundry vault, an append-only SQLite ledger,
   portfolio/NAV reporting, risk gates, Privy REST integration, and Uniswap
-  quote/calldata preparation.
+  quote/calldata preparation. The vault implementation is now deployed behind
+  an OpenZeppelin transparent proxy; a separate ProxyAdmin controls upgrades.
 - Execution defaults to dry-run. Live signing requires configured wallet and
   policy controls plus an explicit confirmation. No private key belongs in the
   repository or browser bundle.
 
 ## How to verify that the brain is guiding a fly
 
-Use one selected primary agent and click `SHOW DETAILS`.
+Use one selected primary agent and enable the developer-only diagnostic surface.
 
 | Evidence | What it proves | What it does not prove |
 |---|---|---|
@@ -77,34 +88,40 @@ Use one selected primary agent and click `SHOW DETAILS`.
 | Nonzero `SPIKES` in NEURAL TRACE | A returned MaleCNS window contained spikes | That those spikes caused the body command |
 | Nonzero `DN PEAK` | A selected descending population was active | That it is a validated forward-flight pathway |
 | `COMMAND` and body velocity change after the returned window | Timing consistency between neural output and motion | Causal proof by itself |
-| Same seed, `MALECNS` versus `PREVIEW`/`OFF` | A controlled ablation comparison | A successful result if both remain neutral |
+| Same seed, `MALECNS` versus `OFF` | A controlled ablation comparison | A successful result if both remain neutral |
 | Downloaded selected-fly log | A replayable chain of sensors → IDs → spikes/DN → command → pose | That missing data should be filled with guesses |
 
 The strongest practical audit is a source-ablation test:
 
-1. Run the same seed with `OFF`, `PREVIEW`, and literal `MALECNS`.
+1. Run the same seed with the live MaleCNS path and an isolated no-runtime control test.
 2. Record sensor frames, stimulation body IDs, spike counts/rates, DN rates,
    commands, and pose for each run.
-3. Confirm the MaleCNS run has `source=brian2-malecns-v1-realtime-3hop`.
+3. Confirm the MaleCNS run has a source beginning with
+   `brian2-malecns-v1-realtime-` (normally `...-3hop`).
 4. Compare the command and trajectory only after aligning the returned brain
-   timestamps. A preview trajectory is not a neural result.
+   timestamps. A neutral trajectory is not evidence of successful flight.
 
 ## What is still missing
 
 1. A validated sustained MaleCNS sensory-to-flight/VNC pathway that produces
-   lift, forward flight, and stable turning without a preview rule.
+   lift, forward flight, and stable turning from validated MaleCNS outputs.
 2. Full-connectome realtime scheduling or a compiled/vectorized backend for
    scaling toward 100 independent brains.
-3. The actual Flybody XML and mesh assets in this checkout, plus a verified
-   runtime asset report showing canonical loading.
-4. A persistent production database and authenticated backend deployment for
-   fund ledger/NAV data.
-5. Deployed testnet vault addresses, configured Privy wallet/policy, and a
-   human-approved live execution run. Quote/calldata is not a filled trade.
-6. More market providers and rolling signal windows in production, with clear
-   provenance and freshness handling.
-7. Fly-to-fly sensory coupling through the environment, social experiments,
-   and statistically meaningful swarm evaluations.
+3. A deployed runtime asset report confirming that Vercel serves the vendored
+  canonical Flybody XML and all referenced OBJ meshes after the asset commit.
+4. The Supabase migration run and a production check that the first market
+  round survives a backend restart; local environment variables alone do not
+  prove database connectivity.
+5. A persistent production database and authenticated backend deployment for
+  fund ledger/NAV data.
+6. Redeploy the vault as the new transparent proxy (the first testnet address
+  was a legacy direct deployment), then configure its proxy address, ProxyAdmin
+  owner, Privy wallet/policy, and a human-approved live execution run.
+  Quote/calldata is not a filled trade.
+7. More market providers and rolling signal windows in production, with clear
+  provenance and freshness handling.
+8. Fly-to-fly sensory coupling through the environment, social experiments,
+  and statistically meaningful swarm evaluations.
 
 ## Highest-value improvements
 
@@ -114,9 +131,14 @@ The strongest practical audit is a source-ablation test:
   can be inspected without relying on a live browser session.
 - Third, benchmark 16, 32, and 100 runtime schedules before choosing the final
   independent-brain count.
-- Fourth, install and verify the canonical Flybody assets before visual polish.
-- Fifth, make market snapshots and swarm observations durable before enabling
+- Fourth, deploy and verify the canonical Flybody assets after committing the
+  symlink and `third_party/flybody` directory.
+- Fifth, run the Supabase migration and confirm cached candidates survive a
+  backend restart.
+- Sixth, make swarm observations durable before enabling
   any live fund execution.
+- Seventh, move the ProxyAdmin owner to a multisig or timelock before holding
+  meaningful funds; upgrade authority is custody-critical.
 
 ## Good next demo features
 
@@ -137,3 +159,16 @@ cd frontend && npm run check && npm run build
 cd ../contracts && forge test --offline -vvv
 ```
 
+## Git/deployment note for the Flybody symlink
+
+`frontend/public/models/flybody` is a directory symlink into the vendored
+upstream checkout. Do not stage a path below it such as
+`frontend/public/models/flybody/README.txt`; Git resolves that as a path
+outside the symlink target and reports “beyond a symbolic link”. Stage the
+link and its real target instead:
+
+```bash
+git add frontend/public/models/flybody third_party/flybody
+```
+
+The symlink target must be committed for Vercel to build the canonical body.

@@ -7,6 +7,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 
 from .graph_client import GraphClient
@@ -25,6 +26,7 @@ from .models import (
 )
 from .providers import GraphProvider
 from .universe import DexScreenerMarketDiscovery
+from .features.pipeline import FinancialSensoryPipeline
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,11 @@ class MarketSnapshot:
 
 class TokenSignalEngine:
     """Compute time-windowed, provider-neutral signals from raw observations."""
+
+    def __init__(self, financial_pipeline: FinancialSensoryPipeline | None = None) -> None:
+        # One pipeline instance keeps per-token historical baselines across
+        # polls; it never shares neural state or market identity.
+        self.financial_pipeline = financial_pipeline or FinancialSensoryPipeline.default()
 
     def build_state(
         self,
@@ -99,7 +106,7 @@ class TokenSignalEngine:
             _signal("liquidity.deltaUsd", liquidity_delta, _signed_norm(liquidity_delta or 0.0, 1_000_000), 0.6, (liquidity_delta or 0.0) / 1_000_000, confidence if liquidity_delta is not None else 0.0, freshness, observation),
             _signal("liquidity.volumeLiquidityRatio1h", ratio, _nonnegative_norm(ratio, 1), 0.65, 0.0, confidence, freshness, observation),
         )
-        return TokenState(
+        state = TokenState(
             id=observation.token_id,
             label=observation.label,
             token_address=observation.token_address,
@@ -145,6 +152,7 @@ class TokenSignalEngine:
             dex_id=observation.dex_id,
             pair_address=observation.pair_address or observation.pool_id,
         )
+        return replace(state, financial=self.financial_pipeline.evaluate(state))
 
 
 class MarketSignalEngine:
@@ -163,7 +171,7 @@ class MarketSignalEngine:
         self.poll_seconds = poll_seconds
         self.discovery = discovery
         self.signal_engine = TokenSignalEngine()
-        self.habitat_encoder = HabitatEncoder()
+        self.habitat_encoder = HabitatEncoder(encoding_mode=os.getenv("NEUROSWARM_ENCODING_MODE", "financial-sensory-v1"))
         self._last_poll = 0.0
         self._cached: dict[str, Any] | None = None
         self._previous_liquidity: dict[str, float] = {}
@@ -206,15 +214,34 @@ class MarketSignalEngine:
             configs = self.habitat_configs
             source = "graph-uniswap"
             if self.discovery is not None:
+                world_configs = self.discovery.world_habitat_configs(force=force)
                 discovered_configs = self.discovery.graph_habitat_configs(force=force)
                 # Keep manually configured habitats as an explicit fallback;
                 # discovery must not erase a working local setup just because
                 # its provider has temporarily returned no candidates.
-                configs = discovered_configs or self.habitat_configs
+                configs = world_configs or discovered_configs or self.habitat_configs
                 discovery_payload = self.discovery.as_dict()
                 source = "dexscreener+the-graph" if self.provider is not None else "dexscreener"
-            if self.provider is None:
+            if self.provider is None and self.discovery is not None:
+                habitats = tuple(self.habitat_encoder.encode_lightweight(config) for config in configs)
+                snapshot = MarketSnapshot("ok" if habitats else "empty", int(time.time() * 1000), habitats, source=source, discovery=discovery_payload)
+            elif self.provider is None:
                 snapshot = MarketSnapshot("discovery_only", int(time.time() * 1000), tuple(), source=source, discovery=discovery_payload)
+            elif self.discovery is not None and configs:
+                # Deep Graph observation is deliberately bounded. Every other
+                # physically present market still receives a live lightweight
+                # habitat state derived from the cached DexScreener row.
+                observed: dict[str, PhysicalHabitatState] = {}
+                for config in discovered_configs:
+                    try:
+                        observed[str(config.get("id", ""))] = self._read_habitat(config)
+                    except Exception:
+                        observed[str(config.get("id", ""))] = self.habitat_encoder.encode_lightweight(config)
+                habitats = tuple(
+                    observed.get(str(config.get("id", "")), self.habitat_encoder.encode_lightweight(config))
+                    for config in configs
+                )
+                snapshot = MarketSnapshot("ok" if habitats else "empty", int(time.time() * 1000), habitats, source=source, discovery=discovery_payload)
             else:
                 habitats = tuple(self._read_habitat(config) for config in configs)
                 status = "ok" if configs else "empty"

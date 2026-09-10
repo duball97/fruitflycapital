@@ -10,10 +10,10 @@ third_party/flybody/flybody/fruitfly/assets/fruitfly.xml
 ```
 
 The browser serves the same XML and its referenced OBJ meshes through
-`frontend/public/models/flybody/fruitfly/assets/`. That public path is a
-symlink to the vendored Flybody package, so the browser does not use a
-separately authored GLTF or replacement fly mesh. `FlybodyAssetLoader` parses
-the XML at runtime and reconstructs its nested body/geom hierarchy.
+`frontend/public/models/flybody/fruitfly/assets/`. The frontend build copies
+the required files from the vendored package into that public path, rather than
+relying on a symlink that Vercel may omit. `FlybodyAssetLoader` parses the XML
+at runtime and reconstructs its nested body/geom hierarchy.
 
 ## Coordinate and scale adaptation
 

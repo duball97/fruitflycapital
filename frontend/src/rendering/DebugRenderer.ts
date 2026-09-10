@@ -1,6 +1,6 @@
 import { ArrowHelper, Group, Vector3 } from 'three'
 import { FlyAgent } from '../fly/FlyAgent'
-import type { BrainActivity, MaleCNSSensoryStimulation } from '../networking/protocol'
+import { isLiveBrainSource, type BrainActivity, type MaleCNSSensoryStimulation } from '../networking/protocol'
 
 export class DebugRenderer {
   readonly group = new Group()
@@ -78,7 +78,7 @@ export class DebugRenderer {
       : 'waiting for encoded MaleCNS input'
     const hasSpikes = activity ? Object.values(activity.spikeCounts).some((count) => count > 0) : false
     const hasDescendingSpikes = activity ? Object.values(activity.descendingRates).some((rate) => rate > 0) : false
-    const hasLiveBrian2 = activity?.source === 'brian2-malecns-v1-realtime-3hop'
+    const hasLiveBrian2 = isLiveBrainSource(activity?.source)
     const controllerSummary = agent.mode === 'off'
       ? 'OFF: stationary actuator command'
       : agent.mode === 'manual'

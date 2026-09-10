@@ -19,6 +19,7 @@ from .models import (
 )
 from .providers import GraphProvider
 from .signal_engine import MarketSignalEngine, MarketSnapshot, TokenSignalEngine
+from .supabase_cache import SupabaseCacheError, SupabaseConfig, SupabaseMarketCache
 from .universe import (
     DexScreenerMarketDiscovery,
     DexScreenerUniverseProvider,
@@ -30,6 +31,18 @@ from .universe import (
     SelectedMarket,
 )
 from .uniswap_client import TradeIntent, UniswapTradingClient
+from .features import (
+    FactorValue,
+    FeatureNormalizer,
+    FinancialFactorEngine,
+    FinancialSensoryPipeline,
+    FinancialState,
+    InvestabilityGuard,
+    InvestabilityResult,
+    MultidimensionalSensoryEncoder,
+    RuleBasedFinancialFactorModelV1,
+    RuntimeFeature,
+)
 
 __all__ = [
     "GraphProvider",
@@ -51,6 +64,9 @@ __all__ = [
     "MarketUniverse",
     "MarketSignalEngine",
     "MarketSnapshot",
+    "SupabaseCacheError",
+    "SupabaseConfig",
+    "SupabaseMarketCache",
     "MarketState",
     "PhysicalHabitatState",
     "RawSwapObservation",
@@ -63,4 +79,14 @@ __all__ = [
     "TokenState",
     "TradeIntent",
     "UniswapTradingClient",
+    "FactorValue",
+    "FeatureNormalizer",
+    "FinancialFactorEngine",
+    "FinancialSensoryPipeline",
+    "FinancialState",
+    "InvestabilityGuard",
+    "InvestabilityResult",
+    "MultidimensionalSensoryEncoder",
+    "RuleBasedFinancialFactorModelV1",
+    "RuntimeFeature",
 ]

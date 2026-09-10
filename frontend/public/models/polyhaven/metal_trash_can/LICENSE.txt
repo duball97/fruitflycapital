@@ -1,9 +1,0 @@
-Asset: Metal Trash Can
-Source: https://polyhaven.com/a/metal_trash_can
-Author: GurJas Studios
-License: CC0 1.0 Universal
-License URL: https://creativecommons.org/publicdomain/zero/1.0/
-
-The local glTF and JPG files are downloaded from Poly Haven's public asset
-delivery service. This notice is retained alongside the bundled files for
-provenance.

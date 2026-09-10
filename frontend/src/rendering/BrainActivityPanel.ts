@@ -1,5 +1,5 @@
 import type { FlyAgent } from '../fly/FlyAgent'
-import type { BrainActivity, MaleCNSSensoryStimulation } from '../networking/protocol'
+import { isLiveBrainSource, type BrainActivity, type MaleCNSSensoryStimulation } from '../networking/protocol'
 
 /**
  * Small, intentionally explicit interpretability panel for the selected fly.
@@ -54,8 +54,7 @@ export class BrainActivityPanel {
     const spikeLevel = Math.min(1, spikes / 24)
     const dnPeak = activity ? Math.max(0, ...Object.values(activity.descendingRates)) : 0
     const dnLevel = Math.min(1, dnPeak / 80)
-    const live = activity?.source === 'brian2-malecns-v1-realtime-3hop'
-    const preview = agent.mode === 'preview'
+    const live = isLiveBrainSource(activity?.source)
     const neuralCommand = live ? activity?.flightCommand : undefined
     const actuatorCommand = agent.actuators.get()
     const commandLevel = Math.min(1, Math.max(
@@ -65,13 +64,11 @@ export class BrainActivityPanel {
       Math.abs(actuatorCommand.rollTorque),
     ))
     this.sourceBadge.textContent = live
-      ? preview ? 'LIVE BRIAN2 TELEMETRY · PREVIEW DRIVE' : 'LIVE BRIAN2 → DECODER'
-      : preview
-        ? 'PREVIEW → ACTUATOR (NOT NEURAL)'
-        : activity
-          ? 'DECODER OUTPUT · NO LIVE BRAIN'
-          : 'WAITING FOR BRAIN OUTPUT'
-    this.sourceBadge.dataset.state = live ? 'live' : preview ? 'preview' : 'waiting'
+      ? 'LIVE BRIAN2 → DECODER'
+      : activity
+        ? 'DECODER OUTPUT · NO LIVE BRAIN'
+        : 'WAITING FOR BRAIN OUTPUT'
+    this.sourceBadge.dataset.state = live ? 'live' : 'waiting'
     this.agentLabel.textContent = `${agent.id} · ${agent.mode.toUpperCase()} · ${live ? 'measured neural window' : 'interpretation unavailable'}`
     setBar(this.inputBar, input)
     setBar(this.spikeBar, spikeLevel)

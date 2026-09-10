@@ -86,8 +86,13 @@ class RuntimeRegistry:
             if fly_id in self._runtimes:
                 return self._runtimes[fly_id]
             try:
-                runtime = await asyncio.to_thread(
-                    self.runtime_factory,
+                # Brian2's runtime and code-generation stack must be created
+                # on Python's main interpreter thread. Moving construction to
+                # asyncio's worker pool triggers its signal-handler guard on
+                # Render ("signal only works in main thread"). The websocket
+                # loop is already the process' main thread, so keep the
+                # ownership boundary here and yield only between requests.
+                runtime = self.runtime_factory(
                     self.cache_dir,
                     seed=_stable_fly_seed(fly_id, self.base_seed),
                     window_ms=self.window_ms,
@@ -116,84 +121,93 @@ def command_for_sensor_frame(
     stimulation = SENSORY_ENCODER.encode(message.get("sensors", {}))
     if runtime is not None:
         step = runtime.step(stimulation)
-        return step.decoded.command.as_actuators(), step.decoded.as_dict(), {
+        return step.decoded.as_actuators(), step.decoded.as_dict(), {
             "stimulation": stimulation,
             "spikeRates": {str(body_id): rate for body_id, rate in step.spike_rates.items()},
-            "source": "brian2-malecns-v1-realtime-3hop",
+            "source": f"brian2-malecns-v1-realtime-{runtime.manifest.get('path_hops', 3)}hop",
         }
     rates = message.get("spikeRates", {})
     counts = message.get("spikeCounts", {})
     decoded = FLIGHT_DECODER.decode(rates if isinstance(rates, Mapping) else {}, counts if isinstance(counts, Mapping) else None)
-    return decoded.command.as_actuators(), decoded.as_dict(), {"stimulation": stimulation, "source": "decoder-without-live-provider"}
+    return decoded.as_actuators(), decoded.as_dict(), {"stimulation": stimulation, "source": "decoder-without-live-provider"}
 
 
 async def handle_client(websocket: Any) -> None:
-    await websocket.send(json.dumps({"type": "hello", "protocol": "male-cns-fly-world", "version": 1}))
-    async for raw in websocket:
-        try:
-            message = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(message, dict) and message.get("type") == "swarm_telemetry":
-            observations = _parse_swarm_telemetry(message)
-            if observations:
-                decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
+    try:
+        await websocket.send(json.dumps({"type": "hello", "protocol": "male-cns-fly-world", "version": 1}))
+        async for raw in websocket:
+            try:
+                message = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(message, dict) and message.get("type") == "swarm_telemetry":
+                observations = _parse_swarm_telemetry(message)
+                if observations:
+                    decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
+                    try:
+                        await websocket.send(json.dumps({"type": "swarm_update", "decision": decision.as_dict()}))
+                    except (ConnectionError, ConnectionClosed):
+                        break
+                continue
+            if isinstance(message, dict) and message.get("type") in {"fund_status_request", "portfolio_request", "trade_history_request"}:
+                request_type = message["type"]
+                if request_type == "fund_status_request":
+                    response = {"type": "fund_status_update", "fund": FUND_SERVICE.status(), "demoData": False}
+                elif request_type == "portfolio_request":
+                    response = {"type": "portfolio_update", **FUND_SERVICE.portfolio_update()}
+                else:
+                    response = {"type": "trade_history_update", **FUND_SERVICE.trade_history()}
                 try:
-                    await websocket.send(json.dumps({"type": "swarm_update", "decision": decision.as_dict()}))
+                    await websocket.send(json.dumps(response))
                 except (ConnectionError, ConnectionClosed):
                     break
-            continue
-        if isinstance(message, dict) and message.get("type") in {"fund_status_request", "portfolio_request", "trade_history_request"}:
-            request_type = message["type"]
-            if request_type == "fund_status_request":
-                response = {"type": "fund_status_update", "fund": FUND_SERVICE.status(), "demoData": False}
-            elif request_type == "portfolio_request":
-                response = {"type": "portfolio_update", **FUND_SERVICE.portfolio_update()}
-            else:
-                response = {"type": "trade_history_update", **FUND_SERVICE.trade_history()}
+                continue
+            if not isinstance(message, dict) or message.get("type") != "brain_input":
+                if isinstance(message, dict) and message.get("type") == "environment_request":
+                    if MARKET_ENGINE is None:
+                        environment = {
+                            "source": "graph-uniswap",
+                            "status": "disabled",
+                            "observedAtMs": 0,
+                            "habitats": [],
+                            "rawMarketFieldsForwardedToFly": False,
+                            "reason": "configure Graph credentials plus NEUROSWARM_MARKET_HABITATS, or enable DexScreener discovery",
+                        }
+                    else:
+                        environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
+                    try:
+                        await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
+                    except (ConnectionError, ConnectionClosed):
+                        break
+                continue
+            fly_id = message.get("flyId")
+            if not isinstance(fly_id, str):
+                continue
+            runtime = await RUNTIME_REGISTRY.get(fly_id)
+            # Keep all Brian2 construction and stepping on the same main
+            # interpreter thread. The previous to_thread call caused every
+            # Render runtime to fail before it could produce a neural command.
+            commands, decoded, runtime_metadata = command_for_sensor_frame(message, runtime)
+            output = {
+                "type": "brain_output",
+                "flyId": fly_id,
+                "commands": commands,
+                "timestampMs": int(asyncio.get_running_loop().time() * 1000),
+                "source": runtime_metadata["source"],
+                "stimulation": runtime_metadata["stimulation"],
+                **decoded,
+            }
+            if "spikeRates" in runtime_metadata:
+                output["spikeRates"] = runtime_metadata["spikeRates"]
             try:
-                await websocket.send(json.dumps(response))
+                await websocket.send(json.dumps(output))
             except (ConnectionError, ConnectionClosed):
                 break
-            continue
-        if not isinstance(message, dict) or message.get("type") != "brain_input":
-            if isinstance(message, dict) and message.get("type") == "environment_request":
-                if MARKET_ENGINE is None:
-                    environment = {
-                        "source": "graph-uniswap",
-                        "status": "disabled",
-                        "observedAtMs": 0,
-                        "habitats": [],
-                        "rawMarketFieldsForwardedToFly": False,
-                        "reason": "configure Graph credentials plus NEUROSWARM_MARKET_HABITATS, or enable DexScreener discovery",
-                    }
-                else:
-                    environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
-                try:
-                    await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
-                except (ConnectionError, ConnectionClosed):
-                    break
-            continue
-        fly_id = message.get("flyId")
-        if not isinstance(fly_id, str):
-            continue
-        runtime = await RUNTIME_REGISTRY.get(fly_id)
-        commands, decoded, runtime_metadata = await asyncio.to_thread(command_for_sensor_frame, message, runtime)
-        output = {
-            "type": "brain_output",
-            "flyId": fly_id,
-            "commands": commands,
-            "timestampMs": int(asyncio.get_running_loop().time() * 1000),
-            "source": runtime_metadata["source"],
-            "stimulation": runtime_metadata["stimulation"],
-            **decoded,
-        }
-        if "spikeRates" in runtime_metadata:
-            output["spikeRates"] = runtime_metadata["spikeRates"]
-        try:
-            await websocket.send(json.dumps(output))
-        except (ConnectionError, ConnectionClosed):
-            break
+    except (ConnectionError, ConnectionClosed):
+        # Browsers and Render's proxy can drop an idle websocket without a
+        # close frame. This is a normal client lifecycle event, not a server
+        # error that should fill the logs or take down the process.
+        return
 
 
 def _parse_swarm_telemetry(message: Mapping[str, Any]) -> tuple[FlyObservation, ...]:
@@ -271,8 +285,10 @@ async def serve_forever(host: str, port: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    # Render supplies PORT and requires a public bind address. Local callers
+    # can still override both explicitly, as the README examples do.
+    parser.add_argument("--host", default=os.getenv("HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8765")))
     args = parser.parse_args()
     asyncio.run(serve_forever(args.host, args.port))
 

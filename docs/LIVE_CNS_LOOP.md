@@ -21,19 +21,16 @@ There is no A/B comparison body. The frontend owns sixteen independent
 and deterministic server-side RNG stream. The camera and causal panel inspect
 one selected ID at a time; selection does not alter the simulation.
 
-## Visible motion while the neural path is being validated
+## Literal neural driver
 
-The browser defaults to the explicitly labelled `PREVIEW` driver. It uses
-only each body's local eye, antenna-odor, optic-flow, and contact observations
-to produce a smooth benchmark command through the same
-`FlyActuators -> FlyBody` boundary. It is not a MaleCNS result and it does not
-receive token coordinates. The selected driver button cycles an individual
-agent between `PREVIEW`, literal `MALECNS`, and `MANUAL`.
-
-`VITE_FLIGHT_DRIVER=malecns` disables that preview drive and exposes the
-literal decoded neural command. With the current three-hop cache, that command
-can correctly remain neutral because the selected DNg02 wing-amplitude and
-ordinary-forward candidates have not produced sustained drive.
+The browser uses the literal `MALECNS` driver for every agent. Each body's
+local eye, antenna-odor, optic-flow, and contact observations are encoded into
+the documented sensory populations, stepped by its own Brian2 runtime, decoded
+from selected MaleCNS output populations, and sent through
+`FlyActuators -> FlyBody`. The driver does not receive token coordinates. If
+the runtime is unavailable or the selected path is quiet, the command remains
+neutral and the diagnostic UI reports that state; no manual or synthetic flight
+policy is substituted.
 
 ## Starting it
 
@@ -42,7 +39,7 @@ From the repository root, with the official local Feather files present:
 ```bash
 ./.venv312/bin/malecns-realtime-cache \
   --data-dir data/raw \
-  --output-dir data/runtime/malecns-realtime-3hop
+  --output-dir data/runtime/malecns-realtime-3hop --path-hops 3
 ./.venv312/bin/python -m malecns.brain_server --host 127.0.0.1 --port 8765
 ```
 
@@ -53,8 +50,9 @@ cd frontend
 npm run dev
 ```
 
-If the cache is absent, the server stays usable for manual mode but reports
-`decoder-without-live-provider` and returns neutral CNS commands.
+If the cache is absent, the server reports `decoder-without-live-provider` and
+returns neutral CNS commands. The product does not silently replace the brain
+with a hand-written navigation rule.
 
 ## What is observed versus assumed
 
@@ -88,7 +86,7 @@ Our explicit boundary assumptions:
 
 ## Runtime capacity is part of the result
 
-One full cached Brian2 runtime is approximately 6,641 neurons and 65,110
+One default cached Brian2 runtime is approximately 6,641 neurons and 65,110
 retained weighted edges before transmitter-sign filtering. One runtime is
 created per distinct `fly-NNN` ID by the Python adapter. Therefore each pilot
 brain is an independent state and runtime identity, but the population is
@@ -99,9 +97,10 @@ cannot sustain the full fleet, the next engineering step is a fleet scheduler
 or a compiled/vectorized backend—not a scripted movement replacement.
 
 The cache is not a replacement for the full official graph. The local source
-contains 211,577 annotated neurons and 151,856,684 weighted edges. The cache
-manifest records its 6,641 nodes, 65,110 retained edges, source/target IDs,
-raw total weight, and three-hop boundary.
+contains 211,577 annotated neurons and 151,856,684 weighted edges. The default
+cache manifest records its 6,641 nodes, 65,110 retained edges, source/target
+IDs, raw total weight, and three-hop boundary. An optional four-hop cache can
+be built for pathway inspection, but is not the Render/free-tier default.
 
 ## Current scientific result
 

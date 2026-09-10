@@ -8,7 +8,7 @@ software encodings used to send observations to the MaleCNS adapter.
 | Channel | Implementation | What reaches the brain | Status |
 |---|---|---|---|
 | Left/right vision | 5 azimuth x 2 elevation rays per eye (20 samples total), sampled at 10 Hz and cast against the Three.js environment | Per sample: body-relative direction, azimuth, elevation, luminance, contrast, optic-flow proxy, object angular size | Implemented |
-| Odor | Gaussian diffusion-like fields around the three synthetic token habitats; left/right antenna samples are offset from the body | Center concentration, left/right antenna concentration, temporal change | Implemented as synthetic world input |
+| Odor | Gaussian diffusion-like fields around dynamically instantiated market habitats; left/right antenna samples are offset from the body | Center concentration, left/right antenna concentration, temporal change | Implemented as synthetic world input |
 | Body motion | Body angular velocity and translational velocity transformed into the body frame | Angular velocity, body-frame velocity, speed, gravity alignment | Implemented as feedback; not mapped to CNS by default |
 | Wind | No airflow solver or wind field | `windImplemented=false`, null direction, zero speed | Explicitly unimplemented |
 | Contact | Body bounds and floor contact state | Ground and wall booleans; obstacle is always false in the minimal arena | Implemented as feedback; not mapped to CNS by default |
@@ -19,27 +19,31 @@ inside the local sensor implementation only to calculate physical observations.
 
 ## Synthetic token habitats
 
-The current NeuroSwarm milestone contains three local `TokenHabitat` coin-pile objects,
-not a token API or a financial data feed. Their mock states are:
+The local test scenario contains eight fixture `TokenHabitat` objects. In live
+mode, the browser creates one persistent `TokenHabitat` per market ID from the
+backend snapshot, up to the configured world capacity. It is no longer a fixed
+slot array or a token API inside the browser. Their mock states are:
 
 | Habitat | Mock state | Physical fields exposed to the fly |
 |---|---|---|
 | TOKEN-A | ACTIVE / HEALTHY | brightness, visual motion, attractive odor, low danger |
 | TOKEN-B | QUIET / STABLE | lower brightness/motion, attractive odor, low danger |
-| TOKEN-C | ACTIVE / DANGEROUS | high visual motion/chaos, attractive odor, aversive danger |
+| TOKEN-C through TOKEN-H | differentiated market states | brightness, motion, attractive odor, and aversive danger according to each fixture |
 
-Scenario `NEUTRAL` sets the synthetic habitat sensory fields to neutral;
-`DIFFERENT SIGNALS` uses the default state/site assignment; `RELOCATED COINS`
-rotates the state/site assignment. These fields are deliberately a local
-synthetic stimulus layer. They are not real tokens, prices, balances, wallet
-data, or social-network data.
+The fixture table is retained only for automated/local tests. It is not a
+product mode and is never selected by the normal browser experience. In the
+live world, each discovered market supplies its own visual and olfactory
+fields. These fields are not raw coordinates or direct trade commands: they
+are the sensory environment presented to each fly.
 
-The browser now creates sixteen canonical Flybody agents, with IDs
+The browser now creates sixteen primary canonical Flybody agents, with IDs
 `fly-001` through `fly-016`, in a deterministic distant launch formation.
-There are no visual-only swarm members and no foreground A/B pair. Each agent
-samples the world from its own body pose and sends its own sensor summary to
-its own brain stream. A camera selection changes only which agent is inspected;
-it does not give that agent privileged coordinates or a different controller.
+Each primary has four render-only followers using the same canonical Flybody
+asset. The followers do not sense, create brain runtimes, or add consensus
+votes. Each primary samples the world from its own body pose and sends its own
+sensor summary to its own brain stream. A camera selection changes only which
+agent is inspected; it does not give that agent privileged coordinates or a
+different controller.
 
 Attractive odor is sampled by the existing odor channel and encoded to the
 documented `ORN_DA1` population. Aversive danger is currently visible in the

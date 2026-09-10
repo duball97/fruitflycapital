@@ -14,19 +14,26 @@ market → habitat → MaleCNS → swarm observation → allocation → TradeInt
 ## Contract
 
 `contracts/src/FruitFlyFundVault.sol` is an explicit share-accounting vault:
-USDC is the accounting asset and FFC shares have 18 decimals. The first
-deposit establishes 1 USDC per share. Later deposits use the current integer
-NAV/share. NAV is liquid vault USDC plus `reportedStrategyNavUsdc`.
+the accounting asset is a real ERC-20 selected at deployment and FFC shares
+have 18 decimals. The Robinhood Chain testnet deployment uses the verified
+testnet WETH contract at `0x0dd1df4fdd55808c9d530c9599bea5107f6b9b4e`, whose
+18 decimals are read by the vault at construction. The
+first deposit establishes one accounting-asset unit per share. Later deposits
+use the current integer NAV/share. NAV is liquid WETH plus
+`reportedStrategyNavAsset`.
 
 The strategy treasury is one configured address; capital cannot be deployed to
 an arbitrary recipient. Withdrawals use `REQUESTED → FUNDED → CLAIMED` and
 escrow shares at request time. The request stores the NAV snapshot and fixed
-USDC amount used for the eventual claim.
+WETH amount used for the eventual claim.
 
 V1 uses an authorized offchain NAV reporter and is not a trustless production
 fund accounting system. OpenZeppelin AccessControl, SafeERC20,
-ReentrancyGuard, Pausable, ERC20, and Math are used; the contract is not
-upgradeable and exposes no arbitrary-call function.
+ReentrancyGuard, Pausable, ERC20, Initializable, and Math are used. The vault
+is deployed behind an OpenZeppelin `TransparentUpgradeableProxy`; the proxy's
+separate `ProxyAdmin` owns upgrades, while the fund's AccessControl roles keep
+operating permissions separate. The implementation exposes no arbitrary-call
+function.
 
 Run locally:
 
@@ -36,13 +43,72 @@ forge install OpenZeppelin/openzeppelin-contracts --no-git --shallow
 forge install foundry-rs/forge-std --no-git --shallow
 forge test --offline -vvv
 anvil
-PRIVATE_KEY=... FUND_USDC_ADDRESS=... FUND_CONTRACT_ADDRESS=... \
-  forge script script/FundLifecycle.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+PRIVATE_KEY=... FUND_WETH_ADDRESS=0x0dd1df4fdd55808c9d530c9599bea5107f6b9b4e \
+  forge script script/DeployFund.s.sol --rpc-url https://rpc.testnet.chain.robinhood.com \
+  --chain-id 46630 --broadcast
+
+# After reviewing the new implementation, upgrade the proxy later with:
+PRIVATE_KEY=... FUND_CONTRACT_ADDRESS=0x<proxy> \
+  forge script script/UpgradeFund.s.sol --rpc-url https://rpc.testnet.chain.robinhood.com \
+  --chain-id 46630 --broadcast
 ```
 
-For Base Sepolia, supply `FUND_RPC_URL`, `FUND_CHAIN_ID=84532`, a deployer
-`PRIVATE_KEY`, and either `FUND_USDC_ADDRESS` or let the script deploy MockUSDC.
-The repository never contains a private key and does not auto-deploy mainnet.
+For Robinhood Chain testnet, supply `FUND_RPC_URL`, `FUND_CHAIN_ID=46630`, a
+deployer `PRIVATE_KEY`, and `FUND_WETH_ADDRESS=0x0dd1df4fdd55808c9d530c9599bea5107f6b9b4e`.
+This address was verified on the testnet RPC to have deployed bytecode, symbol
+`WETH`, and 18 decimals. The deployment script
+does not import, deploy, or fall back to MockUSDC. MockUSDC remains only under
+`contracts/src/mocks/` for isolated unit tests. The repository never contains
+a private key and does not auto-deploy mainnet.
+
+## Deployed testnet instance
+
+An earlier Fruit Fly Capital vault was deployed directly on Robinhood Chain
+testnet (chain ID `46630`) before proxy support was added:
+
+- Legacy direct vault: `0xD8bFFba0f008696B11D609A7B9498ED61B2bdFdD`
+- Accounting asset: WETH `0x0dd1df4fdd55808c9d530c9599bea5107f6b9b4e`
+- Treasury/deployer: `0xB82c137b3062548FecB19D153040D7D4755e2165`
+- Deployment transaction: `0xe634e1d5fa5bb147e0c56afcedf490fdca89610a2d2d1803432a9e995c8ea0ba`
+- Explorer: https://explorer.testnet.chain.robinhood.com/tx/0xe634e1d5fa5bb147e0c56afcedf490fdca89610a2d2d1803432a9e995c8ea0ba
+
+The deployment was verified by receipt status `0x1`, vault bytecode, and
+constructor reads for the WETH asset, treasury, 18-decimal asset scale, and
+`FFC` share symbol. No MockUSDC was deployed or used by this deployment. That
+legacy address is not upgradeable; deploy a new proxy with `DeployFund.s.sol`
+and use the printed proxy address as `FUND_CONTRACT_ADDRESS`.
+
+### Current proxy deployment
+
+The upgradeable deployment was broadcast to Robinhood Chain testnet on 2026-09-10:
+
+- Proxy: `0x3550C6dE4e39172ba357AAA51aA11F2a15e3571B`
+- Implementation: `0xc5304Fa8D401c894a794b74B3Ac88DE59A125205`
+- ProxyAdmin: `0x1D6792349d7a23b0dac0D58eF6Ba43ea7DbCfe8e`
+- Implementation transaction: `0x9cc76fe2bf6c1654c9690bb2cf0bbfe11f36fb087f5fdaef58ceb35ad90f6372`
+- Proxy transaction: `0xe9e44198977aa0c4441d4bafbf7aa9c4fd98677f4f705d5b801d06efcf13fe0e`
+- Explorer: [proxy transaction](https://explorer.testnet.chain.robinhood.com/tx/0xe9e44198977aa0c4441d4bafbf7aa9c4fd98677f4f705d5b801d06efcf13fe0e)
+
+The local `FUND_CONTRACT_ADDRESS` now points to the proxy. The previous direct
+deployment remains documented as a legacy instance and is not used for new
+upgrades.
+
+### Upgrade authority
+
+`DeployFund.s.sol` deploys the implementation and transparent proxy in one
+transaction sequence. The proxy constructor creates a dedicated
+`ProxyAdmin`, initializes the vault through the proxy, and prints:
+
+- proxy address — the only address the fund service and users should call;
+- implementation address — replaceable code, not a user-facing fund address;
+- `ProxyAdmin` address — owner-controlled upgrade authority.
+
+The upgrade script reads the ERC-1967 admin slot, deploys the next
+implementation, and calls `ProxyAdmin.upgradeAndCall`. Future implementations
+must preserve storage order, retain the initializer lock, and append new state
+only before the reserved storage gap. Put the ProxyAdmin owner behind a
+multisig or timelock before holding meaningful funds: an upgrade authority can
+change fund behavior and is therefore a critical custody key.
 
 ## Python fund package
 

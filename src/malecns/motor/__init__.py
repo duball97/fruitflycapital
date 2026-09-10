@@ -9,6 +9,7 @@ from .registry import (
     walking_state_ids,
 )
 from .flight_decoder import FlightCommand, FlightDecodeResult, FlightMotorDecoder
+from .flight_adapter import LowLevelFlightCommand, MaleCNSFlightAdapter
 from .flight_registry import flight_population_ids, flight_population_types
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "FlightCommand",
     "FlightDecodeResult",
     "FlightMotorDecoder",
+    "LowLevelFlightCommand",
+    "MaleCNSFlightAdapter",
     "flight_population_ids",
     "flight_population_types",
 ]

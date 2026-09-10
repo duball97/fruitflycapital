@@ -278,6 +278,17 @@ class FlightDecoderTest(unittest.TestCase):
         self.assertEqual(result.command.pitch, 0.0)
         self.assertEqual(result.command.roll, 0.0)
         self.assertEqual(result.spike_counts["12"], 2)
+        self.assertGreater(result.low_level_command.forward_thrust, 0.0)
+        self.assertIn("lowLevelFlightCommand", result.as_dict())
+
+    def test_low_level_adapter_is_idle_without_neural_activity(self):
+        from malecns.motor.flight_adapter import MaleCNSFlightAdapter
+
+        command = MaleCNSFlightAdapter().adapt(
+            thrust=0.0, yaw=0.0, pitch=0.0, roll=0.0, active_rate_hz=0.0
+        )
+        self.assertEqual(command.forward_thrust, 0.0)
+        self.assertEqual(command.vertical_thrust, 0.5)
 
     def test_flight_registry_uses_male_type_annotation(self):
         from malecns.loader import normalize_neurons

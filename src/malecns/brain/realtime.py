@@ -55,7 +55,7 @@ class LiveMaleCNSRuntime:
         if missing:
             raise RealtimeRuntimeUnavailable(
                 "Missing MaleCNS realtime cache files: " + ", ".join(missing) +
-                ". Run `malecns-realtime-cache --data-dir data/raw --output-dir data/runtime/malecns-realtime-3hop`."
+                ". Run `malecns-realtime-cache --data-dir data/raw --output-dir data/runtime/malecns-realtime-3hop --path-hops 3`."
             )
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.seed = int(seed)

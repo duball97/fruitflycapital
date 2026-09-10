@@ -17,7 +17,7 @@ Every `FlyAgent` owns these independent objects:
 | body motion | `FlyBody.velocity`, `angularVelocity` | integrated translational and angular motion |
 | sensors | `FlySensors` | observations sampled from that fly's own pose |
 | actuators | `FlyActuators` | the latest command applied to that fly only |
-| controller | `SwitchableController` | Sensor-only preview by default; MaleCNS and manual remain selectable per fly |
+| controller | `MaleCNSController` | Every primary body is controlled by its own MaleCNS runtime |
 | brain identity | `fly-NNN` | the key for that fly's persistent Python runtime and output cache |
 | RNG stream | server-side stable seed | deterministic but independent neural randomness |
 
@@ -35,7 +35,7 @@ The HUD keeps population existence separate from neural activity:
 | `CNS RUNTIMES` | Distinct `fly-NNN` runtime outputs received from the adapter |
 | `CNS ACTIVE` | Those runtimes that reported at least one spike in the latest returned window |
 | `CNS DRIVE` | MaleCNS agents whose decoded command is currently non-neutral |
-| `PREVIEW DRIVE` | Primary agents moved by the explicitly non-neural preview driver |
+| `MALECNS DRIVE` | Primary agents with a non-neutral command from the live decoder |
 
 Thus `CNS RUNTIMES 16/16` does not imply that all sixteen flies are moving, and
 `CNS ACTIVE 0/16` is a meaningful neural result rather than a rendering error.
@@ -98,12 +98,11 @@ output`, the Python adapter has not returned a window for that ID yet. If it
 says `DN quiet` and command values are zero, the brain ran and returned no
 selected motor activity.
 
-The browser defaults to a separately labelled sensor-only `PREVIEW` driver so
-the population remains visibly in flight while this neural gap is investigated.
-The preview reads only local eye, antenna, optic-flow, and contact observations
-and sends commands through the same `FlyActuators -> FlyBody` boundary. It is a
-benchmark for body/world integration, not evidence of MaleCNS behaviour. Click
-the driver button to cycle a selected fly to literal `MALECNS` or `MANUAL`.
+The browser uses the literal `MALECNS` driver for every primary body. It reads
+only local eye, antenna, optic-flow, and contact observations and sends commands
+through the same `FlyActuators -> FlyBody` boundary. If the live provider or
+decoded path is quiet, commands remain neutral and the diagnostic UI exposes
+that fact. The public application has no manual or preview driver.
 
 ## What “independent brains” means operationally
 
@@ -132,14 +131,14 @@ experiment.
 
 ## Debugging one selected fly
 
-1. Click `SHOW DETAILS`, then select any `#NNN` in the `INSPECT FLY` control.
+1. Enable the developer-only diagnostic surface, then select any `#NNN` in the inspection control.
 2. Click `FOCUS`, or use camera `2` for follow mode.
 3. Press `I` to open the causal panel.
 4. Read the chain from left/right luminance and odor, through encoded ID
    counts and DN activity, to the command and body velocity.
-5. Use the driver button to compare `PREVIEW`, `MALECNS`, and `MANUAL` for the
-   selected body. The other agents retain their own selected driver and brain
-   state.
+5. Compare the returned MaleCNS command against an `OFF`/no-runtime test
+   outside the product surface. The public application always leaves control
+   with MaleCNS.
 
 The flight log downloads the selected fly's sensor, stimulation, spike/DN,
 command, pose, and velocity history so a visible movement can be traced back
