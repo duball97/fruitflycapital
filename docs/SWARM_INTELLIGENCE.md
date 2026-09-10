@@ -9,6 +9,8 @@ SwarmObserver
         ↓
 temporal behavior summaries per habitat
         ↓
+behavior TradeIntent events (buy on dwell, sell on departure)
+        ↓
 TemporalConsensusEngine
         ↓
 HabitatConviction
@@ -37,6 +39,18 @@ habitat. A visit begins when distance enters the habitat radius. A departure is
 the corresponding exit. Dwell time is integrated only across telemetry samples
 whose gap is at most two seconds, so reconnects cannot manufacture dwell.
 
+The browser and server observers also emit a bounded behavioral event stream:
+
+- `buy` means the same primary CNS agent reached contact, was grounded, and
+  remained there for at least 0.6 seconds;
+- `sell` means that visit subsequently departed;
+- neither event contains a token address, amount, wallet, or transaction call.
+
+These are behavioral proposals for the fund layer, not filled trades. The
+execution seam remains proposal-only. The browser-side
+`TradeExecutionBoundary` exposes the future custody seam but currently only
+returns a `proposal_only` record; it cannot connect, sign, or broadcast.
+
 ## Why it is temporal
 
 The consensus engine uses visit coverage, sustained dwell, repeat visits, low
@@ -51,10 +65,11 @@ The allocator produces target weights only. Default policy assumptions are a
 limits and evidence confidence. These are fund-policy assumptions, not
 biological parameters.
 
-`TradeIntent` is emitted only when the caller supplies an explicit token route
-and current portfolio weights. The observer never guesses token addresses,
-amounts, or buy/sell direction from a habitat label. With no route/holdings
-input—as in the browser demo—the intent list is correctly empty.
+Financial `TradeIntent` objects are emitted only when the caller supplies an
+explicit token route and current portfolio weights. The behavioral event stream
+is separate: it records what a CNS body did, while the financial pipeline still
+decides whether a route, amount, and target-weight change are allowed. The
+observer never guesses token addresses or amounts from a habitat label.
 
 The current result is explicitly `proposal_only`. No Privy signer, wallet,
 private key, or transaction broadcaster is present. Uniswap remains a

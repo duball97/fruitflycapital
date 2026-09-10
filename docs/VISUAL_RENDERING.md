@@ -77,6 +77,15 @@ negative moves the GLB down. These controls do not move habitats, flies, or
 the physics arena. The supplied city remains unrotated so its street plan is
 preserved.
 
+For quick browser experiments, URL parameters override the same values without
+editing code:
+
+```text
+/?cityY=-0.14&cityX=0.03&cityZ=0&cityScale=1.02&cityRot=0
+```
+
+`cityY` is the vertical offset in metres; reload after changing the URL.
+
 ## Presentation and debug modes
 
 The initial view is `DEMO`: product title, agent count, CNS-active count, and a
@@ -89,3 +98,9 @@ Camera keys are `1` free orbit, `2` selected-agent follow, `3` first-person,
 `4` side/debug, `5` token cinematic, and `6` auto director. None of these
 cameras gives the brain privileged coordinates; they only change the human
 observer's view.
+
+The default free camera is constrained to the presentation world: panning is
+disabled, orbit elevation stays above the floor, and zoom is capped at the
+outer scene boundary. This prevents the observer from going underground or
+dragging the view outside the city. Its limits are centralized in
+`frontend/src/camera/FreeCamera.ts`.

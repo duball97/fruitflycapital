@@ -76,7 +76,10 @@ not create brain runtimes, sense the world, or add consensus votes. To stage a
 larger brain population experiment, set `VITE_SWARM_SIZE` to a value from 1 to
 100. This changes the number of browser agents and brain IDs requested; it does
 not make 100 full MaleCNS simulations fit within the current realtime CPU
-budget.
+budget. Equal portfolio voting weight is `1 / independent brains`: the current
+sixteen-brain pilot is 6.25% per brain. One hundred visible follower bodies do
+not create 1% voting units; that requires one hundred independently running CNS
+agents, which still needs a runtime benchmark before becoming the default.
 
 ## Controls
 

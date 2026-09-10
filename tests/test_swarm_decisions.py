@@ -51,3 +51,30 @@ def test_observer_keeps_each_primary_agent_in_the_evidence():
     summary = decision.behavior[0]
     assert summary.observed_agents == 2
     assert {item.fly_id for item in summary.agent_behaviors} == {"fly-001", "fly-002"}
+
+
+def test_contact_dwell_emits_buy_and_departure_emits_sell_intents():
+    pipeline = SwarmDecisionPipeline(expected_agents=1)
+    inside = lambda timestamp: [FlyObservation(
+        "fly-001",
+        timestamp,
+        (0, 0, 0),
+        (HabitatObservation("ETH", 0.03, 0.05, contact=True),),
+    )]
+    outside = lambda timestamp: [FlyObservation(
+        "fly-001",
+        timestamp,
+        (1, 0, 0),
+        (HabitatObservation("ETH", 0.30, 0.05, contact=False),),
+    )]
+
+    pipeline.ingest(inside(0))
+    pipeline.ingest(inside(1_000))
+    decision = pipeline.ingest(outside(2_000))
+
+    intents = decision.behavior_intents
+    assert [item.side for item in intents] == ["buy", "sell"]
+    assert intents[0].reason == "dwell"
+    assert intents[1].reason == "departure"
+    assert intents[0].metrics["contact"] is True
+    assert intents[1].metrics["contact"] is False

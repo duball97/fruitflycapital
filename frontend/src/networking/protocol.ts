@@ -129,6 +129,41 @@ export interface BrainInputMessage {
   spikeCounts?: Record<string, number>
 }
 
+/** A behavioral proposal, not an executed trade or wallet instruction. */
+export type TradeIntentSide = 'buy' | 'sell'
+export type TradeIntentReason = 'approach' | 'contact' | 'dwell' | 'departure'
+
+export interface BehaviorTradeIntent {
+  intentId: string
+  flyId: string
+  habitatId: string
+  side: TradeIntentSide
+  reason: TradeIntentReason
+  confidence: number
+  observedAtMs: number
+  metrics: {
+    distanceM: number
+    visits: number
+    approaches: number
+    dwellSeconds: number
+    repeatVisits: number
+    departures: number
+    contact: boolean
+    persistence: number
+  }
+}
+
+export interface HabitatBehaviorTelemetry {
+  approaches: number
+  visits: number
+  departures: number
+  dwellSeconds: number
+  repeatVisits: number
+  contactSeconds: number
+  persistence: number
+  approaching: boolean
+}
+
 export interface SwarmTelemetryMessage {
   type: 'swarm_telemetry'
   timestampMs: number
@@ -141,8 +176,11 @@ export interface SwarmTelemetryMessage {
       distanceM: number
       radiusM: number
       contact?: boolean
+      behavior?: HabitatBehaviorTelemetry
     }>
   }>
+  /** New events since the previous telemetry message; never execution calls. */
+  behaviorIntents?: BehaviorTradeIntent[]
 }
 
 export interface SwarmUpdateMessage {

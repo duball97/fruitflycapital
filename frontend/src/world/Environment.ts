@@ -34,6 +34,9 @@ export class Environment {
     this.group.add(this.arena.group)
     this.particles = new ParticleField(this.habitatList, 24, WORLD_HABITAT_CAPACITY)
     this.group.add(this.particles.mesh)
+    // The authored GLB is the normal floor. Keep the procedural plane only as
+    // a load-failure safety net so two visible plates never compete.
+    void this.city.ready.then(() => this.arena.setFallbackFloorVisible(!this.city.loaded))
     this.setHabitatScenario('live')
   }
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 from malecns.swarm.consensus import HabitatConviction, TemporalConsensusEngine
-from malecns.swarm.observer import FlyObservation, HabitatSwarmSummary, SwarmObserver, SwarmSnapshot
+from malecns.swarm.observer import BehaviorTradeIntent, FlyObservation, HabitatSwarmSummary, SwarmObserver, SwarmSnapshot
 
 from .allocation import PortfolioAllocator, PortfolioTarget
 from .models import TradeIntent, TradeRoute
@@ -27,6 +27,7 @@ class FundDecision:
     risk: tuple[RiskResult, ...]
     trade_intents: tuple[TradeIntent, ...] = ()
     execution_status: str = "proposal_only"
+    behavior_intents: tuple[BehaviorTradeIntent, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class FundDecision:
             "targets": [target.as_dict() for target in self.targets],
             "risk": [item.as_dict() for item in self.risk],
             "tradeIntents": [item.as_dict() for item in self.trade_intents],
+            "behaviorIntents": [item.as_dict() for item in self.behavior_intents],
             "executionStatus": self.execution_status,
             "privy": {"configured": False, "broadcastEnabled": False},
         }
@@ -75,7 +77,16 @@ class SwarmDecisionPipeline:
         targets = self.allocator.allocate(convictions)
         risk = self.risk_guard.evaluate(targets)
         intents = self._trade_intents(targets, convictions, risk, current_weights or {})
-        return FundDecision(snapshot.observed_at_ms, snapshot.habitats, convictions, targets, risk, intents)
+        return FundDecision(
+            snapshot.observed_at_ms,
+            snapshot.habitats,
+            convictions,
+            targets,
+            risk,
+            intents,
+            "proposal_only",
+            snapshot.behavior_intents,
+        )
 
     def _trade_intents(
         self,

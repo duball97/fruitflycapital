@@ -18,6 +18,8 @@ import { PresentationCamera, type PresentationCameraMode } from './camera/Presen
 import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
 import type { TokenState } from './world/TokenState'
+import { SwarmObserver } from './swarm/SwarmObserver'
+import { CITY_SCENE_LIMITS, type CitySceneTuning } from './world/CityBackdrop'
 
 // The public experience is intentionally autonomous. Manual actuation remains
 // available only inside the controller module for isolated developer tests; it
@@ -102,6 +104,9 @@ const visualRenderers = [...flyRenderers, ...followerRenderers]
 
 const world = new World(scene, agents, environment)
 visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
+// Only the primary bodies enter this observer. Render followers are visual
+// embodiments and must never become extra portfolio votes or trade events.
+const swarmObserver = new SwarmObserver(SWARM_SIZE)
 
 const bodyStatus = document.createElement('div')
 bodyStatus.className = 'body-status debug-only'
@@ -197,6 +202,75 @@ freeButton.textContent = 'FREE'
 freeButton.addEventListener('click', () => { cameraIndex = 0 })
 cameraTargetPanel.append(freeButton)
 app.append(cameraTargetPanel)
+
+const sceneControls = document.createElement('aside')
+sceneControls.className = 'scene-controls'
+sceneControls.setAttribute('aria-label', 'Scene position controls')
+sceneControls.innerHTML = `
+  <div class="scene-controls-heading">SCENE POSITION</div>
+  <div class="scene-controls-note">City only · saved automatically</div>
+  <div class="scene-control-rows"></div>
+  <button class="scene-reset" type="button">RESET CITY POSITION</button>
+`
+app.append(sceneControls)
+const sceneControlRows = sceneControls.querySelector<HTMLDivElement>('.scene-control-rows')!
+const sceneReset = sceneControls.querySelector<HTMLButtonElement>('.scene-reset')!
+const sceneControlConfig: Array<{
+  key: keyof CitySceneTuning
+  label: string
+  min: number
+  max: number
+  step: number
+  display: (value: number) => string
+}> = [
+  { key: 'offsetX', label: 'CITY X', min: CITY_SCENE_LIMITS.offsetX[0], max: CITY_SCENE_LIMITS.offsetX[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
+  { key: 'offsetY', label: 'CITY HEIGHT', min: CITY_SCENE_LIMITS.offsetY[0], max: CITY_SCENE_LIMITS.offsetY[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
+  { key: 'offsetZ', label: 'CITY Z', min: CITY_SCENE_LIMITS.offsetZ[0], max: CITY_SCENE_LIMITS.offsetZ[1], step: 0.01, display: (value) => `${value.toFixed(2)} m` },
+  { key: 'rotationY', label: 'ROTATION', min: -180, max: 180, step: 1, display: (value) => `${Math.round(value)}°` },
+  { key: 'scaleMultiplier', label: 'SCALE', min: CITY_SCENE_LIMITS.scaleMultiplier[0], max: CITY_SCENE_LIMITS.scaleMultiplier[1], step: 0.01, display: (value) => `${value.toFixed(2)}×` },
+]
+const sceneInputs = new Map<keyof CitySceneTuning, HTMLInputElement>()
+const sceneOutputs = new Map<keyof CitySceneTuning, HTMLOutputElement>()
+for (const item of sceneControlConfig) {
+  const row = document.createElement('label')
+  row.className = 'scene-control-row'
+  row.innerHTML = `<span>${item.label}</span><button type="button" data-scene-step="-1" aria-label="Decrease ${item.label}">−</button><input type="range" min="${item.min}" max="${item.max}" step="${item.step}"><button type="button" data-scene-step="1" aria-label="Increase ${item.label}">+</button><output></output>`
+  const input = row.querySelector<HTMLInputElement>('input')!
+  const output = row.querySelector<HTMLOutputElement>('output')!
+  sceneInputs.set(item.key, input)
+  sceneOutputs.set(item.key, output)
+  const setFromInput = () => {
+    const value = Number(input.value)
+    const nextValue = item.key === 'rotationY' ? value * Math.PI / 180 : value
+    environment.city.setTuning({ [item.key]: nextValue })
+    renderSceneControls()
+  }
+  input.addEventListener('input', setFromInput)
+  row.querySelectorAll<HTMLButtonElement>('button[data-scene-step]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const direction = Number(button.dataset.sceneStep)
+      input.value = String(Number(input.value) + direction * item.step)
+      setFromInput()
+    })
+  })
+  sceneControlRows.append(row)
+}
+sceneReset.addEventListener('click', () => {
+  environment.city.resetTuning()
+  renderSceneControls()
+})
+
+function renderSceneControls() {
+  const tuning = environment.city.getTuning()
+  for (const item of sceneControlConfig) {
+    const input = sceneInputs.get(item.key)!
+    const output = sceneOutputs.get(item.key)!
+    const value = item.key === 'rotationY' ? tuning.rotationY * 180 / Math.PI : tuning[item.key]
+    input.value = String(value)
+    output.value = item.display(value)
+  }
+}
+renderSceneControls()
 
 const tokenPopup = document.createElement('div')
 tokenPopup.className = 'token-popup-backdrop'
@@ -383,7 +457,18 @@ function animate(now: number) {
   if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
   updateMarketStatus(marketEnvironment)
 
+  swarmObserver.observe(
+    Date.now(),
+    agents,
+    environment.habitats,
+    (position) => {
+      const contact = environment.habitatContactAt(position)
+      return { contact: contact.contact, habitatId: contact.habitatId }
+    },
+  )
+
   if (world.elapsedSeconds >= nextSwarmTelemetryAt) {
+    const behaviorIntents = swarmObserver.drainIntents()
     brainSocket.sendSwarmTelemetry({
       type: 'swarm_telemetry',
       timestampMs: Date.now(),
@@ -398,9 +483,11 @@ function animate(now: number) {
             distanceM: agent.body.position.distanceTo(habitat.group.position),
             radiusM: habitat.properties.physicalRadiusM,
             contact: contact.contact && contact.habitatId === habitat.state.id,
+            behavior: swarmObserver.telemetryFor(agent.id, habitat.state.id),
           }
         }),
       })),
+      behaviorIntents,
     })
     nextSwarmTelemetryAt += 0.25
   }

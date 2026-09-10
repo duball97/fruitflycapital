@@ -2,6 +2,7 @@
 
 from .consensus import HabitatConviction, TemporalConsensusEngine
 from .observer import (
+    BehaviorTradeIntent,
     FlyObservation,
     HabitatObservation,
     HabitatSwarmSummary,
@@ -10,6 +11,7 @@ from .observer import (
 )
 
 __all__ = [
+    "BehaviorTradeIntent",
     "FlyObservation",
     "HabitatObservation",
     "HabitatConviction",

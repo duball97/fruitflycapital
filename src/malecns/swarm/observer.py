@@ -110,14 +110,42 @@ class HabitatSwarmSummary:
 
 
 @dataclass(frozen=True)
+class BehaviorTradeIntent:
+    """A behavior-derived proposal; it is not a swap or a signing request."""
+
+    intent_id: str
+    fly_id: str
+    habitat_id: str
+    side: str
+    reason: str
+    confidence: float
+    observed_at_ms: int
+    metrics: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "intentId": self.intent_id,
+            "flyId": self.fly_id,
+            "habitatId": self.habitat_id,
+            "side": self.side,
+            "reason": self.reason,
+            "confidence": round(self.confidence, 6),
+            "observedAtMs": self.observed_at_ms,
+            "metrics": self.metrics,
+        }
+
+
+@dataclass(frozen=True)
 class SwarmSnapshot:
     observed_at_ms: int
     habitats: tuple[HabitatSwarmSummary, ...]
+    behavior_intents: tuple[BehaviorTradeIntent, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "observedAtMs": self.observed_at_ms,
             "habitats": [habitat.as_dict() for habitat in self.habitats],
+            "behaviorIntents": [intent.as_dict() for intent in self.behavior_intents],
         }
 
 
@@ -140,6 +168,7 @@ class _Track:
     distance_history: deque[DistancePoint] = field(default_factory=deque)
     congregation_sum: float = 0.0
     congregation_samples: int = 0
+    buy_issued_for_visit: bool = False
 
 
 class SwarmObserver:
@@ -174,6 +203,10 @@ class SwarmObserver:
         self._agent_last_seen: dict[str, int] = {}
         self._latest_positions: dict[str, tuple[float, float, float]] = {}
         self._latest_timestamp_ms = 0
+        # Keep a bounded audit window. Sending every historical event in every
+        # websocket decision would otherwise grow memory and payload size
+        # forever during a long-running market session.
+        self._behavior_intents: deque[BehaviorTradeIntent] = deque(maxlen=256)
 
     def ingest(self, observations: Iterable[FlyObservation]) -> SwarmSnapshot:
         frame = tuple(observations)
@@ -203,7 +236,7 @@ class SwarmObserver:
     def snapshot(self) -> SwarmSnapshot:
         habitat_ids = sorted({habitat_id for _, habitat_id in self._tracks})
         summaries = tuple(self._summary(habitat_id) for habitat_id in habitat_ids)
-        return SwarmSnapshot(self._latest_timestamp_ms, summaries)
+        return SwarmSnapshot(self._latest_timestamp_ms, summaries, tuple(self._behavior_intents))
 
     def _update_track(
         self,
@@ -227,8 +260,12 @@ class SwarmObserver:
         if inside and not previous_inside:
             track.visits += 1
             track.current_visit_dwell_s = 0.0
+            track.buy_issued_for_visit = False
         if previous_inside and not inside:
             track.departures += 1
+            if track.buy_issued_for_visit:
+                self._emit_behavior_intent(track, "sell", "departure", timestamp_ms, distance_m, False)
+            track.buy_issued_for_visit = False
             track.visit_dwell_s.append(track.current_visit_dwell_s)
             track.current_visit_dwell_s = 0.0
 
@@ -237,6 +274,13 @@ class SwarmObserver:
             track.current_visit_dwell_s += dt_s
             if habitat.contact:
                 track.contact_time_s += dt_s
+            if (
+                habitat.contact
+                and track.current_visit_dwell_s >= 0.6
+                and not track.buy_issued_for_visit
+            ):
+                self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)
+                track.buy_issued_for_visit = True
 
         decreasing = (
             not inside
@@ -263,6 +307,48 @@ class SwarmObserver:
         track.last_distance_m = distance_m
         track.inside = inside
 
+    def _emit_behavior_intent(
+        self,
+        track: _Track,
+        side: str,
+        reason: str,
+        timestamp_ms: int,
+        distance_m: float,
+        contact: bool,
+    ) -> None:
+        repeat_visits = max(0, track.visits - 1)
+        confidence = _clip(
+            0.45 * min(1.0, track.current_visit_dwell_s / 3.0)
+            + 0.25 * min(1.0, track.contact_time_s / 3.0)
+            + 0.15 * min(1.0, (track.approaches + repeat_visits) / 4.0)
+            + 0.15 * (track.dwell_time_s / max(track.dwell_time_s, 1.0))
+        )
+        self._behavior_intents.append(
+            BehaviorTradeIntent(
+                intent_id=f"{track.fly_id}:{track.habitat_id}:{side}:{track.visits}:{timestamp_ms}",
+                fly_id=track.fly_id,
+                habitat_id=track.habitat_id,
+                side=side,
+                reason=reason,
+                confidence=confidence,
+                observed_at_ms=timestamp_ms,
+                metrics={
+                    "distanceM": round(distance_m, 6),
+                    "visits": track.visits,
+                    "approaches": track.approaches,
+                    "dwellSeconds": round(track.current_visit_dwell_s, 6),
+                    "repeatVisits": repeat_visits,
+                    "departures": track.departures,
+                    "contact": contact,
+                    "persistence": round(
+                        min(
+                            1.0,
+                            track.dwell_time_s / max(track.dwell_time_s, 1.0),
+                        ),
+                    ),
+                },
+            )
+        )
     def _summary(self, habitat_id: str) -> HabitatSwarmSummary:
         tracks = tuple(track for (fly_id, candidate_id), track in self._tracks.items() if candidate_id == habitat_id)
         behaviors = tuple(self._behavior(track) for track in sorted(tracks, key=lambda item: item.fly_id))
@@ -319,3 +405,7 @@ def distance_between(first: tuple[float, float, float], second: tuple[float, flo
     """Small helper for adapters that receive positions and habitat positions."""
 
     return sqrt(sum((a - b) ** 2 for a, b in zip(first, second)))
+
+
+def _clip(value: float) -> float:
+    return min(1.0, max(0.0, float(value)))

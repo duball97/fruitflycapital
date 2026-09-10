@@ -480,8 +480,9 @@ would make the demo look active but would invalidate the experiment. See
    Graph, preserving signal provenance and unavailable fields.
 3. Benchmark 16, 32, and then 100 independent runtimes. Add scheduling or
    vectorized/compiled execution before making 100-agent realtime claims.
-4. Add measured swarm entry, exit, dwell, approach, avoidance, and persistence
-   metrics. These metrics—not a single fly—must produce any future TradeIntent.
+4. Connect the implemented behavior intentions to token routes and portfolio
+   holdings only after RiskGuard validation. The intentions are observations,
+   not automatic trades.
 5. Add fly-to-fly perception through the world, then a risk guard around
    Uniswap quote/calldata generation. Transaction broadcasting remains a later,
    separately controlled step.
