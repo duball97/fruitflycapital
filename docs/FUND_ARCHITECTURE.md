@@ -164,7 +164,13 @@ change fund behavior and is therefore a critical custody key.
   behavior transitions, netted intents, P&L, idempotency, and reconciliation.
 - `SimulationExecutionAdapter` fills automatically for the demo. The
   `MainnetExecutionAdapter` performs approval, quote, calldata, slippage,
-  liquidity, gas, and nonce checks, then stops at transaction preparation.
+  liquidity, gas, and nonce checks, then returns a prepared transaction to its
+  caller.
+- `QueueExecutionAdapter` writes netted fly decisions to a JSONL queue. The
+  standalone `scripts/run_trade_executor.py` consumes that queue, repeats the
+  execution checks, signs with the executor process's `PRIVATE_KEY`, broadcasts
+  when explicitly enabled, and feeds real hashes into the existing RPC receipt
+  and Blockscout reconciliation path.
 
 Bootstrap only inspects configuration by default:
 
@@ -176,6 +182,24 @@ PYTHONPATH=src python -m malecns.fund.bootstrap_privy --create
 `--create` is an explicit wallet-creation operation. No secret is printed.
 Configure a Privy policy before any testnet or live transaction and keep the
 treasury address equal to the vault's `strategyTreasury`.
+
+## Standalone execution service
+
+The browser and brain server emit biological trade decisions; they do not need
+to own the execution loop. Set `FUND_ADAPTER=queue` and start the brain server,
+then run:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py
+```
+
+This defaults to `prepare` mode. It consumes one JSONL record per netted
+allocation, requests Uniswap calldata, and prints the prepared result. To
+enable the separate signer/broadcaster process, run it with
+`FUND_RUNNER_MODE=broadcast` and `FUND_RUNNER_CONFIRM_BROADCAST=true`.
+The runner checks that `PRIVATE_KEY` controls `FUND_WALLET_ADDRESS`, submits
+the raw transaction, polls `eth_getTransactionReceipt`, and records only real
+transaction hashes as onchain executions. Simulation fills remain separate.
 
 ## Browser/API boundary
 

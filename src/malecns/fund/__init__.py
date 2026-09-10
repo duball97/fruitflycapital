@@ -14,7 +14,7 @@ from .valuation import CMCValuationProvider, FakeValuationProvider, PriceQuote, 
 from .wallet import RpcWalletClient, WalletSnapshot, WalletRpcError
 from .receipts import BlockscoutClient, ReceiptStatus, ReceiptObservation
 from .wallet_execution import DirectWalletUniswapAdapter, WalletExecutionUnavailable
-from .autonomous import AllocationIntent, AutonomousTradingRuntime, ExecutionIntent, FlyBehaviorState, FlyCapitalPosition, MainnetExecutionAdapter, PortfolioDelta, SimulationExecutionAdapter, TokenRef
+from .autonomous import AllocationIntent, AutonomousTradingRuntime, ExecutionIntent, FlyBehaviorState, FlyCapitalPosition, MainnetExecutionAdapter, PortfolioDelta, QueueExecutionAdapter, SimulationExecutionAdapter, TokenRef
 
 __all__ = [
     "CMCValuationProvider", "ExecutionEngine", "ExecutionRecord", "FakeExecutionAdapter",
@@ -22,7 +22,7 @@ __all__ = [
     "FundLedger", "FundNavReporter", "FundService", "NavReportResult",
     "PortfolioAllocator", "PortfolioEngine", "PortfolioSnapshot", "PortfolioTarget",
     "PositionValue", "PriceQuote", "PrivyClient", "PrivyConfig", "RiskGuard",
-    "AllocationIntent", "AutonomousTradingRuntime", "ExecutionIntent", "FlyBehaviorState", "FlyCapitalPosition", "MainnetExecutionAdapter", "PortfolioDelta", "RiskResult", "RpcWalletClient", "SimulationExecutionAdapter", "SwarmDecisionPipeline", "TokenRef", "TradeIntent", "TradeRoute",
+    "AllocationIntent", "AutonomousTradingRuntime", "ExecutionIntent", "FlyBehaviorState", "FlyCapitalPosition", "MainnetExecutionAdapter", "PortfolioDelta", "QueueExecutionAdapter", "RiskResult", "RpcWalletClient", "SimulationExecutionAdapter", "SwarmDecisionPipeline", "TokenRef", "TradeIntent", "TradeRoute",
     "WalletExecutionUnavailable", "WalletRpcError", "WalletSnapshot", "BlockscoutClient", "ReceiptStatus", "ReceiptObservation",
     "UniswapQuoteAdapter", "ValuationProvider",
 ]

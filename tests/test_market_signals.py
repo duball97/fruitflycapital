@@ -175,6 +175,8 @@ def test_financial_sensory_mapping_is_bounded_and_traceable():
 
     assert habitat.financial_trace is not None
     assert habitat.financial_trace["version"] == "sensory-mapping-v1"
+    assert habitat.attractive_odor == pytest.approx(habitat.financial_trace["channelStrengths"]["odorA"])
+    assert habitat.aversive_danger == pytest.approx(habitat.financial_trace["channelStrengths"]["odorB"])
     for value in (habitat.visual_motion_intensity, habitat.brightness, habitat.attractive_odor, habitat.aversive_danger, habitat.chaos):
         assert 0 <= value <= 1
 

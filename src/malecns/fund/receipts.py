@@ -113,7 +113,8 @@ class ReceiptObservation:
 
 
 def explorer_url(tx_hash: str) -> str:
-    return f"{ROBINHOOD_EXPLORER_URL}/tx/{tx_hash}"
+    base_url = os.getenv("FUND_EXPLORER_URL", ROBINHOOD_EXPLORER_URL).strip() or ROBINHOOD_EXPLORER_URL
+    return f"{base_url.rstrip('/')}/tx/{tx_hash}"
 
 
 def observe_receipt(

@@ -72,6 +72,9 @@ class UniswapTradingClient:
         return self._post("/swap", body)
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        decision_origin = os.getenv("UNISWAP_DECISION_ORIGIN", "human_mediated").strip().lower()
+        if decision_origin not in {"human_mediated", "autonomous"}:
+            raise ValueError("UNISWAP_DECISION_ORIGIN must be human_mediated or autonomous")
         request = Request(
             f"{self.base_url.rstrip('/')}{path}",
             data=json.dumps(body).encode("utf-8"),
@@ -82,9 +85,11 @@ class UniswapTradingClient:
                 # Robinhood Chain mainnet is supported by Universal Router
                 # 2.1.1; it has no 2.0 deployment.
                 "x-universal-router-version": os.getenv("UNISWAP_ROUTER_VERSION", "2.1.1"),
-                # The current fund boundary always requires a human review;
-                # it is not an autonomous transaction agent.
-                "x-agent-info": '{"integration_name":"swap-integration","decision_origin":"human_mediated","version":"1.5.0"}',
+                "x-agent-info": json.dumps({
+                    "integration_name": "swap-integration",
+                    "decision_origin": decision_origin,
+                    "version": "1.5.0",
+                }, separators=(",", ":")),
             },
             method="POST",
         )

@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Vector3 } from 'three'
+import { Object3D, PerspectiveCamera, Vector3 } from 'three'
 import type { FlyAgent } from '../fly/FlyAgent'
 import type { TokenHabitat } from '../world/TokenHabitat'
 
@@ -10,6 +10,8 @@ export class PresentationCamera {
   private readonly desired = new Vector3()
   private readonly target = new Vector3()
   private readonly center = new Vector3()
+  private readonly orientation = new Object3D()
+  private readonly forward = new Vector3()
   private readonly overviewDirection = new Vector3(0.58, 0.42, 0.7).normalize()
 
   constructor() {
@@ -31,20 +33,28 @@ export class PresentationCamera {
       this.target.copy(habitat.group.position).add(new Vector3(0, 0.045, 0))
       this.desired.copy(this.target).add(new Vector3(0.28, 0.18, 0.3))
     } else if (this.mode === 'director' && selected) {
-      const phase = timeSeconds % 18
-      if (phase < 7) {
+      // Hold each shot long enough to read the behavior log. The director
+      // still cuts between three shot types, but transitions are deliberately
+      // slow and eased instead of snapping every few seconds.
+      const phase = timeSeconds % 36
+      if (phase < 14) {
         this.center.set(0, 0, 0)
         agents.forEach((agent) => this.center.add(agent.body.position))
         this.center.multiplyScalar(1 / Math.max(1, agents.length))
         this.target.copy(this.center)
-        this.desired.copy(this.center).add(new Vector3(0.72, 0.42, 0.88))
-      } else if (phase < 13 && habitats.length > 0) {
-        const habitat = habitats[Math.floor((timeSeconds - 7) / 6) % habitats.length]!
+        const wideDistance = 1.45 + (Math.floor(timeSeconds / 36) % 2) * 0.42
+        this.desired.copy(this.center).add(new Vector3(0.58, 0.38, 0.72).normalize().multiplyScalar(wideDistance))
+      } else if (phase < 24 && habitats.length > 0) {
+        const habitat = habitats[Math.floor((timeSeconds - 14) / 10) % habitats.length]!
         this.target.copy(habitat.group.position).add(new Vector3(0, 0.045, 0))
-        this.desired.copy(this.target).add(new Vector3(0.24, 0.14, 0.22))
+        const mediumDistance = 0.46 + (Math.floor(timeSeconds / 36) % 3) * 0.12
+        this.desired.copy(this.target).add(new Vector3(0.72, 0.42, 0.72).normalize().multiplyScalar(mediumDistance))
       } else {
-        this.target.copy(selected.body.position)
-        this.desired.copy(this.target).add(new Vector3(0.18, 0.08, 0.18))
+        // The final shot is an occasional fly-eye view: close to the agent,
+        // but still slightly above the floor so the subject remains visible.
+        this.forward.set(0, 0, -1).applyQuaternion(selected.body.quaternion).normalize()
+        this.target.copy(selected.body.position).addScaledVector(this.forward, 0.14).add(new Vector3(0, 0.012, 0))
+        this.desired.copy(selected.body.position).addScaledVector(this.forward, -0.025).add(new Vector3(0, 0.025, 0))
       }
     } else {
       const swarmRadius = this.setSwarmCenter(agents)
@@ -55,8 +65,10 @@ export class PresentationCamera {
       const fitDistance = swarmRadius / Math.tan(verticalFov / 2) * 1.35
       this.desired.copy(this.center).addScaledVector(this.overviewDirection, Math.max(0.95, Math.min(4, fitDistance)))
     }
-    this.camera.position.lerp(this.desired, 0.06)
-    this.camera.lookAt(this.target)
+    this.camera.position.lerp(this.desired, 0.025)
+    this.orientation.position.copy(this.camera.position)
+    this.orientation.lookAt(this.target)
+    this.camera.quaternion.slerp(this.orientation.quaternion, 0.035)
   }
 
   private setSwarmCenter(agents: FlyAgent[]) {

@@ -182,6 +182,11 @@ hud.innerHTML = `
 `
 app.append(hud)
 
+const sceneFooter = document.createElement('footer')
+sceneFooter.className = 'scene-footer'
+sceneFooter.innerHTML = `<span>FRUITFLY CAPITAL</span><a href="/about/">ABOUT</a><a href="/portfolio/">PORTFOLIO</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">X @FRUITFLYCAP</a>`
+app.append(sceneFooter)
+
 const portfolioSummary = document.createElement('section')
 portfolioSummary.className = 'portfolio-summary'
 portfolioSummary.setAttribute('aria-label', 'Live portfolio summary')
@@ -243,6 +248,8 @@ intentLogPanel.innerHTML = `
   </div>
   <div class="intent-log-summary"><span class="intent-buy-count">BUY 0</span><span class="intent-sell-count">SELL 0</span><span class="intent-log-live">LIVE</span></div>
   <div class="intent-log-motion">FLIGHT · CRUISE 0 · DESCENDING 0 · LANDED 0 · CLOSEST —</div>
+  <div class="intent-log-holdings"><div class="intent-log-holdings-heading"><span>FUND HOLDINGS</span><a href="/portfolio/">FULL PORTFOLIO →</a></div><div class="intent-log-holdings-list">Waiting for live portfolio data…</div></div>
+  <label class="intent-log-search"><span>SEARCH LOG</span><input type="search" placeholder="Token, fly, buy or sell…" aria-label="Search behavior log" /></label>
   <div class="intent-log-list"></div>
 `
 app.append(intentLogPanel)
@@ -251,14 +258,25 @@ const intentBuyCount = intentLogPanel.querySelector<HTMLSpanElement>('.intent-bu
 const intentSellCount = intentLogPanel.querySelector<HTMLSpanElement>('.intent-sell-count')!
 const intentLogLive = intentLogPanel.querySelector<HTMLSpanElement>('.intent-log-live')!
 const intentLogMotion = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-motion')!
+const intentLogHoldingsList = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-holdings-list')!
+const intentLogSearch = intentLogPanel.querySelector<HTMLInputElement>('.intent-log-search input')!
 const intentHistory: BehaviorTradeIntent[] = []
+const seenIntentIds = new Set<string>()
 let buyIntentCount = 0
 let sellIntentCount = 0
+let intentSearchTerm = ''
+
+intentLogSearch.addEventListener('input', () => {
+  intentSearchTerm = intentLogSearch.value.trim().toLowerCase()
+  renderIntentLog()
+})
 
 function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
   for (const intent of intents) {
+    if (seenIntentIds.has(intent.intentId)) continue
     const proposal = tradeExecutionBoundary.prepare(intent)
     intentHistory.push(proposal.intent)
+    seenIntentIds.add(intent.intentId)
     if (intent.side === 'buy') buyIntentCount += 1
     else sellIntentCount += 1
   }
@@ -266,6 +284,15 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
     while (intentHistory.length > 200) intentHistory.shift()
     renderIntentLog()
   }
+}
+
+function reconcileServerIntentHistory() {
+  const autonomous = (brainSocket.portfolio()?.autonomous || {}) as Record<string, unknown>
+  const sharedIntents = autonomous && Array.isArray(autonomous.behaviorIntents)
+    ? autonomous.behaviorIntents as BehaviorTradeIntent[]
+    : []
+  if (sharedIntents.length === 0) return
+  recordBehaviorIntents(sharedIntents)
 }
 
 function currentFlyHolding(flyId: string) {
@@ -292,15 +319,37 @@ function renderIntentLog() {
   intentBuyCount.textContent = `BUY ${buyIntentCount}`
   intentSellCount.textContent = `SELL ${sellIntentCount}`
   intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
+  const fund = brainSocket.portfolio()
+  const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
+  const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
+  const observedPortfolio = Array.isArray(autonomous.actualWalletPortfolio) ? autonomous.actualWalletPortfolio as Record<string, unknown>[] : []
+  const holdings = positions.length ? positions : observedPortfolio
+  intentLogHoldingsList.replaceChildren()
+  if (holdings.length === 0) {
+    intentLogHoldingsList.textContent = 'No token positions held yet.'
+  } else {
+    for (const position of holdings.slice(0, 8)) {
+      const item = document.createElement('span')
+      const symbol = String(position.symbol || position.tokenSymbol || position.token_address || position.tokenAddress || 'TOKEN')
+      const amount = formatTokenAmount(position.amount ?? position.observedAmount ?? position.balance)
+      item.textContent = `${symbol} · ${amount}`
+      intentLogHoldingsList.append(item)
+    }
+  }
   intentLogList.replaceChildren()
-  if (intentHistory.length === 0) {
+  const visibleIntents = intentHistory.filter((intent) => {
+    if (!intentSearchTerm) return true
+    const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
+    return [intent.flyId, intent.side, intent.reason, intent.habitatId, habitat?.state.label].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+  })
+  if (visibleIntents.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'intent-log-empty'
-    empty.textContent = 'No intents yet · contact + dwell creates BUY · departure creates SELL'
+    empty.textContent = intentHistory.length === 0 ? 'No intents yet · contact + dwell creates BUY · departure creates SELL' : 'No matching intents.'
     intentLogList.append(empty)
     return
   }
-  for (const intent of intentHistory.slice(-40).reverse()) {
+  for (const intent of visibleIntents.slice(-40).reverse()) {
     const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
     const row = document.createElement('div')
     row.className = `intent-log-row ${intent.side}`
@@ -362,6 +411,7 @@ let selectedIndex = 0
 function updatePortfolioSummary() {
   const fund = brainSocket.portfolio()
   if (!fund) return
+  reconcileServerIntentHistory()
   const wallet = (fund.wallet || {}) as Record<string, unknown>
   const positions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
   const available = typeof wallet.availableToTrade === 'number' ? `${wallet.availableToTrade.toFixed(6)} ETH` : '—'
@@ -506,39 +556,39 @@ app.classList.add('presentation-demo')
 const cameraTargetPanel = document.createElement('div')
 cameraTargetPanel.className = 'camera-target-panel'
 cameraTargetPanel.setAttribute('aria-label', 'Camera controls')
+let cinematicTimer: number | null = null
 const cameraTargetLabel = document.createElement('span')
 cameraTargetLabel.textContent = 'VIEW'
 cameraTargetPanel.append(cameraTargetLabel)
 const cameraModeSelect = document.createElement('select')
 cameraModeSelect.setAttribute('aria-label', 'Camera view')
-for (const [label, index] of [['OVERVIEW', 4], ['FOLLOW FLY', 1], ['FLY VISION', 2], ['FREE ORBIT', 0]] as Array<[string, number]>) {
+for (const [label, value] of [['CINEMATIC', 'cinematic'], ['OVERVIEW', 'overview'], ['FLY VISION', 'vision'], ['FREE ORBIT', 'free']] as Array<[string, string]>) {
   const option = document.createElement('option')
-  option.value = String(index)
+  option.value = value
   option.textContent = label
   cameraModeSelect.append(option)
 }
-cameraModeSelect.value = '4'
-cameraModeSelect.addEventListener('change', () => { cameraIndex = Number(cameraModeSelect.value) })
-cameraTargetPanel.append(cameraModeSelect)
-const flySelector = document.createElement('select')
-flySelector.setAttribute('aria-label', 'Select fly to inspect')
-for (let index = 0; index < SWARM_SIZE; index += 1) {
-  const option = document.createElement('option')
-  option.value = String(index)
-  option.textContent = `#${String(index + 1).padStart(3, '0')}`
-  flySelector.append(option)
-}
-flySelector.value = String(selectedIndex)
-flySelector.addEventListener('change', () => setSelectedFly(Number(flySelector.value), false))
-cameraTargetPanel.append(flySelector)
-const focusButton = document.createElement('button')
-focusButton.textContent = 'FRAME FLY'
-focusButton.addEventListener('click', () => {
-  cameraIndex = 0
-  cameraModeSelect.value = '0'
-  free.focusOn(cameraTargetPosition())
+cameraModeSelect.value = 'free'
+cameraModeSelect.addEventListener('change', () => {
+  stopCinematic()
+  if (cameraModeSelect.value === 'cinematic') {
+    presentation.setMode('director')
+    cameraIndex = 4
+    cinematicTimer = window.setInterval(() => setSelectedFly((selectedIndex + 1) % agents.length, false), 12000)
+  } else if (cameraModeSelect.value === 'overview') {
+    presentation.setMode('overview')
+    cameraIndex = 4
+  } else if (cameraModeSelect.value === 'vision') {
+    cameraIndex = 2
+  } else {
+    cameraIndex = 0
+  }
 })
-cameraTargetPanel.append(focusButton)
+cameraTargetPanel.append(cameraModeSelect)
+const nextFlyButton = document.createElement('button')
+nextFlyButton.textContent = 'NEXT FLY'
+nextFlyButton.addEventListener('click', () => setSelectedFly((selectedIndex + 1) % agents.length, false))
+cameraTargetPanel.append(nextFlyButton)
 app.append(cameraTargetPanel)
 
 const sceneControls = document.createElement('aside')
@@ -969,9 +1019,15 @@ function habitatIdFromObject(object: Object3D) {
 
 function setSelectedFly(index: number, focus: boolean) {
   selectedIndex = population.select(index)
-  flySelector.value = String(selectedIndex)
   debug.setLabel(`FLY #${String(selectedIndex + 1).padStart(3, '0')}`)
   if (focus && cameraIndex === 0) free.focusOn(cameraTargetPosition())
+}
+
+function stopCinematic() {
+  if (cinematicTimer !== null) {
+    window.clearInterval(cinematicTimer)
+    cinematicTimer = null
+  }
 }
 
 function cameraTargetPosition() {
@@ -1005,7 +1061,7 @@ brainSocket.onStatusChange((next) => {
 })
 brainSocket.connect()
 window.setInterval(() => brainSocket.requestEnvironment(), 15000)
-window.setInterval(() => brainSocket.requestPortfolio(), 10000)
+window.setInterval(() => brainSocket.requestPortfolio(), 3000)
 
 logButton.addEventListener('click', () => flightLog.download())
 

@@ -1,3 +1,5 @@
+import json
+
 from malecns.fund.chain_client import ChainBalance, FakeChainClient
 from malecns.fund.execution import ExecutionEngine, FakeExecutionAdapter
 from malecns.fund.ledger import FundLedger
@@ -7,7 +9,7 @@ from malecns.fund.privy_client import FakePrivyClient, PrivyConfig
 from malecns.fund.nav_reporter import FundNavReporter
 from malecns.fund.valuation import FakeValuationProvider
 from malecns.fund.wallet import RpcWalletClient, WalletSnapshot
-from malecns.fund.autonomous import AutonomousTradingRuntime, SimulationExecutionAdapter
+from malecns.fund.autonomous import AutonomousTradingRuntime, QueueExecutionAdapter, SimulationExecutionAdapter
 from malecns.fund.receipts import BlockscoutClient, ReceiptStatus, observe_receipt
 from malecns.swarm.observer import BehaviorTradeIntent
 
@@ -98,7 +100,7 @@ def test_autonomous_runtime_assigns_one_sixteenth_and_debounces_departure():
     wallet = RpcWalletClient("https://example.invalid", "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9", expected_chain_id=4663)
     wallet.call = lambda method, params: "0x1237" if method == "eth_chainId" else "0x0" if method == "eth_getBalance" else "0x0"  # type: ignore[method-assign]
     wallet.snapshot = lambda: WalletSnapshot(4663, wallet.wallet_address, 4_500_000_000_000_000)  # type: ignore[method-assign]
-    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, wallet=wallet, adapter=SimulationExecutionAdapter(), departure_debounce_ms=1_500)
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, wallet=wallet, adapter=SimulationExecutionAdapter(), departure_debounce_ms=1_500, min_hold_seconds=0)
     token = "0x1111111111111111111111111111111111111111"
     runtime.update_habitats([{"id": "market-1", "label": "MARKET", "chainId": "robinhood", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 2.0}, {"name": "market.priceUsd", "value": 4.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
     buy = BehaviorTradeIntent("buy-1", "fly-001", "market-1", "buy", "dwell", .9, 1000, {"contact": True}, .0625)
@@ -110,6 +112,23 @@ def test_autonomous_runtime_assigns_one_sixteenth_and_debounces_departure():
     assert runtime.ingest([], observed_at_ms=3000)["flies"][0]["state"] == "DEPARTING"
     assert runtime.ingest([], observed_at_ms=4000)["flies"][0]["state"] == "EXPLORING"
     assert ledger.rows("execution_attempts")[0]["status"] == "filled"
+
+
+def test_autonomous_runtime_enforces_two_minute_minimum_hold_before_sell():
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=SimulationExecutionAdapter(), departure_debounce_ms=1_500)
+    token = "0x4444444444444444444444444444444444444444"
+    runtime.update_habitats([{"id": "market-4", "label": "MARKET", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 2.0}, {"name": "market.priceUsd", "value": 4.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
+    runtime.ingest([BehaviorTradeIntent("buy-2", "fly-001", "market-4", "buy", "dwell", .9, 1_000, {"contact": True}, .0625)], observed_at_ms=1_000)
+    runtime.ingest([BehaviorTradeIntent("sell-2", "fly-001", "market-4", "sell", "departure", .9, 2_000, {"contact": False}, .0625)], observed_at_ms=2_000)
+
+    early = runtime.ingest([], observed_at_ms=120_999)
+    assert early["flies"][0]["state"] == "DEPARTING"
+    assert not any(row["status"] == "filled" and row["side"] == "sell" for row in ledger.rows("execution_attempts"))
+
+    released = runtime.ingest([], observed_at_ms=121_000)
+    assert released["flies"][0]["state"] == "EXPLORING"
+    assert any(row["status"] == "filled" and row["side"] == "sell" for row in ledger.rows("execution_attempts"))
 
 
 def test_prepared_external_execution_never_becomes_a_fill():
@@ -126,6 +145,24 @@ def test_prepared_external_execution_never_becomes_a_fill():
     assert snapshot["flies"][0]["state"] == "QUALIFYING"
     assert snapshot["pendingRebalance"][0]["status"] == "prepared_external_authorization"
     assert ledger.rows("execution_attempts")[0]["nonce"] == "0x2a"
+
+
+def test_queue_adapter_publishes_one_netted_intent_for_the_executor(tmp_path):
+    ledger = FundLedger(":memory:")
+    queue_path = tmp_path / "execution-intents.jsonl"
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=QueueExecutionAdapter(queue_path), min_hold_seconds=0)
+    token = "0x5555555555555555555555555555555555555555"
+    runtime.update_habitats([{"id": "market-queue", "label": "AERO", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 1.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
+    intents = [
+        BehaviorTradeIntent("queue-1", "fly-001", "market-queue", "buy", "dwell", .9, 1000, {"contact": True}, .0625),
+        BehaviorTradeIntent("queue-2", "fly-002", "market-queue", "buy", "dwell", .9, 1000, {"contact": True}, .0625),
+    ]
+    runtime.ingest(intents, observed_at_ms=1000)
+    records = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 1
+    assert records[0]["executionIntent"]["side"] == "buy"
+    assert records[0]["executionIntent"]["flyIds"] == ["fly-001", "fly-002"]
+    assert ledger.rows("execution_attempts")[0]["status"] == "queued"
 
 
 def test_mainnet_receipt_uses_rpc_as_canonical_and_enriches_with_blockscout():

@@ -117,15 +117,56 @@ Fruit Fly Capital includes a safe fund boundary under `contracts/` and
 on Robinhood Chain testnet,
 authorized external NAV reporting, and asynchronous withdrawals. The Python
 ledger and portfolio engine keep book state distinct from on-chain state; the
-autonomous wallet runtime is simulation-fill or mainnet-preparation mode. See
+autonomous wallet runtime supports simulation fills or a separate queued
+execution service. See
 [docs/FUND_ARCHITECTURE.md](docs/FUND_ARCHITECTURE.md).
+
+### Standalone fly trade runner
+
+To let the flies publish BUY/SELL decisions to a separately run process, set
+these values in the server environment:
+
+```env
+FUND_ADAPTER=queue
+FUND_INTENT_QUEUE_PATH=data/fund/execution-intents.jsonl
+```
+
+Start the brain server as usual, then run the executor from the repository
+root. It consumes netted intents, resolves the exact chain/address, checks
+balances and liquidity, requests the Uniswap quote and calldata, estimates
+gas, and records the result in the shared fund ledger:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py
+```
+
+The default is `prepare`, which prints prepared transactions without signing
+or broadcasting. To run the same queue consumer in broadcast mode, configure
+the signer in the executor environment and explicitly enable that mode:
+
+```bash
+FUND_RUNNER_MODE=broadcast \
+FUND_RUNNER_CONFIRM_BROADCAST=true \
+PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py --mode broadcast
+```
+
+The runner signs only with `PRIVATE_KEY` from its own process, verifies that it
+controls `FUND_WALLET_ADDRESS`, submits the raw transaction, polls the RPC
+receipt, and lets the existing receipt/Blockscout layer classify and reconcile
+the real hash. Simulation fills never enter the mainnet-executed table.
+
+For Robinhood testnet use `FUND_CHAIN_ID=46630`,
+`FUND_RPC_URL=https://rpc.testnet.chain.robinhood.com`, and the testnet
+explorer URL. The current Uniswap Trading API integration is configured for
+Robinhood mainnet; a testnet quote/router endpoint must be supplied before
+testnet swaps can be prepared.
 
 ```bash
 PYTHONPATH=src python -m malecns.fund.bootstrap_privy
 cd contracts && forge test --offline -vvv
 ```
 
-No frontend control can sign or broadcast a transaction, and no mainnet
+No frontend control signs or broadcasts a transaction, and no mainnet
 deployment is automated. The deployment script uses the configured real
 Robinhood Chain testnet WETH asset; MockUSDC is test-only.
 

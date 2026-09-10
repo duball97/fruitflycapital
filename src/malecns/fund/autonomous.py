@@ -231,10 +231,37 @@ class MainnetExecutionAdapter:
         return {"status": "prepared_external_authorization", "txHash": None, "quote": quote, "swap": swap, "nonce": nonce, "estimatedGas": estimated_gas, "executionPrice": token.price_native, "gas": quote.get("gasFee") or quote.get("gasFeeUSD"), "slippage": intent.slippage_tolerance}
 
 
+class QueueExecutionAdapter:
+    """Publish execution intents for a separately run trade executor."""
+
+    def __init__(self, path: str | os.PathLike[str]) -> None:
+        self.path = str(path)
+
+    def execute(self, intent: ExecutionIntent, token: TokenRef) -> Mapping[str, Any]:
+        payload = {
+            "executionIntent": intent.as_dict(),
+            "token": {
+                "chainId": token.chain_id,
+                "address": token.address,
+                "symbol": token.symbol,
+                "liquidityUsd": token.liquidity_usd,
+                "priceUsd": token.price_usd,
+                "priceNative": token.price_native,
+            },
+            "queuedAtMs": int(time.time() * 1000),
+        }
+        queue_path = os.path.abspath(self.path)
+        os.makedirs(os.path.dirname(queue_path), exist_ok=True)
+        with open(queue_path, "a", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + "\n")
+            stream.flush()
+        return {"status": "queued", "txHash": None, "queuePath": queue_path}
+
+
 class AutonomousTradingRuntime:
     """Stateful 16-fly allocation runtime with netted execution intents."""
 
-    def __init__(self, ledger: FundLedger, *, expected_agents: int = 16, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5) -> None:
+    def __init__(self, ledger: FundLedger, *, expected_agents: int = 16, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_hold_seconds: float = 120.0, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5) -> None:
         self.ledger = ledger
         self.expected_agents = max(1, int(expected_agents))
         self.wallet = wallet
@@ -243,6 +270,8 @@ class AutonomousTradingRuntime:
         self.blockscout = BlockscoutClient.from_env()
         self._last_receipt_poll = 0.0
         self.departure_debounce_ms = max(0, int(departure_debounce_ms))
+        self.min_hold_ms = max(0, int(round(float(min_hold_seconds) * 1000)))
+        self.min_hold_seconds = self.min_hold_ms / 1000.0
         self.min_liquidity_usd = max(0.0, float(min_liquidity_usd))
         self.risk_guard = MarketRiskGuard(self.min_liquidity_usd)
         # Keep an intentionally tight upper bound even if an env value is
@@ -252,6 +281,7 @@ class AutonomousTradingRuntime:
         self.tokens_by_address: dict[str, TokenRef] = {}
         self.positions: dict[str, FlyCapitalPosition] = {}
         self.pending_departures: dict[str, tuple[int, str, TokenRef]] = {}
+        self.pending_rotations: dict[str, tuple[int, TokenRef, str, str | None]] = {}
         self.processed_events = {str(row["idempotency_key"]) for row in self.ledger.rows("execution_attempts", limit=100000)}
         for index in range(1, self.expected_agents + 1):
             fly_id = f"fly-{index:03d}"
@@ -259,6 +289,10 @@ class AutonomousTradingRuntime:
         for row in self.ledger.rows("fly_positions", limit=100000):
             self.positions[str(row["fly_id"])] = FlyCapitalPosition(str(row["fly_id"]), str(row["state"]), row["chain_id"], row["token_address"], row["token_symbol"], float(row["allocation_fraction"]), row["entry_timestamp_ms"], row["entry_price_usd"], float(row.get("held_amount") or 0), float(row["current_value_usd"]), float(row["realized_pnl_usd"]), float(row["unrealized_pnl_usd"]), row["departure_reason"], int(row["updated_ms"]))
         self.events: list[dict[str, Any]] = []
+        # Shared behavioral feed for every connected viewer. The browser may
+        # show an event immediately, but this server-owned history is the
+        # canonical cross-user source of truth.
+        self.behavior_intents: list[BehaviorTradeIntent] = []
         self.pending_rebalance: list[dict[str, Any]] = []
 
     @classmethod
@@ -268,7 +302,9 @@ class AutonomousTradingRuntime:
         adapter: ExecutionAdapter = SimulationExecutionAdapter()
         if mode == "mainnet" and wallet is not None and client is not None:
             adapter = MainnetExecutionAdapter(wallet, client)
-        return cls(ledger, expected_agents=16, wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")))
+        elif mode == "queue":
+            adapter = QueueExecutionAdapter(os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
+        return cls(ledger, expected_agents=16, wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_hold_seconds=float(os.getenv("FUND_MIN_HOLD_SECONDS", "120")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")))
 
     def update_habitats(self, habitats: Iterable[Mapping[str, Any]]) -> None:
         for habitat in habitats:
@@ -277,12 +313,12 @@ class AutonomousTradingRuntime:
                 self.tokens[str(habitat.get("id"))] = token
                 self.tokens_by_address[_token_key(token.chain_id, token.address)] = token
                 for fly_id, position in self.positions.items():
-                    if position.token_address and position.token_address.lower() == token.address.lower() and position.state == FlyBehaviorState.HOLDING.value:
+                    if self._position_matches_token(position, token) and position.state == FlyBehaviorState.HOLDING.value:
                         current = (token.price_usd or 0.0) * position.held_amount
                         basis = (position.entry_price_usd or 0.0) * position.held_amount
                         self._save(replace(position, current_value_usd=current, unrealized_pnl_usd=current - basis, updated_ms=int(time.time() * 1000)))
 
-    def register_broadcast(self, execution_id: str, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None) -> bool:
+    def register_broadcast(self, execution_id: str, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None, wallet_before_native_wei: int | None = None) -> bool:
         """Attach a real externally-broadcast hash to an existing intent.
 
         The signer/authorization layer calls this after it has broadcast the
@@ -293,13 +329,14 @@ class AutonomousTradingRuntime:
         if existing is not None:
             return True
         attempt = next((row for row in self.ledger.rows("execution_attempts", limit=100000) if str(row.get("idempotency_key")) == execution_id or str(row.get("attempt_id")) == execution_id), None)
-        if attempt is None or int(attempt.get("chain_id") or 0) != 4663 or not _is_real_tx_hash(tx_hash):
+        configured_chain_id = self.wallet.expected_chain_id if self.wallet is not None and self.wallet.expected_chain_id is not None else int(os.getenv("FUND_CHAIN_ID", "4663"))
+        if attempt is None or int(attempt.get("chain_id") or 0) != configured_chain_id or not _is_real_tx_hash(tx_hash):
             return False
         token_address = str(attempt.get("token_out") if str(attempt.get("token_in")).lower() == ZERO_ADDRESS.lower() else attempt.get("token_in") or "")
         token = self.tokens_by_address.get(_token_key(int(attempt["chain_id"]), token_address)) or TokenRef(int(attempt["chain_id"]), token_address, token_address[:8])
         fly_ids = _json_list(attempt.get("fly_ids_json"))
         intent = ExecutionIntent(execution_id, str(attempt["side"]), int(attempt["chain_id"]), str(attempt["token_in"]), str(attempt["token_out"]), str(attempt["amount_in"]), tuple(fly_ids), float(attempt.get("slippage") or self.slippage_tolerance), int(attempt.get("created_ms") or time.time() * 1000))
-        self._persist_broadcast(intent, token, tx_hash, expected_output=expected_output, biological_event_id=biological_event_id)
+        self._persist_broadcast(intent, token, tx_hash, expected_output=expected_output, biological_event_id=biological_event_id, wallet_before_native_wei=wallet_before_native_wei)
         return True
 
     def ingest(self, intents: Iterable[BehaviorTradeIntent], *, observed_at_ms: int | None = None) -> dict[str, Any]:
@@ -309,6 +346,9 @@ class AutonomousTradingRuntime:
         for behavior in intents:
             if behavior.intent_id in self.processed_events:
                 continue
+            self.behavior_intents.append(behavior)
+            if len(self.behavior_intents) > 256:
+                self.behavior_intents = self.behavior_intents[-256:]
             token = self.tokens.get(behavior.habitat_id)
             if token is None:
                 self._event(behavior, "BLOCKED", "token identity unavailable")
@@ -316,20 +356,38 @@ class AutonomousTradingRuntime:
                 continue
             position = self.positions.setdefault(behavior.fly_id, FlyCapitalPosition(behavior.fly_id, allocation_fraction=1.0 / self.expected_agents))
             if behavior.side == "buy":
-                if position.token_address and position.token_address.lower() == token.address.lower() and position.state in {FlyBehaviorState.HOLDING.value, FlyBehaviorState.QUALIFYING.value}:
+                if self._position_matches_token(position, token) and position.state in {FlyBehaviorState.HOLDING.value, FlyBehaviorState.QUALIFYING.value}:
+                    self.pending_departures.pop(behavior.fly_id, None)
+                    self.pending_rotations.pop(behavior.fly_id, None)
                     self._save(replace(position, state=FlyBehaviorState.HOLDING.value, updated_ms=timestamp))
                     self._event(behavior, "HOLD", "continued commitment")
                 else:
                     if position.token_address and position.held_amount > 0:
+                        minimum_hold_until = self._minimum_hold_until(position)
+                        if timestamp < minimum_hold_until:
+                            self.pending_departures.pop(behavior.fly_id, None)
+                            self.pending_rotations[behavior.fly_id] = (minimum_hold_until, token, behavior.reason, behavior.intent_id)
+                            self._save(replace(position, state=FlyBehaviorState.HOLDING.value, departure_reason=None, updated_ms=timestamp))
+                            self._event(behavior, "ROTATION_DELAYED", f"minimum hold active for {(minimum_hold_until - timestamp) / 1000.0:.1f}s")
+                            self.processed_events.add(behavior.intent_id)
+                            continue
                         old = self.tokens_by_address.get(_token_key(position.chain_id or token.chain_id, position.token_address)) or TokenRef(position.chain_id or token.chain_id, position.token_address, position.token_symbol or position.token_address[:8])
                         actions.append(AllocationIntent(behavior.fly_id, "sell", old, position.allocation_fraction, "rotation", timestamp, behavior.intent_id))
+                    self.pending_departures.pop(behavior.fly_id, None)
                     self._save(replace(position, state=FlyBehaviorState.QUALIFYING.value, updated_ms=timestamp))
                     actions.append(AllocationIntent(behavior.fly_id, "buy", token, position.allocation_fraction, behavior.reason, timestamp, behavior.intent_id))
                 self.processed_events.add(behavior.intent_id)
-            elif behavior.side == "sell" and position.token_address and position.token_address.lower() == token.address.lower() and position.held_amount > 0:
-                self.pending_departures[behavior.fly_id] = (timestamp + self.departure_debounce_ms, behavior.reason, token)
+            elif behavior.side == "sell" and self._position_matches_token(position, token) and position.held_amount > 0:
+                minimum_hold_until = self._minimum_hold_until(position)
+                due = max(timestamp + self.departure_debounce_ms, minimum_hold_until)
+                previous = self.pending_departures.get(behavior.fly_id)
+                if previous is not None:
+                    due = max(due, previous[0])
+                self.pending_departures[behavior.fly_id] = (due, behavior.reason, token)
+                self.pending_rotations.pop(behavior.fly_id, None)
                 self._save(replace(position, state=FlyBehaviorState.DEPARTING.value, departure_reason=behavior.reason, updated_ms=timestamp))
-                self._event(behavior, "DEPARTING", "debounce started")
+                wait_seconds = max(0.0, (due - timestamp) / 1000.0)
+                self._event(behavior, "DEPARTING", f"debounce started; minimum hold remaining {wait_seconds:.1f}s")
                 self.processed_events.add(behavior.intent_id)
         self._execute_netted(actions, timestamp)
         return self.snapshot(timestamp)
@@ -396,6 +454,7 @@ class AutonomousTradingRuntime:
             "flyCount": self.expected_agents,
             "executionAdapter": type(self.adapter).__name__,
             "executionBoundary": "simulation-fill" if isinstance(self.adapter, SimulationExecutionAdapter) else "transaction-preparation-only",
+            "minimumHoldSeconds": self.min_hold_seconds,
             "externalBroadcast": bool(mainnet_executions),
             "perFlyAllocationFraction": 1.0 / self.expected_agents,
             "perFlyAllocationPercent": 100.0 / self.expected_agents,
@@ -408,9 +467,20 @@ class AutonomousTradingRuntime:
             "pendingExecution": pending_execution,
             "mainnetExecutions": mainnet_executions,
             "events": list(self.events[-100:]),
+            "behaviorIntents": [intent.as_dict() for intent in self.behavior_intents[-256:]],
         }
 
     def _flush_departures(self, timestamp: int, actions: list[AllocationIntent]) -> None:
+        for fly_id, (due, target, reason, biological_event_id) in list(self.pending_rotations.items()):
+            if timestamp < due:
+                continue
+            position = self.positions[fly_id]
+            if position.state == FlyBehaviorState.HOLDING.value and position.held_amount > 0 and not self._position_matches_token(position, target):
+                old = self.tokens_by_address.get(_token_key(position.chain_id or target.chain_id, position.token_address or "")) or TokenRef(position.chain_id or target.chain_id, position.token_address or "", position.token_symbol or "TOKEN")
+                actions.append(AllocationIntent(fly_id, "sell", old, position.allocation_fraction, "rotation", timestamp, biological_event_id))
+                actions.append(AllocationIntent(fly_id, "buy", target, position.allocation_fraction, reason, timestamp, biological_event_id))
+                self._save(replace(position, state=FlyBehaviorState.QUALIFYING.value, updated_ms=timestamp))
+            self.pending_rotations.pop(fly_id, None)
         for fly_id, (due, reason, token) in list(self.pending_departures.items()):
             if timestamp < due:
                 continue
@@ -419,11 +489,23 @@ class AutonomousTradingRuntime:
                 actions.append(AllocationIntent(fly_id, "sell", token, position.allocation_fraction, reason, timestamp))
             self.pending_departures.pop(fly_id, None)
 
-    def _persist_broadcast(self, intent: ExecutionIntent, token: TokenRef, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None) -> None:
+    def _minimum_hold_until(self, position: FlyCapitalPosition) -> int:
+        if position.entry_timestamp_ms is None or position.held_amount <= 0:
+            return 0
+        return int(position.entry_timestamp_ms) + self.min_hold_ms
+
+    @staticmethod
+    def _position_matches_token(position: FlyCapitalPosition, token: TokenRef) -> bool:
+        return (
+            position.token_address is not None
+            and position.token_address.lower() == token.address.lower()
+            and int(position.chain_id or token.chain_id) == token.chain_id
+        )
+
+    def _persist_broadcast(self, intent: ExecutionIntent, token: TokenRef, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None, wallet_before_native_wei: int | None = None) -> None:
         if not _is_real_tx_hash(tx_hash):
             return
-        wallet_before_native_wei: int | None = None
-        if self.wallet is not None:
+        if wallet_before_native_wei is None and self.wallet is not None:
             try:
                 wallet_before_native_wei = self.wallet.snapshot().native_balance_wei
             except Exception:
@@ -505,7 +587,7 @@ class AutonomousTradingRuntime:
 
     def _apply_confirmed_execution(self, row: Mapping[str, Any], observation: Any, timestamp: int) -> None:
         token_address = str(row.get("token_address") or "")
-        chain_id = int(row.get("chain_id") or 4663)
+        chain_id = int(row.get("chain_id") or os.getenv("FUND_CHAIN_ID", "4663"))
         token = self.tokens_by_address.get(_token_key(chain_id, token_address)) or TokenRef(chain_id, token_address, str(row.get("token_symbol") or token_address[:8]))
         fly_ids = _json_list(row.get("fly_ids_json"))
         group = [(fly_id, token, "confirmed onchain", str(row.get("biological_event_id") or "") or None) for fly_id in fly_ids if fly_id in self.positions]
@@ -533,7 +615,13 @@ class AutonomousTradingRuntime:
             if (risk_reason := self.risk_guard.reject_reason(token)) is not None:
                 self.pending_rebalance.append({"status": "blocked", "reason": risk_reason, "flyId": fly_id, "tokenAddress": token.address})
                 continue
-            grouped.setdefault((side, token.chain_id, token.address.lower()), []).append((fly_id, token, reason, action.biological_event_id))
+            bucket = grouped.setdefault((side, token.chain_id, token.address.lower()), [])
+            # A noisy stream can repeat a decision for one fly in the same
+            # cycle. One fly owns one allocation; never double-count it in a
+            # netted order.
+            if any(item[0] == fly_id for item in bucket):
+                continue
+            bucket.append((fly_id, token, reason, action.biological_event_id))
         for (side, chain_id, token_address), group in grouped.items():
             fly_ids = tuple(item[0] for item in group)
             token = group[0][1]

@@ -10,6 +10,7 @@ export type FlyLod = 'full' | 'medium' | 'low'
 // scale from the free camera. This affects rendering only; physics, sensors,
 // collisions, and logged positions remain in SI metres.
 const DISPLAY_MAGNIFICATION = 12
+const DISPLAY_GROUND_OFFSET = 0.012
 const HOVER_ACTUATOR_NEUTRAL = 0.5
 
 export class FlyRenderer {
@@ -85,6 +86,7 @@ export class FlyRenderer {
 
   updatePose(position: Vector3, quaternion: Quaternion, command: ActuatorCommand, elapsedSeconds: number) {
     this.group.position.copy(position)
+    this.group.position.y += DISPLAY_GROUND_OFFSET
     this.group.quaternion.copy(quaternion)
     // A neutral vertical command is hover/idle in the shared actuator
     // interface. Do not animate the canonical wings merely because that

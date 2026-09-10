@@ -78,7 +78,7 @@ export class TokenHabitat {
     this.floorGlow.position.y = 0.006
     this.group.add(this.floorGlow)
 
-    this.logo = new Sprite(new SpriteMaterial({ map: logoTexture(state.label, imageUrlForState(state)), transparent: true, depthWrite: false }))
+    this.logo = new Sprite(new SpriteMaterial({ map: logoTexture(state.label), transparent: true, depthWrite: false }))
     this.logo.name = 'TokenLogo'
     this.logo.userData.tokenHabitatId = state.id
     this.logo.position.y = 0.17
@@ -298,7 +298,7 @@ export class TokenHabitat {
 
   setIdentity(id: string, label: string) {
     this.state = { ...this.state, id, label }
-    this.replaceLogoTexture(label, imageUrlForState(this.state))
+    this.replaceLogoTexture(label)
     this.group.name = `TokenHabitat:${id}`
     this.group.userData.tokenHabitatId = id
     this.logo.userData.tokenHabitatId = id
@@ -309,7 +309,7 @@ export class TokenHabitat {
     this.group.name = `TokenHabitat:${state.id}`
     this.group.userData.tokenHabitatId = state.id
     this.logo.userData.tokenHabitatId = state.id
-    this.replaceLogoTexture(state.label, imageUrlForState(state))
+    this.replaceLogoTexture(state.label)
   }
 
   resetIdentity() {
@@ -317,13 +317,13 @@ export class TokenHabitat {
     this.group.name = `TokenHabitat:${this.state.id}`
     this.group.userData.tokenHabitatId = this.state.id
     this.logo.userData.tokenHabitatId = this.state.id
-    this.replaceLogoTexture(this.state.label, imageUrlForState(this.state))
+    this.replaceLogoTexture(this.state.label)
   }
 
-  private replaceLogoTexture(label: string, imageUrl?: string | null) {
+  private replaceLogoTexture(label: string) {
     const material = this.logo.material as SpriteMaterial
     const previous = material.map
-    material.map = logoTexture(label, imageUrl)
+    material.map = logoTexture(label)
     material.needsUpdate = true
     previous?.dispose()
   }
@@ -360,7 +360,7 @@ export class TokenHabitat {
   }
 }
 
-function logoTexture(label: string, imageUrl?: string | null) {
+function logoTexture(label: string) {
   const canvas = document.createElement('canvas')
   canvas.width = 256
   canvas.height = 256
@@ -368,42 +368,7 @@ function logoTexture(label: string, imageUrl?: string | null) {
   texture.colorSpace = SRGBColorSpace
   drawLogoFallback(canvas, label)
   texture.needsUpdate = true
-
-  if (imageUrl) {
-    const image = new Image()
-    image.crossOrigin = 'anonymous'
-    image.onload = () => {
-      const context = canvas.getContext('2d')
-      if (!context) return
-      context.clearRect(0, 0, canvas.width, canvas.height)
-      context.save()
-      context.beginPath()
-      context.arc(128, 128, 107, 0, Math.PI * 2)
-      context.clip()
-      const ratio = Math.max(214 / image.width, 214 / image.height)
-      const width = image.width * ratio
-      const height = image.height * ratio
-      context.drawImage(image, 128 - width / 2, 128 - height / 2, width, height)
-      context.restore()
-      drawLogoBorder(context)
-      texture.needsUpdate = true
-    }
-    image.onerror = () => { /* The initials fallback remains visible. */ }
-    image.src = normalizeImageUrl(imageUrl)
-  }
   return texture
-}
-
-function imageUrlForState(state: TokenState) {
-  if (state.imageUrl) return state.imageUrl
-  const imageUrl = state.provenance.find((item) => typeof item.imageUrl === 'string')?.imageUrl
-  return typeof imageUrl === 'string' && imageUrl.length > 0 ? imageUrl : null
-}
-
-function normalizeImageUrl(url: string) {
-  if (url.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${url.slice('ipfs://'.length)}`
-  if (url.startsWith('ipns://')) return `https://ipfs.io/ipns/${url.slice('ipns://'.length)}`
-  return url
 }
 
 function drawLogoFallback(canvas: HTMLCanvasElement, label: string) {
