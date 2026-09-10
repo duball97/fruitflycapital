@@ -16,6 +16,10 @@ export type HabitatContactSampler = (position: Vector3) => boolean
 // threshold was therefore unreachable: flies stayed in CRUISE forever and
 // could never produce contact, dwell, BUY, or departure SELL events.
 const LANDING_ODOR_ONSET = 0.34
+// A habitat is not a permanent parking spot. A fly leaves when its local
+// sensory signal fades or turns aversive, then resumes the same bounded
+// search loop. This is driven by odor, not by an arbitrary departure timer.
+const RELEASE_ODOR_THRESHOLD = 0.27
 
 export class FlyAgent {
   readonly body = new FlyBody()
@@ -150,6 +154,10 @@ export class FlyAgent {
     }
 
     if (this.landingState === 'landed') {
+      if (odorReleaseRequested(frame)) this.landingState = 'departing'
+    }
+
+    if (this.landingState === 'landed') {
       return {
         ...command,
         forwardThrust: 0,
@@ -187,9 +195,10 @@ export class FlyAgent {
         return
       }
       this.dwellSeconds += dt
-      // Landing is a hold state. A fly is allowed to remain on a habitat
-      // indefinitely; departure will only begin after an external neural
-      // forward impulse is present (handled below).
+      // Landing is a hold state, not a permanent parking state. The fly can
+      // leave from a genuine neural impulse or when its local plume signal
+      // fades/turns aversive; the observer still applies the trade hold
+      // window before it records a SELL.
       if (commandRequestsDeparture(this.lastNeuralCommand)) this.landingState = 'departing'
     }
     if (this.landingState === 'departing' && !this.body.contact.ground && this.body.position.y > 0.06) {
@@ -208,4 +217,10 @@ function commandRequestsDeparture(command: ActuatorCommand) {
     || Math.abs(command.rollTorque) >= 0.48
     || Math.abs(command.yawTorque) >= 0.78
     || command.verticalThrust >= 0.72
+}
+
+function odorReleaseRequested(frame: SensorFrame) {
+  return frame.odor.concentration < RELEASE_ODOR_THRESHOLD
+    || frame.odor.aversiveConcentration > frame.odor.concentration + 0.06
+    || frame.odor.temporalChange < -0.018
 }

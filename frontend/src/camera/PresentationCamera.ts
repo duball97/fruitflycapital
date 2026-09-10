@@ -42,15 +42,15 @@ export class PresentationCamera {
       // still cuts between three shot types, but transitions are deliberately
       // slow and eased instead of snapping every few seconds.
       const phase = timeSeconds % 36
-      if (phase < 14) {
+      if (phase < 18) {
         this.center.set(0, 0, 0)
         agents.forEach((agent) => this.center.add(agent.body.position))
         this.center.multiplyScalar(1 / Math.max(1, agents.length))
         this.target.copy(this.center)
         const wideDistance = 1.45 + (Math.floor(timeSeconds / 36) % 2) * 0.42
         this.desired.copy(this.center).add(new Vector3(0.58, 0.78, 0.72).normalize().multiplyScalar(wideDistance))
-      } else if (phase < 24 && habitats.length > 0) {
-        const habitat = habitats[Math.floor((timeSeconds - 14) / 10) % habitats.length]!
+      } else if (phase < 28 && habitats.length > 0) {
+        const habitat = habitats[Math.floor((timeSeconds - 18) / 10) % habitats.length]!
         this.target.copy(habitat.group.position).add(new Vector3(0, 0.045, 0))
         const mediumDistance = 0.46 + (Math.floor(timeSeconds / 36) % 3) * 0.12
         this.desired.copy(this.target).add(new Vector3(0.72, 0.42, 0.72).normalize().multiplyScalar(mediumDistance))

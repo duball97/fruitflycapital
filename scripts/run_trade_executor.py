@@ -137,7 +137,15 @@ class TradeExecutor:
             raise RuntimeError("UNISWAP_API_KEY is required")
         if mode == "broadcast" and os.getenv("FUND_RUNNER_CONFIRM_BROADCAST", "false").lower() != "true":
             raise RuntimeError("set FUND_RUNNER_CONFIRM_BROADCAST=true to enable broadcasting")
-        ledger = FundLedger(os.getenv("FUND_DB_PATH", "data/fund/fund.db"))
+        # In Supabase queue mode the brain service owns the canonical queue.
+        # Do not open its SQLite file from the worker: on a local machine that
+        # causes lock contention, and on Render the two services cannot share
+        # that filesystem anyway. The worker ledger is only an execution-side
+        # idempotency/receipt cache; queue state lives in Supabase.
+        ledger_path = os.getenv("FUND_RUNNER_DB_PATH")
+        if not ledger_path and os.getenv("FUND_INTENT_QUEUE_BACKEND", "").lower() == "supabase":
+            ledger_path = "data/fund/executor.db"
+        ledger = FundLedger(ledger_path or os.getenv("FUND_DB_PATH", "data/fund/fund.db"))
         self.runtime = AutonomousTradingRuntime.from_env(ledger, self.wallet)
 
     def process(self, intent: ExecutionIntent, token: TokenRef) -> dict[str, Any]:
@@ -261,12 +269,13 @@ class TradeExecutor:
 def main() -> int:
     load_project_env()
     parser = argparse.ArgumentParser(description="Consume FruitFly execution intents and run Uniswap swaps")
-    parser.add_argument("--backend", choices=("file", "supabase"), default=os.getenv("FUND_INTENT_QUEUE_BACKEND", "file"))
+    parser.add_argument("--backend", choices=("file", "supabase"), default=os.getenv("FUND_INTENT_QUEUE_BACKEND", os.getenv("FUND_ADAPTER", "file")))
     parser.add_argument("--queue", default=os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
     parser.add_argument("--mode", choices=("prepare", "broadcast"), default=os.getenv("FUND_RUNNER_MODE", "prepare"))
     parser.add_argument("--once", action="store_true", help="process currently queued items and exit")
     parser.add_argument("--poll-seconds", type=float, default=float(os.getenv("FUND_RUNNER_POLL_SECONDS", "1")))
     args = parser.parse_args()
+    os.environ["FUND_INTENT_QUEUE_BACKEND"] = args.backend
     try:
         executor = TradeExecutor(args.mode)
     except Exception as exc:
@@ -280,9 +289,17 @@ def main() -> int:
     queue_path = Path(args.queue)
     offset_path = Path(os.getenv("FUND_RUNNER_OFFSET_PATH", f"{queue_path}.offset"))
     offset = int(offset_path.read_text(encoding="utf-8").strip() or "0") if offset_path.exists() else 0
+    print(json.dumps({"status": "ready", "backend": args.backend, "mode": args.mode, "workerId": worker_id}, sort_keys=True), flush=True)
     while True:
         if queue is not None:
-            records = queue.claim(worker_id, limit=1)
+            try:
+                records = queue.claim(worker_id, limit=1)
+            except Exception as exc:
+                print(json.dumps({"status": "queue_error", "backend": "supabase", "error": str(exc)}, sort_keys=True), flush=True)
+                if args.once:
+                    return 2
+                time.sleep(max(0.1, args.poll_seconds))
+                continue
             for record in records:
                 raw_payload = record.get("payload")
                 try:

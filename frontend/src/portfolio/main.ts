@@ -1,8 +1,9 @@
 import './style.css'
+import { resolveBrainWebSocketUrl } from '../networking/brainUrl'
 
 type Portfolio = { fund?: Record<string, unknown>; demoData?: boolean }
 const app = document.querySelector<HTMLElement>('#portfolio-app')!
-const wsUrl = import.meta.env.VITE_BRAIN_WS_URL || 'ws://127.0.0.1:8765'
+const wsUrl = resolveBrainWebSocketUrl(import.meta.env.VITE_BRAIN_WS_URL)
 const money = (value: unknown) => typeof value === 'number' ? `$${value.toFixed(2)}` : '—'
 const percent = (value: unknown) => typeof value === 'number' ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—'
 const isRealTxHash = (value: unknown): value is string => typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value)

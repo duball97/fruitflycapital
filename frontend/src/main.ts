@@ -16,11 +16,13 @@ import { PostProcessingPipeline, type RenderQuality } from './rendering/PostProc
 import { PresentationCamera } from './camera/PresentationCamera'
 import { isLiveBrainSource, vectorToWire } from './networking/protocol'
 import { BrainActivityPanel } from './rendering/BrainActivityPanel'
+import { SceneAtmosphere } from './rendering/SceneAtmosphere'
 import type { TokenState } from './world/TokenState'
 import { SwarmObserver } from './swarm/SwarmObserver'
 import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
 import { TradeExecutionBoundary } from './trading/TradeExecutionBoundary'
 import type { BehaviorTradeIntent } from './networking/protocol'
+import { resolveBrainWebSocketUrl } from './networking/brainUrl'
 
 // The public experience is intentionally autonomous. Manual actuation remains
 // available only inside the controller module for isolated developer tests; it
@@ -41,7 +43,7 @@ app.append(canvas)
 const tokenLogoOverlay = document.createElement('div')
 tokenLogoOverlay.className = 'token-logo-overlay'
 app.append(tokenLogoOverlay)
-const tokenLogoElements = new Map<string, { element: HTMLImageElement; link: HTMLAnchorElement; source: string; failed: boolean }>()
+const tokenLogoElements = new Map<string, { element: HTMLImageElement; button: HTMLButtonElement; source: string; failed: boolean }>()
 const logoWorldPosition = new Vector3()
 const logoEdgePosition = new Vector3()
 const drawOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -69,42 +71,37 @@ function updateTokenLogoOverlay() {
     const source = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
     if (!source) continue
     const id = habitat.state.id
-    const dexscreenerUrl = habitat.state.dexscreenerUrl ?? buildDexscreenerUrl(habitat.state)
     visibleIds.add(id)
     let entry = tokenLogoElements.get(id)
     if (!entry) {
-      const link = document.createElement('a')
-      link.className = 'token-logo-link'
-      link.target = '_blank'
-      link.rel = 'noopener noreferrer'
+      const button = document.createElement('button')
+      button.className = 'token-logo-link'
+      button.type = 'button'
+      button.addEventListener('click', () => {
+        const currentHabitat = environment.habitats.find((candidate) => candidate.state.id === id)
+        if (currentHabitat) openTokenPopup(currentHabitat)
+      })
       const element = document.createElement('img')
       element.className = 'token-logo-image'
       element.alt = `${habitat.state.label} logo`
       element.draggable = false
       element.loading = 'eager'
       element.referrerPolicy = 'no-referrer'
-      const nextEntry = { element, link, source: '', failed: false }
-      element.addEventListener('error', () => { nextEntry.failed = true; link.hidden = true })
-      link.append(element)
-      tokenLogoOverlay.append(link)
+      const nextEntry = { element, button, source: '', failed: false }
+      element.addEventListener('error', () => { nextEntry.failed = true; button.hidden = true })
+      button.append(element)
+      tokenLogoOverlay.append(button)
       entry = nextEntry
       tokenLogoElements.set(id, entry)
     }
     if (entry.source !== source) {
       entry.source = source
       entry.failed = false
-      entry.link.hidden = false
+      entry.button.hidden = false
       entry.element.src = normalizeImageUrl(source)
     }
-    if (dexscreenerUrl) {
-      entry.link.href = dexscreenerUrl
-      entry.link.setAttribute('aria-label', `Open ${habitat.state.label} in Dexscreener`)
-      entry.link.tabIndex = 0
-    } else {
-      entry.link.removeAttribute('href')
-      entry.link.removeAttribute('aria-label')
-      entry.link.tabIndex = -1
-    }
+    entry.button.setAttribute('aria-label', `Open ${habitat.state.label} token details`)
+    entry.button.tabIndex = 0
     if (entry.failed) continue
     logoWorldPosition.copy(habitat.group.position).y += 0.19
     logoEdgePosition.copy(logoWorldPosition).x += Math.max(0.04, habitat.properties.physicalRadiusM * 0.62)
@@ -121,14 +118,14 @@ function updateTokenLogoOverlay() {
     const centerY = (-logoWorldPosition.y * 0.5 + 0.5) * viewportHeight
     const projectedRadius = Math.abs(logoEdgePosition.x - logoWorldPosition.x) * 0.5 * viewportWidth
     const size = clamp(projectedRadius * 1.35 * environment.getHabitatVisualScale(), 16, 46)
-    entry.link.hidden = false
-    entry.link.style.width = `${size}px`
-    entry.link.style.height = `${size}px`
-    entry.link.style.left = `${centerX}px`
-    entry.link.style.top = `${centerY}px`
+    entry.button.hidden = false
+    entry.button.style.width = `${size}px`
+    entry.button.style.height = `${size}px`
+    entry.button.style.left = `${centerX}px`
+    entry.button.style.top = `${centerY}px`
   }
   for (const [id, entry] of tokenLogoElements) {
-    if (!visibleIds.has(id)) entry.link.hidden = true
+    if (!visibleIds.has(id)) entry.button.hidden = true
   }
 }
 
@@ -491,6 +488,8 @@ let mobileViewport = window.matchMedia?.('(max-width: 600px)').matches ?? false
 
 const environment = new Environment()
 environment.setupLighting(scene)
+const atmosphere = new SceneAtmosphere()
+scene.add(atmosphere.group)
 
 const causalStatus = document.createElement('div')
 causalStatus.className = 'causal-status debug-only'
@@ -502,7 +501,7 @@ populationStatus.className = 'population-status debug-only'
 populationStatus.innerHTML = `<strong>FRUITFLY CAPITAL</strong><br>VISUAL FLIES ${VISUAL_FLY_COUNT} · PRIMARY SIGNALS ${SWARM_SIZE} · BODIES / SIGNAL ${BODIES_PER_BRAIN}`
 app.append(populationStatus)
 
-const brainUrl = import.meta.env.VITE_BRAIN_WS_URL ?? 'ws://127.0.0.1:8765'
+const brainUrl = resolveBrainWebSocketUrl(import.meta.env.VITE_BRAIN_WS_URL)
 const brainSocket = new BrainSocket(brainUrl)
 const flightLog = new FlightLogger()
 const tradeExecutionBoundary = new TradeExecutionBoundary()
@@ -645,11 +644,13 @@ let cameraIndex = 0
 let activeCamera = cameras[cameraIndex] ?? cameras[0]!
 const cameraFocus = new Vector3()
 const pipeline = new PostProcessingPipeline(renderer, scene, activeCamera)
-let renderQuality: RenderQuality = 'performance'
+let renderQuality: RenderQuality = mobileViewport ? 'performance' : 'demo'
 const storedQuality = window.localStorage.getItem('ffc.renderQuality')
 if (storedQuality === 'demo' || storedQuality === 'performance') renderQuality = storedQuality
 pipeline.setQuality(renderQuality)
-presentation.setMode('overview')
+// The public scene opens with a slow director pass. The selector still lets
+// visitors switch to overview, fly vision, or free orbit at any time.
+presentation.setMode('director')
 
 const performanceStatus = document.createElement('div')
 performanceStatus.className = 'performance-status debug-only'
@@ -675,7 +676,7 @@ for (const [label, value] of [['CINEMATIC', 'cinematic'], ['OVERVIEW', 'overview
   option.textContent = label
   cameraModeSelect.append(option)
 }
-cameraModeSelect.value = 'free'
+cameraModeSelect.value = 'cinematic'
 cameraModeSelect.addEventListener('change', () => {
   stopCinematic()
   if (cameraModeSelect.value === 'cinematic') {
@@ -692,6 +693,8 @@ cameraModeSelect.addEventListener('change', () => {
   }
 })
 cameraTargetPanel.append(cameraModeSelect)
+cameraIndex = 4
+cinematicTimer = window.setInterval(() => setSelectedFly((selectedIndex + 1) % agents.length, false), 12000)
 const nextFlyButton = document.createElement('button')
 nextFlyButton.textContent = 'NEXT FLY'
 nextFlyButton.addEventListener('click', () => setSelectedFly((selectedIndex + 1) % agents.length, false))
@@ -1199,6 +1202,7 @@ function animate(now: number) {
   }
   followers.forEach((follower) => follower.update(delta, world.elapsedSeconds))
   environment.updateVisuals(world.elapsedSeconds)
+  atmosphere.update(world.elapsedSeconds)
   updateStartupGate()
   if (world.elapsedSeconds >= nextIntentMotionUiAt) {
     updateFlightMotionStatus()

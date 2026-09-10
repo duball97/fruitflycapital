@@ -90,8 +90,14 @@ export class BrainActivityPanel {
     this.lastSampleAt = elapsedSeconds
     this.lastFlyId = agent.id
 
-    const visualInput = stimulation ? Math.min(1, stimulation.visual.length / 100) : 0
-    const odorInput = stimulation ? Math.min(1, stimulation.olfactory.length / 250) : 0
+    const frame = agent.sensors.getFrame()
+    // When the remote Brian2 websocket is unavailable, keep the panel useful
+    // with the actual local eye/antenna window. It is explicitly labelled as
+    // a sensor trace below and is never presented as measured CNS activity.
+    const localVisualInput = Math.min(1, frame.leftEye.meanContrast * 0.7 + frame.rightEye.meanContrast * 0.3 + frame.leftEye.meanOpticFlow * 0.2)
+    const localOdorInput = Math.min(1, frame.odor.concentration * 1.35 + Math.abs(frame.odor.temporalChange) * 3)
+    const visualInput = stimulation ? Math.min(1, stimulation.visual.length / 100) : localVisualInput
+    const odorInput = stimulation ? Math.min(1, stimulation.olfactory.length / 250) : localOdorInput
     const input = Math.max(visualInput, odorInput)
     const spikes = activity ? Object.values(activity.spikeCounts).reduce((sum, count) => sum + Math.max(0, count), 0) : 0
     const spikeLevel = Math.min(1, spikes / 24)
@@ -115,9 +121,9 @@ export class BrainActivityPanel {
       ? 'LIVE BRIAN2 → DECODER'
       : activity
         ? 'DECODER OUTPUT · NO LIVE BRAIN'
-        : 'WAITING FOR BRAIN OUTPUT'
+        : 'LOCAL SENSOR TRACE · CNS OFFLINE'
     this.sourceBadge.dataset.state = live ? 'live' : 'waiting'
-    this.agentLabel.textContent = `${agent.id} · ${agent.mode.toUpperCase()} · ${live ? 'measured neural window' : 'interpretation unavailable'}`
+    this.agentLabel.textContent = `${agent.id} · ${agent.mode.toUpperCase()} · ${live ? 'measured neural window' : activity ? 'decoder window' : 'eye / antenna window'}`
     this.mapAgentLabel.textContent = `${agent.id.toUpperCase()} · SWARM TRACE`
     setBar(this.inputBar, input)
     setBar(this.spikeBar, spikeLevel)
@@ -181,7 +187,7 @@ export class BrainActivityPanel {
       context.lineWidth = 0.7 + energy * 0.8
       context.stroke()
 
-      if (this.live && energy > 0.015) {
+      if ((this.live || this.inputLevel > 0.015) && energy > 0.015) {
         const phase = (elapsedSeconds * (0.42 + energy * 1.8) + from.phase + to.phase) % 1
         const pulseX = x1 + (x2 - x1) * phase
         const pulseY = y1 + (y2 - y1) * phase
@@ -200,7 +206,9 @@ export class BrainActivityPanel {
           : node.layer === 2
             ? this.dnLevel
             : this.commandLevel
-      const flicker = this.live ? (Math.sin(elapsedSeconds * 8 + node.phase) + 1) * 0.5 : 0
+      const flicker = this.live || this.inputLevel > 0.015
+        ? (Math.sin(elapsedSeconds * 8 + node.phase) + 1) * 0.5
+        : 0
       const level = Math.min(1, localLevel * (0.66 + flicker * 0.34))
       const x = node.x * width
       const y = node.y * height
@@ -223,7 +231,7 @@ export class BrainActivityPanel {
 
     context.fillStyle = this.live ? 'rgba(211, 255, 235, .72)' : 'rgba(159, 184, 202, .58)'
     context.font = '8px ui-monospace, SFMono-Regular, Menlo, monospace'
-    context.fillText(this.live ? 'LIVE WINDOW · PULSES FOLLOW CNS OUTPUT' : 'WAITING FOR LIVE CNS WINDOW', 10, height - 9)
+    context.fillText(this.live ? 'LIVE WINDOW · PULSES FOLLOW CNS OUTPUT' : this.inputLevel > 0.015 ? 'LOCAL SENSOR WINDOW · CNS FEED OFFLINE' : 'WAITING FOR SENSOR WINDOW', 10, height - 9)
   }
 }
 

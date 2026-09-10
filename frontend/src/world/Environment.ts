@@ -279,7 +279,9 @@ export class Environment {
       scene.background = texture
     })
     background.colorSpace = SRGBColorSpace
-    scene.fog = new Fog(0x1b3438, 2.5, 9.5)
+    // A close, blue-green night mist gives the floor depth without washing
+    // out the token habitats or the star-field background.
+    scene.fog = new Fog(0x102d35, 1.65, 7.4)
     scene.add(new HemisphereLight(0x92c4c3, 0x152227, 1.55))
     scene.add(new AmbientLight(0x3b6d70, 1.02))
     const key = new DirectionalLight(0xffcf92, 2.25)
