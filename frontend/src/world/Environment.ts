@@ -16,6 +16,7 @@ export class Environment {
   readonly propsGroup = new Group()
   readonly propsReady: Promise<void>
   private readonly propLibrary = new PropLibrary()
+  private lastAppliedMarketObservedAtMs = 0
   scenario: HabitatScenario = 'different'
 
   constructor() {
@@ -36,7 +37,12 @@ export class Environment {
 
   setHabitatScenario(scenario: HabitatScenario) {
     this.scenario = scenario
-    this.habitats.forEach((habitat, index) => habitat.setScenario(scenario))
+    if (scenario === 'live') this.lastAppliedMarketObservedAtMs = 0
+    // Live Graph is an external-data mode. Keep fixture values hidden while
+    // the backend is disabled, waiting, or returning an error; otherwise a
+    // failed live feed looks like real market data in the scene.
+    const appearanceScenario = scenario === 'live' ? 'off' : scenario
+    this.habitats.forEach((habitat) => habitat.setScenario(appearanceScenario))
     if (scenario === 'swapped') {
       this.habitats.forEach((habitat, index) => habitat.setPosition(MOCK_HABITAT_POSITIONS[(index + 1) % MOCK_HABITAT_POSITIONS.length]!))
     } else {
@@ -45,6 +51,11 @@ export class Environment {
   }
 
   applyMarketHabitats(update: EnvironmentUpdateMessage['environment']) {
+    if (update.observedAtMs <= this.lastAppliedMarketObservedAtMs) return
+    this.lastAppliedMarketObservedAtMs = update.observedAtMs
+    // A fresh snapshot is authoritative. Clear stale values before applying
+    // the configured habitats from this response.
+    this.habitats.forEach((habitat) => habitat.setScenario('off'))
     for (const state of update.habitats) {
       const habitat = this.habitats.find((candidate) => candidate.state.id === state.id)
       if (!habitat) continue

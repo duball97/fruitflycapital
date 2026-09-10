@@ -131,7 +131,14 @@ async def handle_client(websocket: Any) -> None:
         if not isinstance(message, dict) or message.get("type") != "brain_input":
             if isinstance(message, dict) and message.get("type") == "environment_request":
                 if MARKET_ENGINE is None:
-                    environment = {"source": "graph-uniswap", "status": "disabled", "observedAtMs": 0, "habitats": [], "rawMarketFieldsForwardedToFly": False}
+                    environment = {
+                        "source": "graph-uniswap",
+                        "status": "disabled",
+                        "observedAtMs": 0,
+                        "habitats": [],
+                        "rawMarketFieldsForwardedToFly": False,
+                        "reason": "configure GRAPH_SUBGRAPH_URL or GRAPH_UNISWAP_SUBGRAPH_ID plus NEUROSWARM_MARKET_HABITATS",
+                    }
                 else:
                     environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
                 try:

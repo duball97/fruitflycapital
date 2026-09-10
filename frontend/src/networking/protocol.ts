@@ -141,6 +141,7 @@ export interface EnvironmentUpdateMessage {
       provenance?: Array<Record<string, unknown>>
     }>
     rawMarketFieldsForwardedToFly: false
+    reason?: string
     error?: string
   }
 }

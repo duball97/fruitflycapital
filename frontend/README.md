@@ -72,11 +72,14 @@ the canonical Flybody agents visibly fly while the bounded neural lift path is
 being validated. Set `VITE_FLIGHT_DRIVER=malecns` to use only the decoded
 Brian2 command; the current honest result may then be neutral thrust.
 
-The current default is sixteen independent agents. To stage a larger population
-experiment, copy `frontend/.env.example` to `frontend/.env` and set
-`VITE_SWARM_SIZE` to a value from 1 to 100. This changes the number of browser
-agents and brain IDs requested; it does not make 100 full MaleCNS simulations
-fit within the current realtime CPU budget.
+The current default is sixteen independent brains and eighty visible bodies:
+each brain owns one primary body plus four render-only followers. Set
+`VITE_BODIES_PER_BRAIN=1` to show only the sixteen primary bodies. Followers do
+not create brain runtimes, sense the world, or add consensus votes. To stage a
+larger brain population experiment, set `VITE_SWARM_SIZE` to a value from 1 to
+100. This changes the number of browser agents and brain IDs requested; it does
+not make 100 full MaleCNS simulations fit within the current realtime CPU
+budget.
 
 ## Controls
 
@@ -96,9 +99,9 @@ the existing rigid-body path until an optional MuJoCo pose server is attached.
 
 The arena is intentionally restrained: an invisible bounded flight volume, a
 readable floor, three differentiated coin piles, and two locally bundled CC0
-context props. All sixteen visible agents use the same canonical Flybody XML/OBJ
-source; no decorative fallback swarm is created. Habitat particles and fly
-trails use pooled GPU buffers.
+context props. The sixteen primary agents and their render-only followers all
+use the same canonical Flybody XML/OBJ source; no unrelated decorative swarm
+is created. Habitat particles and fly trails use pooled GPU buffers.
 
 The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,

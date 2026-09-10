@@ -20,12 +20,16 @@ then sensed through the embodied loop.
 
 ## Current reality
 
-The current interactive default is a **16-agent pilot**, not 100 completed
-full-CNS simulations. Each numbered agent (`fly-001` through `fly-016`) has its
+The current interactive default is a **16-brain pilot**, not 100 completed
+full-CNS simulations. The browser renders five canonical Flybody views per
+brain by default, so 16 brains produce 80 visible flies. Each numbered primary
+agent (`fly-001` through `fly-016`) has its
 own Flybody pose, sensor frame, actuator state, and server-side Brian2 runtime
 identity/seed. The connectome topology and model parameters are shared as
 immutable configuration; membrane state, spikes, history, and RNG state are
-not shared.
+not shared. Four additional bodies per primary are render-only followers: they
+share the primary actuator intent with small deterministic spacing and timing
+variation, but do not sense, run a brain, or add votes.
 
 The realtime adapter currently runs a documented source-reachable three-hop
 MaleCNS circuit of roughly 6,641 neurons and 65,110 retained weighted edges per
@@ -48,12 +52,13 @@ The population size is configurable with `frontend/.env`:
 
 ```env
 VITE_SWARM_SIZE=16
+VITE_BODIES_PER_BRAIN=5
 ```
 
 Values from 1 to 100 are accepted, but 100 should be treated as a staged
 benchmark target. One independent Brian2 runtime per fly at the current cache
 size is a substantial CPU/RAM workload; a fleet scheduler or compiled/vector
-backend is required before claiming that 100 agents run smoothly.
+backend is required before claiming that 100 independent brains run smoothly.
 
 The canonical rendered Drosophila body is TuragaLab/Flybody's MuJoCo model,
 loaded from `flybody/fruitfly/assets/fruitfly.xml` and its referenced OBJ
@@ -305,10 +310,12 @@ metric definitions, provenance, and the planned provider boundaries.
 
 ## NeuroSwarm population pilot
 
-The current milestone is a sixteen-agent population pilot. All sixteen are real
-canonical Flybody agents and each has its own body, sensor frame, actuator
-state, unique `fly-NNN` brain ID, and server-side RNG stream. There are zero
-decorative habitat flies. The three synthetic `TokenHabitat` instances expose
+The current milestone is a sixteen-brain population pilot rendered as eighty
+canonical Flybody bodies. Each primary has its own body, sensor frame,
+actuator state, unique `fly-NNN` brain ID, and server-side RNG stream. Four
+render-only followers are attached to each primary; they do not sense, create
+brain runtimes, or add consensus votes. The three synthetic `TokenHabitat`
+instances expose
 only physical proxies—visual brightness/motion, attractive odor, and aversive
 danger. They do not call APIs or represent real tokens. Switch among
 `NEUTRAL`, `DIFFERENT SIGNALS`, and `RELOCATED COINS` in the scene to inspect

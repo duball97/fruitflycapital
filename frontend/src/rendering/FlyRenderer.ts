@@ -2,6 +2,7 @@ import { Group, Mesh, MeshStandardMaterial, Object3D, PlaneGeometry, Quaternion,
 import { FlyAgent } from '../fly/FlyAgent'
 import { WingBeatPatternGenerator } from '../fly/WingBeatPattern'
 import { FlybodyAssetLoader } from './FlybodyAsset'
+import type { ActuatorCommand } from '../networking/protocol'
 
 export type FlyLod = 'full' | 'medium' | 'low'
 
@@ -32,8 +33,9 @@ export class FlyRenderer {
   private selected = false
   private lod: FlyLod = 'medium'
 
-  constructor() {
+  constructor(wingPhase = 0) {
     this.group.name = 'FlyRenderer'
+    this.wingBeat.reset(wingPhase)
     this.group.scale.setScalar(DISPLAY_MAGNIFICATION)
     this.bodyRoot = new Group()
     this.bodyRoot.name = 'FlybodyLoadingFallback'
@@ -76,9 +78,12 @@ export class FlyRenderer {
   }
 
   update(agent: FlyAgent, elapsedSeconds: number) {
-    this.group.position.copy(agent.body.position)
-    this.group.quaternion.copy(agent.body.quaternion)
-    const command = agent.actuators.get()
+    this.updatePose(agent.body.position, agent.body.quaternion, agent.actuators.get(), elapsedSeconds)
+  }
+
+  updatePose(position: Vector3, quaternion: Quaternion, command: ActuatorCommand, elapsedSeconds: number) {
+    this.group.position.copy(position)
+    this.group.quaternion.copy(quaternion)
     // A neutral vertical command is hover/idle in the shared actuator
     // interface. Do not animate the canonical wings merely because that
     // neutral value is non-zero; wing motion must correspond to actual

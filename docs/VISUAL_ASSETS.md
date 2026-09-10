@@ -25,5 +25,6 @@ market signals and are not used as privileged brain inputs; they are ordinary
 world geometry that the existing ray-based visual sensor may encounter.
 
 Habitat particles are pooled instances and fly trails share one dynamic line
-buffer. There are no decorative fly agents separate from the biological
-population.
+buffer. The scene has no unrelated decorative fly population. The four
+additional render-only bodies attached to each primary CNS agent are explicitly
+labelled followers and do not add brains, sensors, or consensus votes.

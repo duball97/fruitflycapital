@@ -3,6 +3,8 @@ import { FlyAgent } from './FlyAgent'
 import { KeyboardState, MaleCNSController, ManualController, SensoryFlightPreviewController, SwitchableController } from './FlyController'
 import { FlyRenderer } from '../rendering/FlyRenderer'
 import { SWARM_SIZE, swarmFlyId, swarmSpawnPosition } from './SwarmConfig'
+import { BODIES_PER_BRAIN } from './SwarmConfig'
+import { VisualFlyFollower } from './VisualFlyFollower'
 
 export interface FlyPopulationOptions {
   keyboard: KeyboardState
@@ -21,6 +23,7 @@ export class FlyPopulation {
   readonly agents: FlyAgent[] = []
   readonly controllers: SwitchableController[] = []
   readonly renderers: FlyRenderer[] = []
+  readonly followers: VisualFlyFollower[] = []
   private _selectedIndex = 0
 
   constructor(options: FlyPopulationOptions) {
@@ -35,8 +38,12 @@ export class FlyPopulation {
       const controller = new SwitchableController(manual, malecns, preview)
       controller.setMode(options.driver ?? 'preview')
       this.controllers.push(controller)
-      this.agents.push(new FlyAgent(id, controller, swarmSpawnPosition(index)))
+      const agent = new FlyAgent(id, controller, swarmSpawnPosition(index))
+      this.agents.push(agent)
       this.renderers.push(new FlyRenderer())
+      for (let slot = 1; slot < BODIES_PER_BRAIN; slot += 1) {
+        this.followers.push(new VisualFlyFollower(agent, slot - 1, index))
+      }
     }
   }
 

@@ -1,9 +1,11 @@
-# NeuroSwarm: what the sixteen pilot flies are doing
+# NeuroSwarm: what the sixteen pilot brains are doing
 
-The browser simulation currently contains sixteen real pilot agents. They are
-numbered `fly-001` through `fly-016`; the letters A and B are not agent
-identities in this architecture. This is intentionally a verification
-population, not the final 100-fly deployment.
+The browser simulation currently contains sixteen real pilot brains, numbered
+`fly-001` through `fly-016`. The browser renders one primary and four
+render-only followers per brain, for eighty visible Flybody bodies. Followers
+share only presentation intent; they do not sense, run Brian2, or vote. The
+letters A and B are not agent identities in this architecture. This is
+intentionally a verification population, not the final 100-brain deployment.
 
 ## One fly's complete state
 
@@ -29,10 +31,11 @@ The HUD keeps population existence separate from neural activity:
 | Counter | Meaning |
 |---|---|
 | `AGENTS` | Physical Flybody agents created in the browser |
+| `VISUAL FLIES` | Primary bodies plus render-only followers shown in the scene |
 | `CNS RUNTIMES` | Distinct `fly-NNN` runtime outputs received from the adapter |
 | `CNS ACTIVE` | Those runtimes that reported at least one spike in the latest returned window |
-| `MOTOR CONTROLLED` | Those runtimes whose decoded command is currently non-neutral |
-| `DECORATIVE FLIES` | Visual-only agents; this must remain `0` |
+| `CNS DRIVE` | MaleCNS agents whose decoded command is currently non-neutral |
+| `PREVIEW DRIVE` | Primary agents moved by the explicitly non-neural preview driver |
 
 Thus `CNS RUNTIMES 16/16` does not imply that all sixteen flies are moving, and
 `CNS ACTIVE 0/16` is a meaningful neural result rather than a rendering error.
@@ -129,7 +132,7 @@ experiment.
 
 ## Debugging one selected fly
 
-1. Select any `#NNN` in the top-right `INSPECT FLY` control.
+1. Click `SHOW DETAILS`, then select any `#NNN` in the `INSPECT FLY` control.
 2. Click `FOCUS`, or use camera `2` for follow mode.
 3. Press `I` to open the causal panel.
 4. Read the chain from left/right luminance and odor, through encoded ID

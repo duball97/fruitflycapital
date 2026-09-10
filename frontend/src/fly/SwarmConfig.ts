@@ -1,14 +1,24 @@
 import { Vector3 } from 'three'
 
 /**
- * Sixteen is the next interactive pilot target. A larger value can be selected
- * explicitly with VITE_SWARM_SIZE after benchmarking the per-fly brain
- * scheduler; the UI caps this experiment at 100 agents.
+ * Sixteen is the current independent MaleCNS pilot target. A larger value can
+ * be selected explicitly with VITE_SWARM_SIZE after benchmarking the per-fly
+ * brain scheduler; the UI caps this experiment at 100 brains.
  */
 const configuredSize = Number(import.meta.env.VITE_SWARM_SIZE)
 export const SWARM_SIZE = Number.isInteger(configuredSize) && configuredSize >= 1 && configuredSize <= 100
   ? configuredSize
   : 16
+
+// One canonical CNS controls one primary body plus this many render-only
+// followers. Followers never sense, create brain runtimes, or cast consensus
+// votes. This makes the demo visually read as a swarm without claiming that
+// the browser is running 80 independent MaleCNS copies.
+const configuredBodiesPerBrain = Number(import.meta.env.VITE_BODIES_PER_BRAIN)
+export const BODIES_PER_BRAIN = Number.isInteger(configuredBodiesPerBrain) && configuredBodiesPerBrain >= 1 && configuredBodiesPerBrain <= 8
+  ? configuredBodiesPerBrain
+  : 5
+export const VISUAL_FLY_COUNT = SWARM_SIZE * BODIES_PER_BRAIN
 
 /**
  * Shared initial condition. The small deterministic offsets stop the bodies
