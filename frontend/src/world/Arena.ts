@@ -25,7 +25,7 @@ export class Arena {
       // The floor covers the same 6m x 6m presentation volume as the default
       // physics bounds, so the manual game-scene editor has no hidden area.
       new PlaneGeometry(6.2, 6.2),
-      new MeshStandardMaterial({ color: 0x354943, map: floorTexture, roughness: 0.72, metalness: 0.18 }),
+      new MeshStandardMaterial({ color: 0x65776f, map: floorTexture, roughness: 0.78, metalness: 0.14 }),
     )
     floor.rotation.x = -Math.PI / 2
     // Keep the visual floor exactly on the same Y plane used by habitats and
@@ -53,7 +53,7 @@ function createFloorTexture() {
   let seed = 0x5eed
   for (let index = 0; index < image.data.length; index += 4) {
     seed = (seed * 1664525 + 1013904223) >>> 0
-    const noise = 34 + Math.floor(((seed >>> 8) & 0xffff) / 65536 * 30)
+    const noise = 82 + Math.floor(((seed >>> 8) & 0xffff) / 65536 * 26)
     image.data[index] = noise
     image.data[index + 1] = noise + 13
     image.data[index + 2] = noise + 11

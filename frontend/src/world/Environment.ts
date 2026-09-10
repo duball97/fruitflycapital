@@ -67,7 +67,7 @@ export class Environment {
   }
 
   setHabitatVisualScale(scale: number) {
-    this.habitatVisualScale = clamp(scale, 0.3, 1.35)
+    this.habitatVisualScale = clamp(scale, 0.5, 1.35)
     window.localStorage.setItem(HABITAT_SCALE_STORAGE_KEY, String(this.habitatVisualScale))
     this.habitatList.forEach((habitat) => habitat.setManualScale(this.habitatVisualScale))
   }
@@ -264,22 +264,22 @@ export class Environment {
     })
     background.colorSpace = SRGBColorSpace
     scene.fog = new Fog(0x1b3438, 2.5, 9.5)
-    scene.add(new HemisphereLight(0x92c4c3, 0x152227, 1.26))
-    scene.add(new AmbientLight(0x3b6d70, 0.78))
-    const key = new DirectionalLight(0xffcf92, 1.95)
+    scene.add(new HemisphereLight(0x92c4c3, 0x152227, 1.55))
+    scene.add(new AmbientLight(0x3b6d70, 1.02))
+    const key = new DirectionalLight(0xffcf92, 2.25)
     key.position.set(-1.5, 2.2, 1.1)
     key.castShadow = false
     scene.add(key)
-    const fill = new DirectionalLight(0x83d9ed, 1.18)
+    const fill = new DirectionalLight(0x83d9ed, 1.45)
     fill.position.set(1.2, 1.1, -1.3)
     scene.add(fill)
-    const moon = new DirectionalLight(0x87b9ff, 0.5)
+    const moon = new DirectionalLight(0x87b9ff, 0.68)
     moon.position.set(-1.8, 2.8, -2.2)
     scene.add(moon)
     // Low-intensity street pools sell the night scene without turning every
     // habitat into an overexposed glowing disk.
     for (const [x, z, color] of [[-1.8, -1.4, 0x37b8ff], [1.65, 0.9, 0xff8c48], [0.2, 1.75, 0x72f0bf]] as const) {
-      const streetLight = new PointLight(color, 0.62, 1.7, 2)
+      const streetLight = new PointLight(color, 0.82, 1.7, 2)
       streetLight.position.set(x, 0.46, z)
       scene.add(streetLight)
     }
@@ -289,7 +289,7 @@ export class Environment {
 
 function readHabitatVisualScale() {
   const saved = Number(window.localStorage.getItem(HABITAT_SCALE_STORAGE_KEY))
-  return Number.isFinite(saved) ? clamp(saved, 0.3, 1.35) : 0.62
+  return Number.isFinite(saved) ? clamp(saved, 0.5, 1.35) : 0.72
 }
 
 function clamp(value: number, min: number, max: number) {

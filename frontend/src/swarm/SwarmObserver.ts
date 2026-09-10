@@ -200,6 +200,7 @@ export class SwarmObserver {
       reason,
       confidence: round(confidence),
       observedAtMs,
+      portfolioWeight: 1 / this.expectedAgents,
       metrics: {
         distanceM: round(distanceM),
         visits: track.visits,

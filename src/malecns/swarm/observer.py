@@ -121,6 +121,7 @@ class BehaviorTradeIntent:
     confidence: float
     observed_at_ms: int
     metrics: dict[str, Any]
+    portfolio_weight: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -131,6 +132,7 @@ class BehaviorTradeIntent:
             "reason": self.reason,
             "confidence": round(self.confidence, 6),
             "observedAtMs": self.observed_at_ms,
+            "portfolioWeight": round(self.portfolio_weight, 6),
             "metrics": self.metrics,
         }
 
@@ -332,6 +334,7 @@ class SwarmObserver:
                 reason=reason,
                 confidence=confidence,
                 observed_at_ms=timestamp_ms,
+                portfolio_weight=1.0 / max(1, self.expected_agents),
                 metrics={
                     "distanceM": round(distance_m, 6),
                     "visits": track.visits,

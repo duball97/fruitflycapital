@@ -141,6 +141,7 @@ export interface BehaviorTradeIntent {
   reason: TradeIntentReason
   confidence: number
   observedAtMs: number
+  portfolioWeight: number
   metrics: {
     distanceM: number
     visits: number

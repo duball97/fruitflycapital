@@ -54,7 +54,7 @@ def test_observer_keeps_each_primary_agent_in_the_evidence():
 
 
 def test_contact_dwell_emits_buy_and_departure_emits_sell_intents():
-    pipeline = SwarmDecisionPipeline(expected_agents=1)
+    pipeline = SwarmDecisionPipeline(expected_agents=16)
     inside = lambda timestamp: [FlyObservation(
         "fly-001",
         timestamp,
@@ -78,3 +78,5 @@ def test_contact_dwell_emits_buy_and_departure_emits_sell_intents():
     assert intents[1].reason == "departure"
     assert intents[0].metrics["contact"] is True
     assert intents[1].metrics["contact"] is False
+    assert intents[0].portfolio_weight == 0.0625
+    assert intents[1].portfolio_weight == 0.0625

@@ -72,7 +72,7 @@ export class TokenHabitat {
 
     this.floorGlow = new Mesh(
       new CircleGeometry(0.18, 32),
-      new MeshBasicMaterial({ color, transparent: true, opacity: 0.08, depthWrite: false }),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.045, depthWrite: false }),
     )
     this.floorGlow.rotation.x = -Math.PI / 2
     this.floorGlow.position.y = 0.006
@@ -81,11 +81,11 @@ export class TokenHabitat {
     this.logo = new Sprite(new SpriteMaterial({ map: logoTexture(state.label, imageUrlForState(state)), transparent: true, depthWrite: false }))
     this.logo.name = 'TokenLogo'
     this.logo.userData.tokenHabitatId = state.id
-    this.logo.position.y = 0.19
-    this.logo.scale.set(0.115, 0.115, 1)
+    this.logo.position.y = 0.17
+    this.logo.scale.set(0.102, 0.102, 1)
     this.group.add(this.logo)
 
-    this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0xb99345, metalness: 0.52, roughness: 0.38 }))
+    this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0x6d654f, metalness: 0.4, roughness: 0.58 }))
     this.pile.position.y = 0.028
     this.pile.castShadow = true
     this.group.add(this.pile)
@@ -93,7 +93,7 @@ export class TokenHabitat {
     // The colored coin is the only identity marker in the 3D world. Floating
     // labels and orbit rings obscured the actual fly/coin interaction and
     // were not sensory inputs.
-    this.coin = new Mesh(new CylinderGeometry(0.07, 0.07, 0.007, 18), new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.34 }))
+    this.coin = new Mesh(new CylinderGeometry(0.07, 0.07, 0.007, 18), new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.16, metalness: 0.48, roughness: 0.46 }))
     this.coin.position.y = 0.05
     this.coin.castShadow = true
     this.group.add(this.coin)
@@ -158,7 +158,7 @@ export class TokenHabitat {
     const visual = this.enabled ? this.properties : NEUTRAL_PROPERTIES
     this.semanticGroup.visible = this.enabled
     this.rebuildSemanticVisual(visual.semanticType)
-    const intensity = visual.brightness * (0.7 + visual.visualMotionIntensity * 0.3)
+    const intensity = visual.brightness * (0.32 + visual.visualMotionIntensity * 0.16)
     ;(this.coin.material as MeshStandardMaterial).emissiveIntensity = intensity
     ;(this.coin.material as MeshStandardMaterial).opacity = this.enabled ? 1 : 0.42
     // Keep the identity marker low-profile. The former animated rings made
@@ -170,7 +170,7 @@ export class TokenHabitat {
     this.pile.scale.setScalar(Math.max(0.72, visual.resourcePileRadiusM / 0.06))
     this.signalLight.intensity = this.enabled ? 0.05 + visual.brightness * 0.38 + visual.particleActivity * 0.18 : 0
     this.floorGlow.visible = this.enabled
-    ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled ? 0.045 + visual.brightness * 0.13 : 0
+    ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled ? 0.022 + visual.brightness * 0.07 : 0
     this.floorGlow.scale.setScalar(0.82 + visual.physicalRadiusM * 2.4)
     this.smellGroup.visible = this.enabled
     const smellColor = odorColor(visual.semanticType)
@@ -178,7 +178,7 @@ export class TokenHabitat {
     this.smellPuffs.forEach(({ mesh }) => {
       const material = mesh.material as MeshBasicMaterial
       material.color.setHex(smellColor)
-      material.opacity = this.enabled ? 0.04 + smellStrength * 0.32 : 0
+      material.opacity = this.enabled ? 0.025 + smellStrength * 0.2 : 0
     })
     // The old floating column/cap read as a sci-fi status widget rather than
     // a place a fly would investigate. Signal is now carried by the physical
@@ -277,7 +277,7 @@ export class TokenHabitat {
     const glowPulse = 0.93 + Math.sin(timeSeconds * 0.8 + semanticPhase) * 0.07
     this.floorGlow.scale.setScalar((0.82 + visual.physicalRadiusM * 2.4) * glowPulse)
     ;(this.floorGlow.material as MeshBasicMaterial).opacity = this.enabled
-      ? (0.045 + visual.brightness * 0.13) * (0.92 + pulse * 0.08)
+      ? (0.022 + visual.brightness * 0.07) * (0.92 + pulse * 0.08)
       : 0
     if (this.signalColumn.visible) {
       const columnScale = 0.5 + visual.particleActivity * 1.4 + visual.chaos * 0.4
@@ -292,7 +292,7 @@ export class TokenHabitat {
   }
 
   setManualScale(scale: number) {
-    this.manualScale = Math.max(0.3, Math.min(1.35, scale))
+    this.manualScale = Math.max(0.5, Math.min(1.35, scale))
     this.group.scale.setScalar(this.manualScale)
   }
 
@@ -411,14 +411,14 @@ function drawLogoFallback(canvas: HTMLCanvasElement, label: string) {
   if (!context) return
   context.clearRect(0, 0, canvas.width, canvas.height)
   const gradient = context.createRadialGradient(94, 82, 8, 128, 128, 124)
-  gradient.addColorStop(0, '#1c5961')
-  gradient.addColorStop(1, '#06131c')
+  gradient.addColorStop(0, '#314942')
+  gradient.addColorStop(1, '#0b171b')
   context.fillStyle = gradient
   context.beginPath()
   context.arc(128, 128, 107, 0, Math.PI * 2)
   context.fill()
-  context.fillStyle = '#9bffe4'
-  context.font = '800 54px ui-monospace, monospace'
+  context.fillStyle = '#e5eee8'
+  context.font = '700 50px "Avenir Next", Avenir, Inter, Arial, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
   context.fillText(symbolFromLabel(label), 128, 130)
@@ -426,10 +426,10 @@ function drawLogoFallback(canvas: HTMLCanvasElement, label: string) {
 }
 
 function drawLogoBorder(context: CanvasRenderingContext2D) {
-  context.strokeStyle = 'rgba(114, 244, 210, 0.95)'
-  context.lineWidth = 7
-  context.shadowColor = 'rgba(55, 238, 204, 0.85)'
-  context.shadowBlur = 18
+  context.strokeStyle = 'rgba(224, 238, 229, 0.78)'
+  context.lineWidth = 4
+  context.shadowColor = 'rgba(182, 211, 195, 0.25)'
+  context.shadowBlur = 6
   context.beginPath()
   context.arc(128, 128, 108, 0, Math.PI * 2)
   context.stroke()

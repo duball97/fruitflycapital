@@ -425,7 +425,7 @@ sceneControls.innerHTML = `
   <div class="scene-controls-heading">PLAY SPACE</div>
   <div class="scene-controls-note">Floor only · 6m × 6m · saved automatically</div>
   <div class="scene-controls-note">Draw the complete playable scene. Habitats and flies stay inside it.</div>
-  <div class="habitat-size-row"><span>ALL HABITATS</span><input type="range" min="0.3" max="1.35" step="0.05"><output></output></div>
+  <div class="habitat-size-row"><span>ALL HABITATS</span><input type="range" min="0.5" max="1.35" step="0.05"><output></output></div>
   <div class="boundary-actions"><button class="boundary-draw" type="button">DRAW GAME SCENE</button><button class="boundary-clear" type="button">CLEAR SCENE</button></div>
   <div class="boundary-status">No custom fly area · default arena active</div>
 `
