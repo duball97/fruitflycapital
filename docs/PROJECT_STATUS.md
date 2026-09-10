@@ -19,8 +19,8 @@ driving it, so the UI and this report keep those claims separate.
 - Each primary has four render-only followers by default. The visual population
   is therefore 80 Flybody meshes, but the scientific population is 16 CNS
   agents. Followers do not sense, run Brian2, vote, or create trades.
-- `VITE_SWARM_SIZE` can be set from 1 to 100, but 100 full realtime Brian2
-  runtimes has not been benchmarked or claimed as supported.
+- The strategy population is fixed at 16 independent brains. The optional
+  extra bodies are render-only followers and are not strategy agents.
 
 ### Neural runtime
 
@@ -74,13 +74,13 @@ driving it, so the UI and this report keep those claims separate.
   encoder → sensory exposure → CNS/runtime → swarm observations.
 - The swarm layer records visits, approaches, departures, dwell, persistence,
   and congregation before producing a temporal conviction proposal.
-- The fund layer contains a Foundry vault, an append-only SQLite ledger,
-  portfolio/NAV reporting, risk gates, Privy REST integration, and Uniswap
-  quote/calldata preparation. The vault implementation is now deployed behind
-  an OpenZeppelin transparent proxy; a separate ProxyAdmin controls upgrades.
-- Execution defaults to dry-run. Live signing requires configured wallet and
-  policy controls plus an explicit confirmation. No private key belongs in the
-  repository or browser bundle.
+- The fund layer contains a retained inactive Foundry vault, an append-only
+  SQLite ledger, the autonomous 16-fly runtime, risk gates, wallet balance
+  discovery, and Uniswap quote/calldata preparation. The direct strategy
+  wallet is the only execution-path account.
+- Simulation fills automatically for demos. Mainnet mode stops after approval,
+  quote, calldata, gas, and nonce preparation; no signer or broadcaster is
+  reached by the strategy runtime.
 
 ## How to verify that the brain is guiding a fly
 

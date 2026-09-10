@@ -45,17 +45,14 @@ independent Brian2 runtime, decoded, and sent through the shared
 issue a hidden “go to coin” command. If the validated pathway is quiet, the
 command remains neutral and the UI reports that state.
 
-The population size is configurable with `frontend/.env`:
+The product strategy uses exactly sixteen independent brains:
 
 ```env
-VITE_SWARM_SIZE=16
 VITE_BODIES_PER_BRAIN=5
 ```
 
-Values from 1 to 100 are accepted, but 100 should be treated as a staged
-benchmark target. One independent Brian2 runtime per fly at the current cache
-size is a substantial CPU/RAM workload; a fleet scheduler or compiled/vector
-backend is required before claiming that 100 independent brains run smoothly.
+`VITE_BODIES_PER_BRAIN` controls render-only followers. Followers never sense,
+vote, receive capital, or create trade events.
 
 The canonical rendered Drosophila body is TuragaLab/Flybody's MuJoCo model,
 loaded from `flybody/fruitfly/assets/fruitfly.xml` and its referenced OBJ
@@ -120,7 +117,7 @@ Fruit Fly Capital includes a safe fund boundary under `contracts/` and
 on Robinhood Chain testnet,
 authorized external NAV reporting, and asynchronous withdrawals. The Python
 ledger and portfolio engine keep book state distinct from on-chain state; the
-Privy client is server-side and execution defaults to dry-run. See
+autonomous wallet runtime is simulation-fill or mainnet-preparation mode. See
 [docs/FUND_ARCHITECTURE.md](docs/FUND_ARCHITECTURE.md).
 
 ```bash
@@ -354,7 +351,9 @@ Enable it in the Python server environment:
 NEUROSWARM_MARKET_DISCOVERY_ENABLED=true
 NEUROSWARM_MARKET_CHAINS=robinhood
 NEUROSWARM_MARKET_DEX_IDS=
-NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=
+# Comma-separated Robinhood token contract addresses; see .env.example for the
+# current project seed list from the DexScreener Robinhood universe.
+NEUROSWARM_MARKET_DISCOVERY_TOKEN_ADDRESSES=<comma-separated-addresses>
 NEUROSWARM_MARKET_CORE_TARGET=100
 NEUROSWARM_MARKET_WORLD_CAPACITY=100
 NEUROSWARM_MARKET_DEEP_OBSERVER_COUNT=12
@@ -428,8 +427,9 @@ limits. The server returns this as a `swarm_update` message.
 This is a guarded direct-wallet boundary. It does not count render-only
 followers as votes, it does not send token recommendations into MaleCNS, and
 it does not use the saved vault contract. Uniswap quotes and calldata are
-validated before a configured server wallet can sign; approvals are never
-broadcast implicitly. See
+validated by the mainnet preparation adapter; the external authorization
+boundary owns signing and broadcasting. Approvals are never broadcast
+implicitly. See
 [docs/SWARM_INTELLIGENCE.md](docs/SWARM_INTELLIGENCE.md).
 
 Run the deterministic headless sensory audit with:

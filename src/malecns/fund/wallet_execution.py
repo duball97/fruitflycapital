@@ -1,4 +1,4 @@
-"""Guarded direct-wallet execution through the Uniswap Trading API."""
+"""Deprecated direct-wallet compatibility surface; broadcasting is disabled."""
 
 from __future__ import annotations
 
@@ -15,11 +15,10 @@ class WalletExecutionUnavailable(RuntimeError):
 
 
 class DirectWalletUniswapAdapter:
-    """Quote, build, sign, and broadcast one classic Uniswap swap.
+    """Deprecated compatibility name; direct broadcast is disabled.
 
-    The caller is responsible for the explicit human confirmation gate. This
-    adapter never executes an approval transaction implicitly: if Permit2
-    approval is needed, it returns an approval-required result instead.
+    Autonomous strategy execution uses ``MainnetExecutionAdapter`` from
+    ``autonomous.py``, which stops at unsigned transaction preparation.
     """
 
     def __init__(self, wallet: RpcWalletClient, client: UniswapTradingClient, private_key: str) -> None:
@@ -28,6 +27,10 @@ class DirectWalletUniswapAdapter:
         self.private_key = private_key
 
     def execute(self, intent: TradeIntent) -> Mapping[str, Any]:
+        raise WalletExecutionUnavailable("direct-wallet broadcast is disabled; use MainnetExecutionAdapter transaction preparation")
+
+        # Kept below only as a migration reference for older integrations;
+        # the unconditional boundary above makes this path unreachable.
         if not self.private_key:
             raise WalletExecutionUnavailable("PRIVATE_KEY is not configured")
         snapshot = self.wallet.snapshot()

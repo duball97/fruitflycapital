@@ -19,11 +19,13 @@ PortfolioAllocator
         ↓
 PortfolioTarget
         ↓
-TradeIntent (only with explicit route + current holdings)
+AllocationIntent (one 6.25% share per fly)
         ↓
-RiskGuard
+PortfolioDelta / same-token netting
         ↓
-proposal-only fund boundary
+RiskGuard → Uniswap quote → ExecutionIntent
+        ↓
+Simulation fill or mainnet transaction preparation
 ```
 
 ## What is measured
@@ -46,10 +48,9 @@ The browser and server observers also emit a bounded behavioral event stream:
 - `sell` means that visit subsequently departed;
 - neither event contains a token address, amount, wallet, or transaction call.
 
-These are behavioral proposals for the fund layer, not filled trades. The
-execution seam remains proposal-only. The browser-side
-`TradeExecutionBoundary` exposes the future custody seam but currently only
-returns a `proposal_only` record; it cannot connect, sign, or broadcast.
+These are behavior-derived allocation inputs for the autonomous fund runtime.
+Simulation fills are automatic for demos; mainnet mode returns an unsigned
+transaction preparation and never signs or broadcasts it.
 
 ## Why it is temporal
 
@@ -71,11 +72,10 @@ is separate: it records what a CNS body did, while the financial pipeline still
 decides whether a route, amount, and target-weight change are allowed. The
 observer never guesses token addresses or amounts from a habitat label.
 
-The current result is explicitly `proposal_only`. No Privy signer, wallet,
-private key, or transaction broadcaster is present. Uniswap remains a
-quote/unsigned-calldata boundary. Any future transaction path must show the
-asset, amount, chain, recipient, gas estimate, and risk decision and require
-explicit human approval before signing or broadcasting.
+The runtime records asset address, amount, chain, recipient, gas estimate,
+slippage, nonce, attempt status, and per-fly attribution. Uniswap remains a
+quote/unsigned-calldata boundary; external authorization is required before
+signing or broadcasting.
 
 ## Input boundary
 

@@ -50,6 +50,10 @@ body { background: #050d13; }
 .brand-mark { color: #58d5ff; margin-right: 7px; }
 .neuroswarm { margin-top: 5px; letter-spacing: .29em; font-size: 20px; font-weight: 800; color: #f3fbf5; }
 .portfolio-link { display: inline-block; margin-top: 12px; color: #7fe0b3; pointer-events: auto; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-decoration: none; }
+.hud-links { display: flex; align-items: center; gap: 16px; }
+.social-link { display: inline-flex; align-items: center; gap: 6px; color: #e7f5ff; pointer-events: auto; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-decoration: none; }
+.social-link svg { width: 13px; height: 13px; fill: currentColor; }
+.social-link:hover { color: #fff; }
 .demo-status { position: fixed; left: 50%; top: 24px; z-index: 2; display: flex; gap: 16px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid #d7ebe1aa; border-radius: 999px; background: #15302ccc; color: #e8f6ee; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; box-shadow: 0 10px 35px #18352b42; white-space: nowrap; }
 .demo-status strong { color: #63e2ad; }
 .presentation-toggle { position: fixed; right: 25px; top: 23px; z-index: 4; padding: 8px 11px; border: 1px solid #d7ebe1aa; border-radius: 8px; background: #15302cdd; color: #d8f5e5; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; cursor: pointer; box-shadow: 0 8px 30px #18352b38; }
@@ -384,7 +388,15 @@ body:has(#portfolio-app) { min-height: 100vh; overflow: auto; background: #050d1
 #portfolio-app header a,
 #portfolio-app footer a { color: var(--sage-bright); text-decoration: none; font-weight: 700; letter-spacing: 0.08em; }
 #portfolio-app .portfolio-brand { display: inline-flex; align-items: center; gap: 9px; }
-#portfolio-app .portfolio-brand img { width: 25px; height: 25px; border-radius: 50%; object-fit: contain; vertical-align: middle; }
+#portfolio-app .portfolio-brand img { display: block; width: 28px !important; height: 28px !important; max-width: 28px !important; max-height: 28px !important; flex: 0 0 28px; border-radius: 50%; object-fit: contain; vertical-align: middle; }
+#portfolio-app .portfolio-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; }
+#portfolio-app .portfolio-header-actions .social-link { color: var(--sage-bright); }
+#portfolio-app .wallet-summary { display: grid; grid-template-columns: minmax(220px, 1.6fr) repeat(4, minmax(120px, 1fr)); gap: 16px; align-items: start; }
+#portfolio-app .wallet-summary small { display: block; color: var(--ink-faint); font-size: 10px; letter-spacing: .1em; }
+#portfolio-app .wallet-summary code { display: block; margin-top: 8px; overflow: hidden; color: var(--sage); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+#portfolio-app .wallet-summary strong { display: block; margin-top: 8px; color: #fff; font-size: 14px; font-variant-numeric: tabular-nums; }
+#portfolio-app .wallet-summary p { grid-column: 1 / -1; margin: 2px 0 0; color: var(--ink-faint); font-size: 11px; line-height: 1.5; }
+#portfolio-app .wallet-summary .wallet-status.is-error { color: #ffb3a7; }
 #portfolio-app h1 { margin: 13px 0 5px; color: #fff; font-size: clamp(25px, 4vw, 40px); letter-spacing: 0.08em; }
 #portfolio-app header p { margin: 0; color: var(--ink-faint); font-size: 11px; letter-spacing: 0.16em; }
 #portfolio-app .badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -440,4 +452,6 @@ body:has(#portfolio-app) { min-height: 100vh; overflow: auto; background: #050d1
   #portfolio-app .badges { justify-content: flex-start; }
   #portfolio-app .metrics { grid-template-columns: repeat(2, 1fr); }
   #portfolio-app .grid { grid-template-columns: 1fr; }
+  #portfolio-app .wallet-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #portfolio-app .wallet-summary > div:first-child, #portfolio-app .wallet-summary p { grid-column: 1 / -1; }
 }

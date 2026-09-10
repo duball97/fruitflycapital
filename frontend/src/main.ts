@@ -160,7 +160,7 @@ const hud = document.createElement('div')
 hud.className = 'hud'
 hud.innerHTML = `
   <div class="brand"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></div>
-  <a class="portfolio-link" href="./portfolio.html">VIEW FUND PORTFOLIO →</a>
+  <div class="hud-links"><a class="portfolio-link" href="./portfolio.html">VIEW FUND PORTFOLIO →</a><a class="social-link" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></div>
 `
 app.append(hud)
 

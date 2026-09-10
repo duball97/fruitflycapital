@@ -237,7 +237,9 @@ class AutonomousTradingRuntime:
         self.departure_debounce_ms = max(0, int(departure_debounce_ms))
         self.min_liquidity_usd = max(0.0, float(min_liquidity_usd))
         self.risk_guard = MarketRiskGuard(self.min_liquidity_usd)
-        self.slippage_tolerance = min(100.0, max(0.0, float(slippage_tolerance)))
+        # Keep an intentionally tight upper bound even if an env value is
+        # mistyped; this is a market guard, not a biological preference.
+        self.slippage_tolerance = min(5.0, max(0.0, float(slippage_tolerance)))
         self.tokens: dict[str, TokenRef] = {}
         self.tokens_by_address: dict[str, TokenRef] = {}
         self.positions: dict[str, FlyCapitalPosition] = {}
@@ -265,7 +267,7 @@ class AutonomousTradingRuntime:
             token = TokenRef.from_habitat(habitat)
             if token is not None:
                 self.tokens[str(habitat.get("id"))] = token
-                self.tokens_by_address[token.address.lower()] = token
+                self.tokens_by_address[_token_key(token.chain_id, token.address)] = token
                 for fly_id, position in self.positions.items():
                     if position.token_address and position.token_address.lower() == token.address.lower() and position.state == FlyBehaviorState.HOLDING.value:
                         current = (token.price_usd or 0.0) * position.held_amount
@@ -291,7 +293,7 @@ class AutonomousTradingRuntime:
                     self._event(behavior, "HOLD", "continued commitment")
                 else:
                     if position.token_address and position.held_amount > 0:
-                        old = self.tokens_by_address.get(position.token_address.lower()) or TokenRef(position.chain_id or token.chain_id, position.token_address, position.token_symbol or position.token_address[:8])
+                        old = self.tokens_by_address.get(_token_key(position.chain_id or token.chain_id, position.token_address)) or TokenRef(position.chain_id or token.chain_id, position.token_address, position.token_symbol or position.token_address[:8])
                         actions.append(AllocationIntent(behavior.fly_id, "sell", old, position.allocation_fraction, "rotation", timestamp))
                     self._save(replace(position, state=FlyBehaviorState.QUALIFYING.value, updated_ms=timestamp))
                     actions.append(AllocationIntent(behavior.fly_id, "buy", token, position.allocation_fraction, behavior.reason, timestamp))
@@ -313,10 +315,11 @@ class AutonomousTradingRuntime:
             except Exception as exc:
                 wallet = {"configured": True, "status": "error", "error": str(exc)}
         deployable = int(wallet.get("availableToTradeWei") or 0)
-        biological: dict[str, float] = {}
+        biological: dict[tuple[int, str], float] = {}
         for position in self.positions.values():
             if position.state == FlyBehaviorState.HOLDING.value and position.token_address:
-                biological[position.token_address] = biological.get(position.token_address, 0.0) + position.allocation_fraction
+                identity = (position.chain_id or 0, position.token_address)
+                biological[identity] = biological.get(identity, 0.0) + position.allocation_fraction
         actual_by_token: dict[str, dict[str, Any]] = {}
         for position in self.positions.values():
             if position.state != FlyBehaviorState.HOLDING.value or not position.token_address:
@@ -327,6 +330,19 @@ class AutonomousTradingRuntime:
             item["intendedValueUsd"] += position.current_value_usd
             item["flyIds"].append(position.fly_id)
         actual = []
+        if self.wallet is not None and wallet.get("nativeBalance") is not None:
+            actual.append({
+                "chainId": wallet.get("chainId"),
+                "tokenAddress": ZERO_ADDRESS,
+                "tokenSymbol": wallet.get("nativeSymbol", "ETH"),
+                "intendedAmount": 0.0,
+                "intendedValueUsd": 0.0,
+                "observedAmount": wallet.get("nativeBalance"),
+                "observedBalanceWei": wallet.get("nativeBalanceWei"),
+                "gasReserve": wallet.get("gasReserve"),
+                "reconciliation": "reserve-separated",
+                "flyIds": [],
+            })
         for item in actual_by_token.values():
             if self.wallet is not None:
                 try:
@@ -337,7 +353,22 @@ class AutonomousTradingRuntime:
                 except Exception as exc:
                     item["observationError"] = str(exc)
             actual.append(item)
-        return {"observedAtMs": timestamp, "flyCount": self.expected_agents, "perFlyAllocationFraction": 1.0 / self.expected_agents, "perFlyAllocationPercent": 100.0 / self.expected_agents, "perFlyBudgetWei": str(deployable // self.expected_agents), "wallet": wallet, "flies": [self.positions[f"fly-{index:03d}"].as_dict() for index in range(1, self.expected_agents + 1)], "biologicalTargetPortfolio": [{"tokenAddress": token, "allocationFraction": fraction, "allocationPercent": fraction * 100.0} for token, fraction in biological.items()], "actualWalletPortfolio": actual, "pendingRebalance": list(self.pending_rebalance[-100:]), "events": list(self.events[-100:])}
+        return {
+            "observedAtMs": timestamp,
+            "flyCount": self.expected_agents,
+            "executionAdapter": type(self.adapter).__name__,
+            "executionBoundary": "simulation-fill" if isinstance(self.adapter, SimulationExecutionAdapter) else "transaction-preparation-only",
+            "externalBroadcast": False,
+            "perFlyAllocationFraction": 1.0 / self.expected_agents,
+            "perFlyAllocationPercent": 100.0 / self.expected_agents,
+            "perFlyBudgetWei": str(deployable // self.expected_agents),
+            "wallet": wallet,
+            "flies": [self.positions[f"fly-{index:03d}"].as_dict() for index in range(1, self.expected_agents + 1)],
+            "biologicalTargetPortfolio": [{"chainId": chain_id, "tokenAddress": token, "allocationFraction": fraction, "allocationPercent": fraction * 100.0} for (chain_id, token), fraction in biological.items()],
+            "actualWalletPortfolio": actual,
+            "pendingRebalance": list(self.pending_rebalance[-100:]),
+            "events": list(self.events[-100:]),
+        }
 
     def _flush_departures(self, timestamp: int, actions: list[AllocationIntent]) -> None:
         for fly_id, (due, reason, token) in list(self.pending_departures.items()):
@@ -368,6 +399,11 @@ class AutonomousTradingRuntime:
             if amount <= 0:
                 self.pending_rebalance.append({"status": "blocked", "reason": "insufficient balance or allocation", "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address})
                 continue
+            if side == "sell":
+                amount = int(amount)
+                if amount <= 0:
+                    self.pending_rebalance.append({"status": "blocked", "reason": "sell amount below token base unit", "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address})
+                    continue
             reason = ",".join(sorted({item[2] for item in group}))
             delta = PortfolioDelta(side, token, fly_ids, amount, token_in, token_out, reason)
             key = f"{delta.side}:{chain_id}:{token_address}:{','.join(fly_ids)}:{timestamp}"
@@ -375,6 +411,8 @@ class AutonomousTradingRuntime:
             if intent.idempotency_key in self.processed_events:
                 continue
             attempt = {"attempt_id": intent.idempotency_key, "idempotency_key": intent.idempotency_key, "status": "pending", "side": side, "chain_id": chain_id, "token_in": token_in, "token_out": token_out, "amount_in": str(amount), "amount_out": None, "fly_ids_json": json.dumps(list(fly_ids)), "execution_price": None, "gas": None, "slippage": self.slippage_tolerance, "tx_hash": None, "nonce": None, "error": None, "created_ms": timestamp, "updated_ms": timestamp}
+            status = "blocked"
+            amount_out = 0.0
             try:
                 result = self.adapter.execute(intent, token)
                 status = str(result.get("status", "prepared"))
@@ -383,11 +421,12 @@ class AutonomousTradingRuntime:
                 if status in {"filled", "simulated"}:
                     self._apply_fill(side, group, amount_out, token, timestamp)
                 else:
-                    self.pending_rebalance.append({"status": status, "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address, "amountIn": str(amount), "nonce": result.get("nonce"), "approval": result.get("approval"), "executionIntent": intent.as_dict()})
+                    self.pending_rebalance.append({"status": status, "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address, "amountIn": str(amount), "nonce": result.get("nonce"), "approval": result.get("approval"), "quote": result.get("quote"), "preparedTransaction": result.get("swap"), "executionIntent": intent.as_dict()})
                 self.events.append({"type": side.upper(), "status": status, "flyIds": list(fly_ids), "tokenAddress": token.address, "amountIn": str(amount), "amountOut": str(amount_out), "executionPrice": result.get("executionPrice"), "gas": result.get("gas"), "estimatedGas": result.get("estimatedGas"), "slippage": result.get("slippage", self.slippage_tolerance), "nonce": result.get("nonce"), "txHash": result.get("txHash")})
             except Exception as exc:
                 attempt.update({"status": "blocked", "error": str(exc), "updated_ms": int(time.time() * 1000)})
                 self.pending_rebalance.append({"status": "blocked", "reason": str(exc), "side": side, "flyIds": list(fly_ids), "tokenAddress": token.address})
+            self.ledger.record_trade({"trade_id": intent.idempotency_key, "timestamp_ms": timestamp, "chain_id": chain_id, "dex_id": "uniswap", "token_in": token_in, "token_out": token_out, "amount_in": str(amount), "amount_out": str(amount_out), "usd_value": (token.price_usd or 0.0) * amount_out, "tx_hash": attempt.get("tx_hash"), "status": status, "neuroswarm_decision_id": ",".join(fly_ids), "fees_usd": None, "gas_usd": None})
             self.ledger.record_execution_attempt(attempt)
             self.processed_events.add(intent.idempotency_key)
 
@@ -425,3 +464,8 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _token_key(chain_id: int, address: str) -> str:
+    """Resolve assets by network and contract, never by symbol alone."""
+    return f"{int(chain_id)}:{address.lower()}"

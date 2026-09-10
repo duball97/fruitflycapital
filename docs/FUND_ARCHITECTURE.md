@@ -152,7 +152,7 @@ change fund behavior and is therefore a critical custody key.
 
 ## Python fund package
 
-`malecns.fund` owns the non-neural accounting boundary:
+`malecns.fund` owns the accounting and autonomous execution boundary:
 
 - `FundLedger` is sqlite3-backed and keeps raw fund events, deposits,
   withdrawals, trades, positions, NAV snapshots, balances, and metadata.
@@ -160,11 +160,11 @@ change fund behavior and is therefore a critical custody key.
   chain allocation, and reconciliation without Zerion.
 - `CMCValuationProvider` is an optional price source; `FakeValuationProvider`
   is used by tests. Quotes retain source/provenance and are never balance proof.
-- `PrivyClient` uses documented REST endpoints for listing/creating a wallet,
-  balance reads, and `eth_sendTransaction`. It is server-side only.
-- `ExecutionEngine` defaults to `dry-run`; it never signs or broadcasts there.
-  Live execution requires both `FUND_LIVE_TRADING_CONFIRMED=true` and a
-  separate explicit confirmation at the execution call.
+- `AutonomousTradingRuntime` maintains all sixteen 6.25% fly positions,
+  behavior transitions, netted intents, P&L, idempotency, and reconciliation.
+- `SimulationExecutionAdapter` fills automatically for the demo. The
+  `MainnetExecutionAdapter` performs approval, quote, calldata, slippage,
+  liquidity, gas, and nonce checks, then stops at transaction preparation.
 
 Bootstrap only inspects configuration by default:
 
@@ -180,10 +180,11 @@ treasury address equal to the vault's `strategyTreasury`.
 ## Browser/API boundary
 
 The existing `brain_server` accepts `fund_status_request`, `portfolio_request`,
-and `trade_history_request`. It sends configuration, read-only accounting, and
-audit records only; it never sends Privy secrets. `frontend/portfolio.html` is
-a Vite multipage read-only dashboard. Empty or unconfigured state displays `—`
-rather than fake production numbers.
+and `trade_history_request`, and also feeds embodied swarm telemetry into the
+autonomous runtime. `frontend/portfolio.html` is a realtime dashboard for the
+sixteen allocations, target/actual wallet portfolio, events, attempts, and
+pending rebalances. Empty or unconfigured state displays `—` rather than fake
+production numbers.
 
 The portfolio page can be deployed with the Three.js frontend to Vercel. The
 stateful Python WebSocket brain/fund service must remain on a persistent
