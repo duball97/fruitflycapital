@@ -4,6 +4,14 @@ import type { TokenHabitat } from '../world/TokenHabitat'
 import { PRESENTATION_SCENE_HALF_EXTENT } from '../world/Arena'
 
 export type PresentationCameraMode = 'overview' | 'token' | 'director'
+type TradeEventSide = 'buy' | 'sell'
+
+interface TradeEventFocus {
+  flyId: string
+  habitatId: string
+  side: TradeEventSide
+  expiresAtMs: number
+}
 
 export class PresentationCamera {
   readonly camera = new PerspectiveCamera(52, 1, 0.001, 100)
@@ -14,6 +22,8 @@ export class PresentationCamera {
   private readonly orientation = new Object3D()
   private readonly forward = new Vector3()
   private readonly overviewDirection = new Vector3(0.58, 0.42, 0.7).normalize()
+  private tradeEventFocus: TradeEventFocus | null = null
+  private lastTradeEventFocusAtMs = Number.NEGATIVE_INFINITY
 
   constructor() {
     // Start cinematic mode from a clearly floor-facing establishing shot.
@@ -25,15 +35,40 @@ export class PresentationCamera {
 
   setMode(mode: PresentationCameraMode) {
     this.mode = mode
+    if (mode !== 'director') this.tradeEventFocus = null
   }
 
   get currentMode() {
     return this.mode
   }
 
+  /**
+   * Request a restrained director cut for a fresh biological trade event.
+   * The cooldown keeps a burst of simultaneous fly intents from turning the
+   * cinematic view into a camera chase.
+   */
+  focusOnTradeEvent(flyId: string, habitatId: string, side: TradeEventSide) {
+    const nowMs = performance.now()
+    if (nowMs - this.lastTradeEventFocusAtMs < 16000) return false
+    this.lastTradeEventFocusAtMs = nowMs
+    this.tradeEventFocus = { flyId, habitatId, side, expiresAtMs: nowMs + (side === 'sell' ? 6500 : 7500) }
+    return true
+  }
+
   update(timeSeconds: number, agents: FlyAgent[], habitats: TokenHabitat[], selectedIndex: number) {
     const selected = agents[selectedIndex]
-    if (this.mode === 'token' && habitats.length > 0) {
+    const eventFocus = this.tradeEventFocus
+    const eventAgent = eventFocus ? agents.find((agent) => agent.id === eventFocus.flyId) : undefined
+    const eventHabitat = eventFocus ? habitats.find((habitat) => habitat.state.id === eventFocus.habitatId) : undefined
+    const eventFocusActive = Boolean(this.mode === 'director' && eventFocus && performance.now() < eventFocus.expiresAtMs && eventAgent && eventHabitat)
+    if (eventFocus && !eventFocusActive) this.tradeEventFocus = null
+    if (eventFocusActive && eventAgent && eventHabitat) {
+      // Aim between the fly and its habitat so the audience can read both the
+      // biological source and the token place receiving the intent.
+      this.target.copy(eventHabitat.group.position).lerp(eventAgent.body.position, 0.32)
+      this.target.y = Math.max(0.055, Math.min(0.22, this.target.y))
+      this.desired.copy(this.target).add(new Vector3(0.24, 0.16, 0.24))
+    } else if (this.mode === 'token' && habitats.length > 0) {
       const habitat = habitats[Math.floor(timeSeconds / 8) % habitats.length]!
       this.target.copy(habitat.group.position).add(new Vector3(0, 0.045, 0))
       this.desired.copy(this.target).add(new Vector3(0.28, 0.18, 0.3))

@@ -298,6 +298,12 @@ class AutonomousTradingRuntime:
         self.min_hold_seconds = self.min_hold_ms / 1000.0
         self.min_liquidity_usd = max(0.0, float(min_liquidity_usd))
         self.risk_guard = MarketRiskGuard(self.min_liquidity_usd)
+        # Token selection belongs to the flies. Do not discard a biological
+        # BUY/SELL proposal because market metadata is missing or illiquid;
+        # every proposal must reach the shared execution queue for audit and
+        # attempted execution. Technical transaction checks remain in the
+        # executor (address, balance, gas, quote, approval, and signer).
+        self.queue_all_proposals = True
         # Keep an intentionally tight upper bound even if an env value is
         # mistyped; this is a market guard, not a biological preference.
         self.slippage_tolerance = min(5.0, max(0.0, float(slippage_tolerance)))
@@ -641,9 +647,6 @@ class AutonomousTradingRuntime:
         grouped: dict[tuple[str, int, str], list[tuple[str, TokenRef, str, str | None]]] = {}
         for action in actions:
             side, fly_id, token, reason = action.side, action.fly_id, action.token, action.reason
-            if (risk_reason := self.risk_guard.reject_reason(token)) is not None:
-                self.pending_rebalance.append({"status": "blocked", "reason": risk_reason, "flyId": fly_id, "tokenAddress": token.address})
-                continue
             bucket = grouped.setdefault((side, token.chain_id, token.address.lower()), [])
             # A noisy stream can repeat a decision for one fly in the same
             # cycle. One fly owns one allocation; never double-count it in a

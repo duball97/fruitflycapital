@@ -103,8 +103,14 @@ function updateTokenLogoOverlay() {
     entry.button.setAttribute('aria-label', `Open ${habitat.state.label} token details`)
     entry.button.tabIndex = 0
     if (entry.failed) continue
-    logoWorldPosition.copy(habitat.group.position).y += 0.19
-    logoEdgePosition.copy(logoWorldPosition).x += Math.max(0.04, habitat.properties.physicalRadiusM * 0.62)
+    // Project the same local anchor used by the Three.js logo sprite. Using
+    // raw group coordinates here ignored the habitat's visual scale, which
+    // made DOM logos float well above their plates during close cinematic
+    // shots.
+    logoWorldPosition.set(0, 0.17, 0)
+    habitat.group.localToWorld(logoWorldPosition)
+    logoEdgePosition.set(Math.max(0.04, habitat.properties.physicalRadiusM * 0.62), 0.17, 0)
+    habitat.group.localToWorld(logoEdgePosition)
     logoWorldPosition.project(activeCamera)
     logoEdgePosition.project(activeCamera)
     const onScreen = logoWorldPosition.z >= -1 && logoWorldPosition.z <= 1
@@ -267,6 +273,7 @@ let intentSearchTerm = ''
 // Show the biological source of activity first. The BUY / SELL tab remains
 // available for completed, pending, and confirmed execution records.
 let intentLogView: 'trades' | 'behavior' = 'behavior'
+let focusCinematicOnIntent: ((intent: BehaviorTradeIntent) => void) | null = null
 
 intentLogTabs.forEach((button) => {
   button.addEventListener('click', () => {
@@ -293,6 +300,10 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
     seenIntentIds.add(intent.intentId)
     if (intent.side === 'buy') buyIntentCount += 1
     else sellIntentCount += 1
+    // Replayed history should populate the log without making a page reload
+    // trigger an old camera cut. Only fresh biological events can focus the
+    // cinematic director.
+    if (Date.now() - intent.observedAtMs < 12000) focusCinematicOnIntent?.(intent)
   }
   if (intents.length > 0) {
     while (intentHistory.length > 200) intentHistory.shift()
@@ -700,6 +711,13 @@ nextFlyButton.textContent = 'NEXT FLY'
 nextFlyButton.addEventListener('click', () => setSelectedFly((selectedIndex + 1) % agents.length, false))
 cameraTargetPanel.append(nextFlyButton)
 app.append(cameraTargetPanel)
+
+focusCinematicOnIntent = (intent) => {
+  if (cameraIndex !== 4 || cameraModeSelect.value !== 'cinematic') return
+  const flyIndex = agents.findIndex((agent) => agent.id === intent.flyId)
+  if (flyIndex >= 0) setSelectedFly(flyIndex, false)
+  presentation.focusOnTradeEvent(intent.flyId, intent.habitatId, intent.side)
+}
 
 const sceneControls = document.createElement('aside')
 sceneControls.className = 'scene-controls debug-only'

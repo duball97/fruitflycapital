@@ -186,9 +186,6 @@ class TradeExecutor:
         wallet = self.wallet.snapshot()
         if wallet.chain_id != intent.chain_id:
             raise WalletRpcError(f"wallet RPC chain {wallet.chain_id} does not match intent chain {intent.chain_id}")
-        minimum_liquidity = float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0"))
-        if token.liquidity_usd is None or token.liquidity_usd < minimum_liquidity:
-            raise WalletRpcError("token does not meet the configured minimum liquidity")
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
             token_balance = self.wallet.erc20_balance_raw(intent.token_in)
             if token_balance < _int_value(intent.amount_in):
