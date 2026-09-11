@@ -358,11 +358,12 @@ export class TokenHabitat {
     // Contact remains physical and is not widened by this sensory calibration.
     const sigma = 0.44 + this.properties.physicalRadiusM * 0.7
     const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma))
-    // Odor is a living plume rather than a constant beacon. Its slow pulse
-    // creates genuine sensory fades, so landed flies eventually resume
-    // searching without a hidden position/timer command.
+    // Odor is a living plume rather than a constant beacon. Let the pulse
+    // reach a real low-signal window; otherwise the old 0.79 minimum meant a
+    // landed fly could never satisfy its sensory release condition and the
+    // whole swarm eventually parked on the floor.
     const pulsePhase = timeSeconds * (0.2 + this.properties.chaos * 0.32) + this.group.position.x * 4.0 + this.group.position.z * 2.6
-    const fluctuation = 0.58 + 0.42 * (0.5 + 0.5 * Math.sin(pulsePhase))
+    const fluctuation = 0.05 + 0.95 * (0.5 + 0.5 * Math.sin(pulsePhase))
     return {
       attractive: Math.min(1, Math.max(0, gaussian * this.properties.attractiveOdor * fluctuation)),
       aversive: Math.min(1, Math.max(0, gaussian * this.properties.aversiveDanger * fluctuation)),

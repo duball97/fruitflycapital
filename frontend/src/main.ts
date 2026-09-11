@@ -531,7 +531,9 @@ function renderIntentLog() {
   const tradeSellCount = tradeRecords.filter((item) => item.side === 'SELL').length
   intentBuyCount.textContent = `BUY ${intentLogView === 'trades' ? tradeBuyCount : buyIntentCount}`
   intentSellCount.textContent = `SELL ${intentLogView === 'trades' ? tradeSellCount : sellIntentCount}`
-  intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
+  intentLogLive.textContent = brainSocket.getStatus() === 'connected'
+    ? brainSocket.telemetryRole() === 'producer' ? 'LIVE · PRODUCER' : brainSocket.telemetryRole() === 'observer' ? 'LIVE · VIEW ONLY' : 'LIVE'
+    : 'WAITING'
   const fund = brainSocket.portfolio()
   const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
   const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
@@ -688,17 +690,48 @@ function updatePortfolioSummary() {
   const returnPct = typeof autonomous.portfolioReturnPct === 'number'
     ? `${autonomous.portfolioReturnPct >= 0 ? '+' : ''}${autonomous.portfolioReturnPct.toFixed(2)}%`
     : null
+  const navValue = typeof fund.navUsd === 'number' && Number.isFinite(fund.navUsd)
+    ? fund.navUsd
+    : typeof autonomous.portfolioMarkedValueUsd === 'number' && Number.isFinite(autonomous.portfolioMarkedValueUsd)
+      ? autonomous.portfolioMarkedValueUsd
+      : null
+  const gasReserve = typeof wallet.gasReserve === 'number' && Number.isFinite(wallet.gasReserve)
+    ? wallet.gasReserve
+    : null
+  const autonomousFlies = Array.isArray(autonomous.flies)
+    ? autonomous.flies as Record<string, unknown>[]
+    : []
+  const heldFlies = autonomousFlies.filter((fly) => {
+    const state = String(fly.state || '').toUpperCase()
+    const heldAmount = Number(fly.heldAmount ?? fly.held_amount ?? 0)
+    return (state === 'HOLDING' || state === 'DEPARTING') && Number.isFinite(heldAmount) && heldAmount > 0
+  }).length
+  const totalFlies = Number(autonomous.flyCount) || autonomousFlies.length || 0
+  const mainnetExecutions = Array.isArray(autonomous.mainnetExecutions)
+    ? autonomous.mainnetExecutions as Record<string, unknown>[]
+    : []
+  const realExecutions = mainnetExecutions.filter((execution) => /^0x[a-fA-F0-9]{64}$/.test(String(execution.txHash || execution.tx_hash || '')))
+  const confirmedExecutions = realExecutions.filter((execution) => String(execution.status || '').toUpperCase() === 'CONFIRMED').length
+  const pendingExecutions = realExecutions.filter((execution) => ['BROADCAST', 'PENDING'].includes(String(execution.status || '').toUpperCase())).length
   portfolioSummaryFields.wallet.textContent = walletTotal
   portfolioSummaryFields.available.textContent = available
   portfolioSummaryFields.positions.textContent = `${positions.length}`
   portfolioSummaryFields.returnField.hidden = returnPct === null
   if (returnPct !== null) portfolioSummaryFields.return.textContent = returnPct
+  portfolioSummaryFields.nav.textContent = navValue !== null ? '$' + navValue.toFixed(2) : '—'
+  portfolioSummaryFields.gas.textContent = gasReserve !== null ? gasReserve.toFixed(6) + ' ETH' : '—'
+  portfolioSummaryFields.heldFlies.textContent = totalFlies > 0 ? String(heldFlies) + '/' + String(totalFlies) : '—'
+  portfolioSummaryFields.onchain.textContent = String(confirmedExecutions) + ' confirmed · ' + String(pendingExecutions) + ' pending'
   const walletAddress = String(wallet.address || fund.treasuryAddress || '')
   if (/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
     portfolioSummaryFields.walletLink.href = `https://robinhoodchain.blockscout.com/address/${walletAddress}`
   }
   portfolioSummaryFields.holdings.textContent = positions.length
-    ? positions.slice(0, 4).map((position) => String(position.symbol || position.tokenSymbol || position.token_address || position.tokenAddress || 'TOKEN')).join(' · ')
+    ? positions.slice(0, 4).map((position) => {
+      const label = String(position.symbol || position.tokenSymbol || position.token_address || position.tokenAddress || 'TOKEN')
+      const amount = formatTokenAmount(position.amount ?? position.observedAmount ?? position.heldAmount ?? position.balance)
+      return amount === '—' ? label : label + ' · ' + amount
+    }).join(' · ')
     : 'No token positions yet · proposals remain visible in the behavior log'
   updateExecutionToast()
   renderIntentLog()

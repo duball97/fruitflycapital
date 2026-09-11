@@ -105,3 +105,32 @@ def test_observer_allows_only_one_active_commitment_per_fly():
     observer.ingest(frame(2_000, 0.03, 0.03, True, True))
     buys = [intent for intent in observer.snapshot().behavior_intents if intent.side == "buy"]
     assert [intent.habitat_id for intent in buys] == ["TOKEN-A"]
+
+
+def test_observer_restores_held_commitment_so_departure_emits_sell():
+    observer = SwarmObserver(
+        expected_agents=1,
+        sustained_dwell_s=1.0,
+        departure_debounce_s=0.0,
+        min_hold_s=0.0,
+    )
+    observer.sync_active_commitments({"fly-001": ("TOKEN-A", 0)})
+    observer.ingest([
+        FlyObservation(
+            "fly-001",
+            0,
+            (0.0, 0.0, 0.0),
+            (HabitatObservation("TOKEN-A", 0.03, 0.05, contact=True),),
+        )
+    ])
+    observer.ingest([
+        FlyObservation(
+            "fly-001",
+            1_000,
+            (1.0, 0.0, 0.0),
+            (HabitatObservation("TOKEN-A", 0.30, 0.05, contact=False),),
+        )
+    ])
+    intents = observer.snapshot().behavior_intents
+    assert [intent.side for intent in intents] == ["sell"]
+    assert intents[0].habitat_id == "TOKEN-A"

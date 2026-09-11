@@ -64,6 +64,27 @@ FUND_SERVICE = FundService.from_env()
 AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)
 
 
+def _sync_restored_fly_commitments() -> None:
+    """Give the behavior observer the durable holdings known by the fund.
+
+    The observer is rebuilt in memory whenever the brain server restarts. The
+    ledger is still authoritative for already-held positions, so restore those
+    fly-to-habitat links before processing the next telemetry frame.
+    """
+    commitments: dict[str, tuple[str, int]] = {}
+    for fly_id, position in AUTONOMOUS_RUNTIME.positions.items():
+        if position.state != "HOLDING" or not position.token_address:
+            continue
+        for habitat_id, token in AUTONOMOUS_RUNTIME.tokens.items():
+            if int(token.chain_id) != int(position.chain_id or token.chain_id):
+                continue
+            if token.address.lower() != position.token_address.lower():
+                continue
+            commitments[fly_id] = (habitat_id, int(position.entry_timestamp_ms or 0))
+            break
+    SWARM_DECISIONS.observer.sync_active_commitments(commitments)
+
+
 class SwarmProducerLease:
     """Allow exactly one browser connection to author swarm telemetry."""
 
@@ -303,6 +324,7 @@ async def handle_client(websocket: Any) -> None:
                     else:
                         environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
                     AUTONOMOUS_RUNTIME.update_habitats(environment.get("habitats", []))
+                    _sync_restored_fly_commitments()
                     try:
                         await websocket.send(json.dumps({"type": "environment_update", "environment": environment}))
                     except (ConnectionError, ConnectionClosed):

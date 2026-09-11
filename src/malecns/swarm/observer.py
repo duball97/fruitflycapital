@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from math import sqrt
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -222,7 +222,27 @@ class SwarmObserver:
         # observer aligned with that reality: a fly cannot open a second
         # commitment while its previous habitat is still held.
         self._active_commitments: dict[str, str] = {}
+        self._commitment_entry_ms: dict[str, int] = {}
         self._last_intent_at_ms: dict[str, int] = {}
+
+    def sync_active_commitments(self, commitments: Mapping[str, tuple[str, int]]) -> None:
+        """Restore held fly commitments after a process restart.
+
+        The durable fund ledger knows which token each fly already holds, but
+        the observer's visit flags are intentionally in-memory. Seeding those
+        flags keeps a later physical departure eligible for SELL without
+        creating a duplicate BUY for the restored holding.
+        """
+        for fly_id, (habitat_id, entry_timestamp_ms) in commitments.items():
+            normalized_fly_id = str(fly_id)
+            normalized_habitat_id = str(habitat_id)
+            self._active_commitments[normalized_fly_id] = normalized_habitat_id
+            self._commitment_entry_ms[normalized_fly_id] = int(entry_timestamp_ms)
+            for (track_fly_id, track_habitat_id), track in self._tracks.items():
+                if track_fly_id != normalized_fly_id or track_habitat_id != normalized_habitat_id:
+                    continue
+                track.buy_issued_for_visit = True
+                track.buy_issued_at_ms = int(entry_timestamp_ms)
 
     def ingest(self, observations: Iterable[FlyObservation]) -> SwarmSnapshot:
         frame = tuple(observations)
@@ -273,8 +293,14 @@ class SwarmObserver:
 
         if track.first_timestamp_ms is None:
             track.first_timestamp_ms = timestamp_ms
+        seeded_commitment = self._active_commitments.get(track.fly_id)
+        if seeded_commitment == track.habitat_id and not track.buy_issued_for_visit:
+            track.buy_issued_for_visit = True
+            track.buy_issued_at_ms = self._commitment_entry_ms.get(track.fly_id, timestamp_ms)
         if inside and not previous_inside:
-            continuing_held_visit = track.departure_candidate and track.buy_issued_for_visit
+            continuing_held_visit = (
+                track.departure_candidate and track.buy_issued_for_visit
+            ) or seeded_commitment == track.habitat_id
             if not continuing_held_visit:
                 track.visits += 1
                 track.current_visit_dwell_s = 0.0
@@ -301,6 +327,7 @@ class SwarmObserver:
             ):
                 self._emit_behavior_intent(track, "sell", "departure", timestamp_ms, distance_m, False)
                 self._active_commitments.pop(track.fly_id, None)
+                self._commitment_entry_ms.pop(track.fly_id, None)
                 self._last_intent_at_ms[track.fly_id] = timestamp_ms
                 track.departure_candidate = False
                 track.buy_issued_for_visit = False
@@ -324,6 +351,7 @@ class SwarmObserver:
             ):
                 self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)
                 self._active_commitments[track.fly_id] = track.habitat_id
+                self._commitment_entry_ms[track.fly_id] = timestamp_ms
                 self._last_intent_at_ms[track.fly_id] = timestamp_ms
                 track.buy_issued_for_visit = True
                 track.buy_issued_at_ms = timestamp_ms
