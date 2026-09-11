@@ -12,7 +12,17 @@ class FundService:
     def __init__(self, ledger: FundLedger, portfolio: PortfolioEngine, execution: ExecutionEngine, wallet: RpcWalletClient | None = None) -> None: self.ledger, self.portfolio, self.execution, self.wallet = ledger, portfolio, execution, wallet
     @classmethod
     def from_env(cls) -> "FundService":
-        ledger = FundLedger(os.getenv("FUND_DB_PATH", "data/fund/fund.db"))
+        # Supabase is the shared queue between the brain and executor. Keep a
+        # separate local brain ledger so a stale legacy process holding
+        # data/fund/fund.db cannot prevent the websocket server from starting.
+        configured_path = os.getenv("FUND_DB_PATH")
+        if configured_path:
+            ledger_path = configured_path
+        elif os.getenv("FUND_ADAPTER", "simulation").lower() == "supabase":
+            ledger_path = os.getenv("FUND_BRAIN_DB_PATH", "data/fund/brain.db")
+        else:
+            ledger_path = "data/fund/fund.db"
+        ledger = FundLedger(ledger_path)
         wallet = RpcWalletClient.from_env()
         # The autonomous runtime owns strategy execution. Keep this legacy
         # service read-only/guarded so no hidden route reaches a signer.
