@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 from collections.abc import Mapping
 from http import HTTPStatus
@@ -31,6 +32,25 @@ from .fund.service import FundService
 from .fund.autonomous import AutonomousTradingRuntime
 
 
+class _NormalWebSocketCloseFilter(logging.Filter):
+    """Keep expected browser disconnects out of the server error stream."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage() not in {
+            "opening handshake failed",
+            "connection handler failed",
+            "keepalive ping failed",
+        }:
+            return True
+        if not record.exc_info:
+            return True
+        return not isinstance(record.exc_info[1], ConnectionClosed)
+
+
+WEBSOCKET_LOGGER = logging.getLogger("fruitfly.brain.websocket")
+WEBSOCKET_LOGGER.addFilter(_NormalWebSocketCloseFilter())
+
+
 load_project_env()
 
 SENSORY_ENCODER = default_encoder()
@@ -47,9 +67,9 @@ except ValueError:
 SWARM_SIZE = max(1, min(100, _configured_swarm_size))
 # Keep the live proposal stream deliberately calm. Environment values may
 # increase these windows, but cannot silently make the feed more aggressive.
-BEHAVIOR_DWELL_SECONDS = max(8.0, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "8.0")))
+BEHAVIOR_DWELL_SECONDS = max(3.0, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "3.0")))
 BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS = max(6.0, float(os.getenv("FUND_BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS", "6.0")))
-BEHAVIOR_INTENT_COOLDOWN_SECONDS = max(60.0, float(os.getenv("FUND_BEHAVIOR_INTENT_COOLDOWN_SECONDS", "300.0")))
+BEHAVIOR_INTENT_COOLDOWN_SECONDS = max(90.0, float(os.getenv("FUND_BEHAVIOR_INTENT_COOLDOWN_SECONDS", "90.0")))
 SWARM_DECISIONS = SwarmDecisionPipeline(
     max(1, SWARM_SIZE),
     observer=SwarmObserver(
@@ -468,7 +488,12 @@ async def serve_forever(host: str, port: int) -> None:
         max_size=1_000_000,
         process_request=process_http_request,
         ping_interval=20,
-        ping_timeout=20,
+        # Background tabs and short network stalls should not make the shared
+        # brain runtime look dead. Closed clients are still removed by the
+        # handler cleanup path and by failed broadcasts.
+        ping_timeout=None,
+        close_timeout=5,
+        logger=WEBSOCKET_LOGGER,
     ):
         print(f"MaleCNS WebSocket adapter listening on ws://{host}:{port}", flush=True)
         await asyncio.Future()
