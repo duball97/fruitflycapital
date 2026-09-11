@@ -323,11 +323,11 @@ class SupabaseExecutionAdapter:
 class AutonomousTradingRuntime:
     """Stateful fly allocation runtime with netted execution intents."""
 
-    def __init__(self, ledger: FundLedger, *, expected_agents: int = 8, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_hold_seconds: float = 120.0, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5, max_per_fly_allocation_fraction: float = 0.0625) -> None:
+    def __init__(self, ledger: FundLedger, *, expected_agents: int = 4, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_hold_seconds: float = 120.0, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5, max_per_fly_allocation_fraction: float = 0.0625) -> None:
         self.ledger = ledger
         self.expected_agents = max(1, int(expected_agents))
-        # Preserve the former sixteen-brain capital ceiling after reducing
-        # the active population: eight brains still max out at 6.25% each.
+        # Keep the existing 6.25% per-fly capital cap independent of the
+        # number of active brains.
         self.max_per_fly_allocation_fraction = max(0.0, min(1.0, float(max_per_fly_allocation_fraction)))
         self.per_fly_allocation_fraction = min(1.0 / self.expected_agents, self.max_per_fly_allocation_fraction)
         self.wallet = wallet
@@ -383,9 +383,9 @@ class AutonomousTradingRuntime:
                 raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for FUND_ADAPTER=supabase")
             adapter = SupabaseExecutionAdapter(queue)
         try:
-            expected_agents = int(os.getenv("NEUROSWARM_SWARM_SIZE", "8"))
+            expected_agents = int(os.getenv("NEUROSWARM_SWARM_SIZE", "4"))
         except ValueError:
-            expected_agents = 8
+            expected_agents = 4
         return cls(ledger, expected_agents=max(1, min(100, expected_agents)), wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_hold_seconds=float(os.getenv("FUND_MIN_HOLD_SECONDS", "120")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")), max_per_fly_allocation_fraction=float(os.getenv("FUND_MAX_PER_FLY_ALLOCATION_FRACTION", "0.0625")))
 
     def update_habitats(self, habitats: Iterable[Mapping[str, Any]]) -> None:

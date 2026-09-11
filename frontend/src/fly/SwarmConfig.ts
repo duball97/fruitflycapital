@@ -1,17 +1,17 @@
 import { Vector3 } from 'three'
 
-/** The strategy defaults to eight independent capital-bearing brains. */
+/** The strategy defaults to four independent capital-bearing brains. */
 const configuredSwarmSize = Number(import.meta.env.VITE_SWARM_SIZE)
 export const SWARM_SIZE = Number.isInteger(configuredSwarmSize) && configuredSwarmSize >= 1 && configuredSwarmSize <= 100
   ? configuredSwarmSize
-  : 8
+  : 4
 
 // One canonical CNS controls one primary body plus this many render-only
 // followers. Followers never sense, create brain runtimes, or cast consensus
 // votes. This makes the demo visually read as a swarm without claiming that
 // the browser is running 80 independent MaleCNS copies.
 const configuredBodiesPerBrain = Number(import.meta.env.VITE_BODIES_PER_BRAIN)
-// Keep the visual swarm dense by default: eight authoritative brains drive
+// Keep the visual swarm dense by default: four authoritative brains drive
 // ten visible bodies each. The extra nine bodies are presentation followers,
 // not additional strategy agents.
 export const BODIES_PER_BRAIN = Number.isInteger(configuredBodiesPerBrain) && configuredBodiesPerBrain >= 1 && configuredBodiesPerBrain <= 12

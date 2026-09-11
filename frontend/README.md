@@ -53,8 +53,8 @@ Feather files in the repository root:
 The adapter encodes each embodied sensor frame into exact MaleCNS sensory IDs,
 advances one persistent Brian2 runtime per connected fly ID, and decodes that
 window's `spikeRates`/`spikeCounts` into the normalized `FlightCommand` through
-`FlightMotorDecoder`. The browser starts eight independent agents named
-`fly-001` through `fly-008`; there is no special A/B pair. Every browser agent
+`FlightMotorDecoder`. The browser starts four independent agents named
+`fly-001` through `fly-004`; there is no special A/B pair. Every browser agent
 uses the MaleCNS controller. If the cache is absent, the command remains
 neutral and the diagnostic UI reports the missing source instead of fabricating
 spikes. See `../docs/SWARM_ARCHITECTURE.md` and `../docs/LIVE_CNS_LOOP.md`.
@@ -69,14 +69,14 @@ unavailable or the selected MaleCNS output populations are quiet, the command
 remains neutral and the UI reports that state. There is no manual or synthetic
 preview driver in the product surface.
 
-The current default is eight independent brains and 80 visible bodies:
+The current default is four independent brains and 40 visible bodies:
 each brain owns one primary body plus render-only followers. Set
 `VITE_BODIES_PER_BRAIN` to change that presentation count. Followers do
 not create brain runtimes, sense the world, or add consensus votes. To stage a
 larger brain population experiment, set `VITE_SWARM_SIZE` to a value from 1 to
 100. This changes the number of browser agents and brain IDs requested; it does
 not make 100 full MaleCNS simulations fit within the current realtime CPU
-budget. The eight-brain pilot preserves the previous 6.25% maximum capital
+budget. The four-brain pilot preserves the existing 6.25% maximum capital
 allocation per brain, leaving 50% of deployable capital unallocated until the
 population is expanded. Visible follower bodies do
 not create 1% voting units; that requires one hundred independently running CNS
@@ -104,7 +104,7 @@ The fly is rendered at an explicit 12x inspection magnification because its
 physical body is millimetre-scale. This does not alter positions, collisions,
 sensors, or telemetry.
 
-At startup, all eight agents begin in a deterministic distant launch
+At startup, all four agents begin in a deterministic distant launch
 formation. Each primary body's compact sensor summary goes to that fly's own
 brain stream, and the live token habitat fields become the fly's visual and
 olfactory environment. The selected causal panel exposes the local sensor

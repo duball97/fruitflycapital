@@ -35,9 +35,9 @@ class FundService:
             except (WalletRpcError, ValueError) as exc:
                 wallet_payload = {"configured": True, "status": "error", "error": str(exc), "address": self.wallet.wallet_address, "source": "rpc"}
         try:
-            fly_count = max(1, min(100, int(os.getenv("NEUROSWARM_SWARM_SIZE", "8"))))
+            fly_count = max(1, min(100, int(os.getenv("NEUROSWARM_SWARM_SIZE", "4"))))
         except ValueError:
-            fly_count = 8
+            fly_count = 4
         fly_weight = min(1.0 / fly_count, float(os.getenv("FUND_MAX_PER_FLY_ALLOCATION_FRACTION", "0.0625")))
         allocation: dict[str, Any] = {"flyCount": fly_count, "perFlyWeight": fly_weight, "perFlyPercent": fly_weight * 100.0, "maxStrategyAllocationPercent": min(100.0, fly_weight * fly_count * 100.0), "basis": "tradeable wallet balance after gas reserve; prior per-fly cap preserved"}
         if wallet_payload.get("availableToTrade") is not None:

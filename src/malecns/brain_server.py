@@ -64,9 +64,9 @@ REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_c
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
 try:
-    _configured_swarm_size = int(os.getenv("NEUROSWARM_SWARM_SIZE", "8"))
+    _configured_swarm_size = int(os.getenv("NEUROSWARM_SWARM_SIZE", "4"))
 except ValueError:
-    _configured_swarm_size = 8
+    _configured_swarm_size = 4
 SWARM_SIZE = max(1, min(100, _configured_swarm_size))
 # Keep the live proposal stream deliberately calm. Environment values may
 # increase these windows, but cannot silently make the feed more aggressive.

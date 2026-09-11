@@ -20,10 +20,10 @@ then sensed through the embodied loop.
 
 ## Current reality
 
-The current interactive default is an **8-brain pilot**, not 100 completed
+The current interactive default is a **4-brain pilot**, not 100 completed
 full-CNS simulations. The browser renders ten visible Flybody bodies per
-brain by default, so 8 brains produce 80 visible flies. Each numbered primary
-agent (`fly-001` through `fly-008`) has its
+brain by default, so 4 brains produce 40 visible flies. Each numbered primary
+agent (`fly-001` through `fly-004`) has its
 own Flybody pose, sensor frame, actuator state, and server-side Brian2 runtime
 identity/seed. The connectome topology and model parameters are shared as
 immutable configuration; membrane state, spikes, history, and RNG state are
@@ -45,10 +45,10 @@ independent Brian2 runtime, decoded, and sent through the shared
 issue a hidden “go to coin” command. If the validated pathway is quiet, the
 command remains neutral and the UI reports that state.
 
-The product strategy uses eight independent brains and 80 visible bodies by default:
+The product strategy uses four independent brains and 40 visible bodies by default:
 
 ```env
-VITE_SWARM_SIZE=8
+VITE_SWARM_SIZE=4
 VITE_BODIES_PER_BRAIN=10
 ```
 
@@ -481,7 +481,7 @@ metric definitions, provenance, and the planned provider boundaries.
 
 ## NeuroSwarm population pilot
 
-The current milestone is an eight-brain population pilot rendered as eight
+The current milestone is a four-brain population pilot rendered as four
 canonical Flybody bodies by default. Each primary has its own body, sensor frame,
 actuator state, unique `fly-NNN` brain ID, and server-side RNG stream. Four
 render-only followers can be attached to each primary with
@@ -496,7 +496,7 @@ reserved for developer tests and are not part of the product surface.
 
 ## Swarm behavior and fund boundary
 
-The browser sends throttled behavior telemetry for the eight primary bodies
+The browser sends throttled behavior telemetry for the four primary bodies
 to the Python server. `malecns.swarm.SwarmObserver` measures per-agent,
 per-habitat visits, approach episodes, departures, dwell, repeat visits,
 distance history, contact, congregation, and persistence. The
