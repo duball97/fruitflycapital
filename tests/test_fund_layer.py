@@ -115,6 +115,25 @@ def test_autonomous_runtime_assigns_one_sixteenth_and_debounces_departure():
     assert ledger.rows("execution_attempts")[0]["status"] == "filled"
 
 
+def test_autonomous_runtime_rotates_a_fly_from_old_token_to_new_token():
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=8, min_hold_seconds=0, adapter=SimulationExecutionAdapter())
+    first_token = "0x1111111111111111111111111111111111111111"
+    second_token = "0x2222222222222222222222222222222222222222"
+    runtime.update_habitats([
+        {"id": "market-first", "label": "FIRST", "chainId": "4663", "tokenAddress": first_token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 1.0}]},
+        {"id": "market-second", "label": "SECOND", "chainId": "4663", "tokenAddress": second_token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 2.0}]},
+    ])
+
+    runtime.ingest([BehaviorTradeIntent("rotation-buy-1", "fly-001", "market-first", "buy", "dwell", .9, 1000, {}, .125)], observed_at_ms=1000)
+    snapshot = runtime.ingest([BehaviorTradeIntent("rotation-buy-2", "fly-001", "market-second", "buy", "dwell", .9, 2000, {}, .125)], observed_at_ms=2000)
+
+    attempts = ledger.rows("execution_attempts")
+    assert [(row["side"], row["status"]) for row in attempts] == [("buy", "filled"), ("sell", "filled"), ("buy", "filled")]
+    assert snapshot["flies"][0]["state"] == "HOLDING"
+    assert snapshot["flies"][0]["tokenAddress"] == second_token
+
+
 def test_autonomous_return_uses_entry_cost_basis_and_latest_token_value():
     ledger = FundLedger(":memory:")
     runtime = AutonomousTradingRuntime(ledger, expected_agents=8, min_hold_seconds=0, adapter=SimulationExecutionAdapter())

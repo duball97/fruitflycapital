@@ -82,7 +82,7 @@ def test_contact_dwell_emits_buy_and_departure_emits_sell_intents():
     assert intents[1].portfolio_weight == 0.0625
 
 
-def test_observer_allows_only_one_active_commitment_per_fly():
+def test_observer_allows_sequential_rotation_to_a_new_habitat():
     observer = SwarmObserver(
         expected_agents=1,
         sustained_dwell_s=1.0,
@@ -102,9 +102,12 @@ def test_observer_allows_only_one_active_commitment_per_fly():
 
     observer.ingest(frame(0, 0.03, 0.30, True, False))
     observer.ingest(frame(1_000, 0.03, 0.03, True, True))
-    observer.ingest(frame(2_000, 0.03, 0.03, True, True))
+    # The first commitment remains active, but after the cooldown a sustained
+    # commitment to another habitat is a valid rotation.
+    observer.ingest(frame(31_000, 0.03, 0.03, True, True))
+    observer.ingest(frame(32_000, 0.03, 0.03, True, True))
     buys = [intent for intent in observer.snapshot().behavior_intents if intent.side == "buy"]
-    assert [intent.habitat_id for intent in buys] == ["TOKEN-A"]
+    assert [intent.habitat_id for intent in buys] == ["TOKEN-A", "TOKEN-B"]
 
 
 def test_observer_restores_held_commitment_so_departure_emits_sell():

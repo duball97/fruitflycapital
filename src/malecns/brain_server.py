@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import Mapping
 from http import HTTPStatus
@@ -166,6 +167,12 @@ class SwarmProducerLease:
 TELEMETRY_PRODUCER = SwarmProducerLease()
 CONNECTED_CLIENTS: set[Any] = set()
 LATEST_SWARM_UPDATE: dict[str, Any] | None = None
+# Brian2 runtime construction must remain on the main interpreter thread, but
+# stepping an already-built network can be moved out of the asyncio loop. A
+# single lock keeps Brian2's process-wide clock/RNG state from being advanced
+# concurrently by different fly runtimes while allowing health, telemetry,
+# and portfolio requests to continue being served.
+BRAIN_STEP_LOCK = threading.Lock()
 
 
 async def _broadcast(payload: Mapping[str, Any]) -> None:
@@ -295,6 +302,22 @@ def command_for_sensor_frame(
     return decoded.as_actuators(), decoded.as_dict(), {"stimulation": stimulation, "source": "decoder-without-live-provider"}
 
 
+def _step_sensor_frame(
+    message: Mapping[str, Any],
+    runtime: LiveMaleCNSRuntime | None,
+) -> tuple[dict[str, float], dict[str, Any], dict[str, Any]]:
+    """Run one brain frame without blocking the WebSocket event loop.
+
+    ``RuntimeRegistry.get`` intentionally stays on the main thread because
+    Brian2's network construction installs signal handlers. Once a runtime
+    exists, its fixed-window step is protected and executed by the worker
+    thread so a burst of brain frames cannot delay swarm telemetry.
+    """
+
+    with BRAIN_STEP_LOCK:
+        return command_for_sensor_frame(message, runtime)
+
+
 async def handle_client(websocket: Any) -> None:
     global LATEST_SWARM_UPDATE
     CONNECTED_CLIENTS.add(websocket)
@@ -384,10 +407,13 @@ async def handle_client(websocket: Any) -> None:
             if not isinstance(fly_id, str):
                 continue
             runtime = await RUNTIME_REGISTRY.get(fly_id)
-            # Keep all Brian2 construction and stepping on the same main
-            # interpreter thread. The previous to_thread call caused every
-            # Render runtime to fail before it could produce a neural command.
-            commands, decoded, runtime_metadata = command_for_sensor_frame(message, runtime)
+            # Keep construction on the main thread, but do not let the
+            # synchronous fixed-window step starve telemetry/health handling.
+            commands, decoded, runtime_metadata = await asyncio.to_thread(
+                _step_sensor_frame,
+                message,
+                runtime,
+            )
             output = {
                 "type": "brain_output",
                 "flyId": fly_id,

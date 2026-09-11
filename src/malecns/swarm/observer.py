@@ -218,9 +218,10 @@ class SwarmObserver:
         # websocket decision would otherwise grow memory and payload size
         # forever during a long-running market session.
         self._behavior_intents: deque[BehaviorTradeIntent] = deque(maxlen=256)
-        # The fund has one allocation slot per fly. Keep the biological
-        # observer aligned with that reality: a fly cannot open a second
-        # commitment while its previous habitat is still held.
+        # A fly has one current allocation at a time, but it may rotate through
+        # many habitats over its lifetime.  The trading runtime turns a new
+        # commitment into SELL-current -> BUY-new, so the observer must not
+        # permanently block a fly after its first proposal.
         self._active_commitments: dict[str, str] = {}
         self._commitment_entry_ms: dict[str, int] = {}
         self._last_intent_at_ms: dict[str, int] = {}
@@ -346,7 +347,10 @@ class SwarmObserver:
                 habitat.contact
                 and track.current_visit_dwell_s >= self.sustained_dwell_s
                 and not track.buy_issued_for_visit
-                and self._active_commitments.get(track.fly_id) is None
+                and (
+                    self._active_commitments.get(track.fly_id) is None
+                    or self._active_commitments.get(track.fly_id) != track.habitat_id
+                )
                 and self._cooldown_elapsed(track.fly_id, timestamp_ms)
             ):
                 self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)

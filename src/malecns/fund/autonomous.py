@@ -470,7 +470,9 @@ class AutonomousTradingRuntime:
                 # A queued external BUY is not a fill. Keep one pending
                 # allocation slot per fly so repeated habitat visits cannot
                 # create an unbounded stream of buys before the first one is
-                # confirmed or rejected by the executor.
+                # confirmed or rejected by the executor. Once a position is
+                # actually held, a different BUY is a rotation: SELL the old
+                # token, then BUY the new one.
                 if position.state == FlyBehaviorState.QUALIFYING.value and position.held_amount <= 0:
                     self._event(behavior, "PENDING", "previous buy is awaiting execution")
                     self.processed_events.add(behavior.intent_id)
@@ -893,8 +895,9 @@ class AutonomousTradingRuntime:
             side, fly_id, token, reason = action.side, action.fly_id, action.token, action.reason
             bucket = grouped.setdefault((side, token.chain_id, token.address.lower()), [])
             # A noisy stream can repeat a decision for one fly in the same
-            # cycle. One fly owns one allocation; never double-count it in a
-            # netted order.
+            # cycle. One fly owns one current allocation; never double-count
+            # it in a netted order. A later BUY for another token is handled
+            # as a separate SELL-old/BUY-new rotation.
             if any(item[0] == fly_id for item in bucket):
                 continue
             bucket.append((fly_id, token, reason, action.biological_event_id))
