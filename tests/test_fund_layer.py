@@ -9,7 +9,8 @@ from malecns.fund.privy_client import FakePrivyClient, PrivyConfig
 from malecns.fund.nav_reporter import FundNavReporter
 from malecns.fund.valuation import FakeValuationProvider
 from malecns.fund.wallet import RpcWalletClient, WalletSnapshot
-from malecns.fund.autonomous import AutonomousTradingRuntime, QueueExecutionAdapter, SimulationExecutionAdapter
+from malecns.fund.autonomous import AutonomousTradingRuntime, QueueExecutionAdapter, SimulationExecutionAdapter, SupabaseExecutionAdapter
+from malecns.fund.supabase_queue import SupabaseIntentQueue
 from malecns.fund.receipts import BlockscoutClient, ReceiptStatus, observe_receipt
 from malecns.swarm.observer import BehaviorTradeIntent
 
@@ -163,6 +164,82 @@ def test_queue_adapter_publishes_one_netted_intent_for_the_executor(tmp_path):
     assert records[0]["executionIntent"]["side"] == "buy"
     assert records[0]["executionIntent"]["flyIds"] == ["fly-001", "fly-002"]
     assert ledger.rows("execution_attempts")[0]["status"] == "queued"
+
+
+def test_supabase_queue_records_each_behavior_proposal_as_observed(monkeypatch):
+    requests = []
+
+    class RecordingQueue(SupabaseIntentQueue):
+        def _request(self, method, path, body=None, query="", prefer=None):
+            requests.append({"method": method, "path": path, "body": body, "query": query, "prefer": prefer})
+            return None
+
+    monkeypatch.setenv("FUND_CHAIN_ID", "4663")
+    queue = RecordingQueue("https://example.supabase.co", "service-role")
+    queue.record_behavior_proposal(
+        {
+            "intentId": "bio-buy-1",
+            "flyId": "fly-001",
+            "habitatId": "habitat-1",
+            "side": "buy",
+            "reason": "dwell",
+            "confidence": 0.8,
+        },
+        {"chainId": 4663, "address": "0x1111111111111111111111111111111111111111", "symbol": "FLY"},
+    )
+    queue.record_behavior_proposal(
+        {
+            "intentId": "bio-sell-1",
+            "flyId": "fly-002",
+            "habitatId": "habitat-1",
+            "side": "sell",
+            "reason": "departure",
+            "confidence": 0.7,
+        },
+        {"chainId": 4663, "address": "0x1111111111111111111111111111111111111111", "symbol": "FLY"},
+    )
+
+    assert len(requests) == 2
+    buy, sell = (request["body"][0] for request in requests)
+    assert buy["status"] == "observed"
+    assert buy["execution_eligible"] is False
+    assert buy["behavior_intent_id"] == "bio-buy-1"
+    assert buy["token_in"] == "0x0000000000000000000000000000000000000000"
+    assert buy["token_out"].lower() == "0x1111111111111111111111111111111111111111"
+    assert sell["token_in"].lower() == "0x1111111111111111111111111111111111111111"
+    assert sell["token_out"] == "0x0000000000000000000000000000000000000000"
+
+
+def test_supabase_runtime_records_behavior_and_netted_execution(monkeypatch):
+    class RecordingQueue:
+        def __init__(self):
+            self.behaviors = []
+            self.executions = []
+
+        def record_behavior_proposal(self, behavior, token):
+            self.behaviors.append((behavior, token))
+
+        def enqueue(self, payload):
+            self.executions.append(payload)
+
+    monkeypatch.setenv("FUND_CHAIN_ID", "4663")
+    queue = RecordingQueue()
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=SupabaseExecutionAdapter(queue), min_hold_seconds=0)
+    token = "0x2222222222222222222222222222222222222222"
+    runtime.update_habitats([{"id": "market-supabase", "label": "FLY", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 1.0}]}])
+    runtime.ingest(
+        [
+            BehaviorTradeIntent("bio-buy-a", "fly-001", "market-supabase", "buy", "dwell", 0.8, 1000, {}, 0.0625),
+            BehaviorTradeIntent("bio-buy-b", "fly-002", "market-supabase", "buy", "dwell", 0.8, 1000, {}, 0.0625),
+        ],
+        observed_at_ms=1000,
+    )
+
+    assert [behavior["intentId"] for behavior, _token in queue.behaviors] == ["bio-buy-a", "bio-buy-b"]
+    assert len(queue.executions) == 1
+    assert queue.executions[0]["executionIntent"]["side"] == "buy"
+    assert queue.executions[0]["executionIntent"]["flyIds"] == ["fly-001", "fly-002"]
 
 
 def test_mainnet_receipt_uses_rpc_as_canonical_and_enriches_with_blockscout():

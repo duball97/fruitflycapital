@@ -64,6 +64,45 @@ class SupabaseIntentQueue:
         self._request("POST", self.table, [row], prefer="resolution=ignore-duplicates,return=minimal")
         return True
 
+    def record_behavior_proposal(self, behavior: Mapping[str, Any], token: Mapping[str, Any] | None) -> bool:
+        """Persist a biological proposal before execution eligibility is known.
+
+        The worker claims only ``pending`` rows. These ``observed`` rows make
+        the biological audit durable across browser users and reconnects while
+        keeping incomplete proposals (for example a sell without a held
+        balance yet) out of the executable queue.
+        """
+
+        intent_id = str(behavior.get("intentId") or "").strip()
+        side = str(behavior.get("side") or "").lower()
+        if not intent_id or side not in {"buy", "sell"}:
+            raise SupabaseQueueError("behavior proposal requires intentId and BUY/SELL side")
+        token_data = dict(token or {})
+        token_address = str(token_data.get("address") or "0x0000000000000000000000000000000000000000")
+        chain_id = int(token_data.get("chainId") or os.getenv("FUND_CHAIN_ID", "4663"))
+        zero = "0x0000000000000000000000000000000000000000"
+        row = {
+            "idempotency_key": f"proposal:{intent_id}",
+            "side": side,
+            "chain_id": chain_id,
+            "token_in": zero if side == "buy" else token_address,
+            "token_out": token_address if side == "buy" else zero,
+            "amount_in": "0",
+            "fly_ids": [str(behavior.get("flyId") or "")],
+            "biological_event_id": intent_id,
+            "behavior_intent_id": intent_id,
+            "execution_eligible": False,
+            "proposal_reason": "biological proposal recorded before executable allocation",
+            "status": "observed",
+            "payload": {
+                "behaviorIntent": dict(behavior),
+                "token": token_data,
+                "proposalStatus": "observed",
+            },
+        }
+        self._request("POST", self.table, [row], prefer="resolution=ignore-duplicates,return=minimal")
+        return True
+
     def claim(self, worker_id: str, limit: int = 1) -> list[dict[str, Any]]:
         rows = self._request("POST", "rpc/claim_execution_intents", {"p_worker_id": worker_id, "p_limit": limit, "p_lease_seconds": int(os.getenv("FUND_QUEUE_LEASE_SECONDS", "120"))})
         return [dict(row) for row in rows] if isinstance(rows, list) else []

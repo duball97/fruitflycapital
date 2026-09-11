@@ -265,6 +265,19 @@ class SupabaseExecutionAdapter:
     def __init__(self, queue: SupabaseIntentQueue) -> None:
         self.queue = queue
 
+    def record_behavior_proposal(self, behavior: BehaviorTradeIntent, token: TokenRef | None) -> None:
+        token_payload = None
+        if token is not None:
+            token_payload = {
+                "chainId": token.chain_id,
+                "address": token.address,
+                "symbol": token.symbol,
+                "liquidityUsd": token.liquidity_usd,
+                "priceUsd": token.price_usd,
+                "priceNative": token.price_native,
+            }
+        self.queue.record_behavior_proposal(behavior.as_dict(), token_payload)
+
     def execute(self, intent: ExecutionIntent, token: TokenRef) -> Mapping[str, Any]:
         payload = {
             "executionIntent": intent.as_dict(),
@@ -385,6 +398,14 @@ class AutonomousTradingRuntime:
             if len(self.behavior_intents) > 256:
                 self.behavior_intents = self.behavior_intents[-256:]
             token = self.tokens.get(behavior.habitat_id)
+            if isinstance(self.adapter, SupabaseExecutionAdapter):
+                try:
+                    self.adapter.record_behavior_proposal(behavior, token)
+                except Exception as exc:
+                    # The durable execution row remains the source of truth;
+                    # a transient audit-write failure must be visible and must
+                    # not silently convert into a local-only proposal.
+                    self._event(behavior, "QUEUE_ERROR", str(exc))
             if token is None:
                 self._event(behavior, "BLOCKED", "token identity unavailable")
                 self.processed_events.add(behavior.intent_id)
