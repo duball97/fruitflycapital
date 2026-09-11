@@ -4,6 +4,10 @@ import { resolveBrainWebSocketUrl } from '../networking/brainUrl'
 type Portfolio = { fund?: Record<string, unknown>; demoData?: boolean }
 const app = document.querySelector<HTMLElement>('#portfolio-app')!
 const wsUrl = resolveBrainWebSocketUrl(import.meta.env.VITE_BRAIN_WS_URL)
+let socket: WebSocket | null = null
+let latestPortfolio: Portfolio | null = null
+let reconnectTimer: number | null = null
+let reconnectAttempt = 0
 const money = (value: unknown) => typeof value === 'number' ? `$${value.toFixed(2)}` : '—'
 const percent = (value: unknown) => typeof value === 'number' ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—'
 const isRealTxHash = (value: unknown): value is string => typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value)
@@ -94,8 +98,11 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
   const displayedReturn = typeof autonomous.portfolioReturnPct === 'number'
     ? percent(autonomous.portfolioReturnPct)
     : null
+  const connectionNotice = data
+    ? `${data.demoData ? 'DEMO DATA · NOT A LIVE PORTFOLIO' : 'ROBINHOOD WALLET · UNISWAP EXECUTION RUNTIME'} · ${walletStatus} · ${String(autonomous.executionAdapter || 'adapter pending')}`
+    : `CONNECTING TO LIVE FUND · ${status}`
   app.innerHTML = `<header class="site-header"><a class="portfolio-brand site-brand" href="/" aria-label="FruitFly Capital home"><img src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></a><nav class="site-nav" aria-label="Primary navigation"><a href="/">Simulation</a><a href="/about/">About</a><a class="is-active" href="/portfolio/">Portfolio</a><a href="https://www.ponsfamily.com/launchpad/0x80f961956721E5670248fDD65da083A421E630D2" target="_blank" rel="noopener noreferrer">Buy</a><a href="https://robinhoodchain.blockscout.com/address/0x80f961956721e5670248fdd65da083a421e630d2" target="_blank" rel="noopener noreferrer" title="0x80f961956721e5670248fdd65da083a421e630d2">CA 0x80f9…30d2</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav><a class="social-link header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></header><div class="portfolio-title"><h1>FRUITFLY CAPITAL</h1><p>AUTONOMOUS BIOLOGICAL FUND</p></div>
-    <section class="notice">${data?.demoData ? 'DEMO DATA · NOT A LIVE PORTFOLIO' : 'ROBINHOOD WALLET · UNISWAP EXECUTION RUNTIME'} · ${walletStatus} · ${String(autonomous.executionAdapter || 'adapter pending')}</section>
+    <section class="notice">${connectionNotice}</section>
     <section class="metrics">${[['WALLET TOTAL', native(wallet.nativeBalance)], ['AVAILABLE TO TRADE', native(wallet.availableToTrade)], ['GAS RESERVE', native(wallet.gasReserve)], ['PER FLY BUDGET', native(allocation.perFlyBudget)], ['TOTAL FUND NAV', displayedNav], ...(displayedReturn !== null ? [['FUND RETURN', displayedReturn]] : [])].map(([label, value]) => `<article><small>${label}</small><strong>${value}</strong></article>`).join('')}</section>
     <section class="panel wallet-summary"><div><small>ROBINHOOD WALLET</small><code>${walletAddress}</code></div><div><small>NATIVE BALANCE</small><strong>${native(wallet.nativeBalance)}</strong></div><div><small>AVAILABLE AFTER GAS RESERVE</small><strong>${native(wallet.availableToTrade)}</strong></div><div><small>CHAIN</small><strong>Robinhood · ${walletChain}</strong></div><div><small>RPC STATUS</small><strong class="wallet-status ${wallet.status === 'error' ? 'is-error' : ''}">${walletStatus}</strong></div>${walletExplorerLink}</section>
     <section class="panel"><h2>FLY ALLOCATION STATE</h2><div class="table"><div class="thead"><span>FLY</span><span>STATE</span><span>TOKEN</span><span>VALUE</span><span>REALIZED</span><span>UNREALIZED</span></div>${flies.map(item => `<div class="tr"><span>${String(item.flyId || '—')}</span><span>${String(item.state || '—')}</span><span>${String(item.tokenSymbol || item.tokenAddress || 'EXPLORING')}</span><span>${money(item.currentValueUsd)}</span><span>${money(item.realizedPnlUsd)}</span><span>${money(item.unrealizedPnlUsd)}</span></div>`).join('') || '<p class="muted">No fly state received yet.</p>'}</div></section>
@@ -110,11 +117,45 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
   document.querySelector('#refresh')?.addEventListener('click', request)
 }
 function request() {
-  render(null, 'CONNECTING')
-  const socket = new WebSocket(wsUrl)
-  socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'portfolio_request' })))
-  socket.addEventListener('message', event => { try { const message = JSON.parse(event.data); if (message.type === 'portfolio_update') render(message, 'CONNECTED') } catch { render(null, 'ERROR') } })
-  socket.addEventListener('error', () => render(null, 'OFFLINE'))
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'portfolio_request' }))
+    return
+  }
+  connect()
+}
+function connect() {
+  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return
+  render(latestPortfolio, latestPortfolio ? 'RECONNECTING' : 'CONNECTING')
+  const candidate = new WebSocket(wsUrl)
+  socket = candidate
+  candidate.addEventListener('open', () => {
+    if (socket !== candidate) return
+    reconnectAttempt = 0
+    candidate.send(JSON.stringify({ type: 'portfolio_request' }))
+  })
+  candidate.addEventListener('message', event => {
+    try {
+      const message = JSON.parse(event.data)
+      if (message.type !== 'portfolio_update') return
+      latestPortfolio = message
+      render(latestPortfolio, 'CONNECTED')
+    } catch {
+      render(latestPortfolio, 'INVALID RESPONSE')
+    }
+  })
+  candidate.addEventListener('close', () => {
+    if (socket !== candidate) return
+    socket = null
+    render(latestPortfolio, latestPortfolio ? 'RECONNECTING' : 'OFFLINE · RETRYING')
+    if (reconnectTimer !== null) return
+    const delay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempt, 4))
+    reconnectAttempt += 1
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null
+      connect()
+    }, delay)
+  })
 }
 render(null)
 request()
+window.setInterval(request, 5000)

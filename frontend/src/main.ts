@@ -601,6 +601,7 @@ scene.add(atmosphere.group)
 
 const LIVE_ENVIRONMENT_CACHE_KEY = 'ffc.lastLiveEnvironment.v1'
 const STARTUP_MARKET_TIMEOUT_SECONDS = 12
+const startupStartedAtMs = performance.now()
 let marketFeedStatus: EnvironmentUpdateMessage['environment']['status'] | 'cached' | 'waiting' = 'waiting'
 let lastCachedEnvironmentObservedAtMs = 0
 
@@ -1398,6 +1399,16 @@ let nextPortfolioUiAt = 0
 let nextTraceRotationAt = 0
 let traceIndex = 0
 let startupReleased = false
+window.setTimeout(() => {
+  if (startupReleased) return
+  const habitatsReady = environment.habitats.length > 0
+  startupMessage.textContent = habitatsReady ? 'SCENE READY' : 'MARKET FEED OFFLINE'
+  startupDetail.textContent = habitatsReady
+    ? 'Entering the autonomous fly world.'
+    : `Scene active · ${marketFeedStatus} · reconnecting in the background…`
+  startupProgress.style.width = '100%'
+  releaseStartupScreen()
+}, STARTUP_MARKET_TIMEOUT_SECONDS * 1000)
 let nextPerfUiAt = 0
 function animate(now: number) {
   const delta = (now - previous) / 1000
@@ -1549,11 +1560,12 @@ function updateStartupGate() {
   if (startupReleased) return
   const movingAgents = agents.reduce((count, agent) => count + (agent.body.velocity.length() > 0.002 ? 1 : 0), 0)
   const habitatsReady = environment.habitats.length > 0
+  const startupElapsedSeconds = (performance.now() - startupStartedAtMs) / 1000
   if (!canonicalBodiesReady) {
     startupMessage.textContent = 'LOADING FLY BODIES'
     startupDetail.textContent = 'Preparing the canonical fly bodies…'
     startupProgress.style.width = '35%'
-  } else if (!habitatsReady && world.elapsedSeconds < STARTUP_MARKET_TIMEOUT_SECONDS) {
+  } else if (!habitatsReady && startupElapsedSeconds < STARTUP_MARKET_TIMEOUT_SECONDS) {
     startupMessage.textContent = 'LOADING TOKEN HABITATS'
     startupDetail.textContent = 'Waiting for the live token places to appear…'
     startupProgress.style.width = '70%'
@@ -1580,11 +1592,16 @@ function updateStartupGate() {
   // Never trap the user behind a full-screen loader because a hosted brain or
   // market provider is down. Cached habitats are preferred; after the timeout
   // the scene still opens and the status explicitly says the feed is offline.
-  if (canonicalBodiesReady && (habitatsReady || world.elapsedSeconds >= STARTUP_MARKET_TIMEOUT_SECONDS)) {
-    startupReleased = true
-    startupScreen.classList.add('is-ready')
-    window.setTimeout(() => startupScreen.remove(), 500)
+  if (canonicalBodiesReady && (habitatsReady || startupElapsedSeconds >= STARTUP_MARKET_TIMEOUT_SECONDS)) {
+    releaseStartupScreen()
   }
+}
+
+function releaseStartupScreen() {
+  if (startupReleased) return
+  startupReleased = true
+  startupScreen.classList.add('is-ready')
+  window.setTimeout(() => startupScreen.remove(), 500)
 }
 
 function updateCausalStatus(agent: FlyAgent) {

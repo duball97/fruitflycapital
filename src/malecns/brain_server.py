@@ -167,6 +167,9 @@ class SwarmProducerLease:
 TELEMETRY_PRODUCER = SwarmProducerLease()
 CONNECTED_CLIENTS: set[Any] = set()
 LATEST_SWARM_UPDATE: dict[str, Any] | None = None
+FUND_RESPONSE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+FUND_RESPONSE_LOCKS: dict[str, asyncio.Lock] = {}
+FUND_RESPONSE_TTL_SECONDS = max(1.0, float(os.getenv("FUND_RESPONSE_TTL_SECONDS", "5.0")))
 # Brian2 runtime construction must remain on the main interpreter thread, but
 # stepping an already-built network can be moved out of the asyncio loop. A
 # single lock keeps Brian2's process-wide clock/RNG state from being advanced
@@ -189,6 +192,46 @@ async def _broadcast(payload: Mapping[str, Any]) -> None:
     for client, result in zip(clients, results):
         if isinstance(result, BaseException):
             CONNECTED_CLIENTS.discard(client)
+
+
+async def _fund_response(request_type: str) -> dict[str, Any]:
+    """Build fund payloads without ever blocking the WebSocket event loop.
+
+    Wallet snapshots make synchronous JSON-RPC calls. Several screens can ask
+    for the same snapshot at once, so cache the short-lived result and
+    serialize refreshes per response type. Brian frames, health probes, and
+    new WebSocket handshakes remain responsive while the RPC request runs.
+    """
+
+    now = time.monotonic()
+    cached = FUND_RESPONSE_CACHE.get(request_type)
+    if cached is not None and now - cached[0] < FUND_RESPONSE_TTL_SECONDS:
+        return cached[1]
+
+    lock = FUND_RESPONSE_LOCKS.setdefault(request_type, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        cached = FUND_RESPONSE_CACHE.get(request_type)
+        if cached is not None and now - cached[0] < FUND_RESPONSE_TTL_SECONDS:
+            return cached[1]
+
+        if request_type == "fund_status_request":
+            fund = await asyncio.to_thread(FUND_SERVICE.status)
+            response = {
+                "type": "fund_status_update",
+                "fund": {**fund, "autonomous": AUTONOMOUS_RUNTIME.snapshot()},
+                "demoData": False,
+            }
+        elif request_type == "portfolio_request":
+            portfolio = await asyncio.to_thread(FUND_SERVICE.portfolio_update)
+            portfolio["fund"]["autonomous"] = AUTONOMOUS_RUNTIME.snapshot()
+            response = {"type": "portfolio_update", **portfolio}
+        else:
+            history = await asyncio.to_thread(FUND_SERVICE.trade_history)
+            response = {"type": "trade_history_update", **history}
+
+        FUND_RESPONSE_CACHE[request_type] = (time.monotonic(), response)
+        return response
 
 
 async def _process_brain_input(message: Mapping[str, Any]) -> None:
@@ -418,14 +461,7 @@ async def handle_client(websocket: Any) -> None:
                 continue
             if isinstance(message, dict) and message.get("type") in {"fund_status_request", "portfolio_request", "trade_history_request"}:
                 request_type = message["type"]
-                if request_type == "fund_status_request":
-                        response = {"type": "fund_status_update", "fund": {**FUND_SERVICE.status(), "autonomous": AUTONOMOUS_RUNTIME.snapshot()}, "demoData": False}
-                elif request_type == "portfolio_request":
-                    portfolio = FUND_SERVICE.portfolio_update()
-                    portfolio["fund"]["autonomous"] = AUTONOMOUS_RUNTIME.snapshot()
-                    response = {"type": "portfolio_update", **portfolio}
-                else:
-                    response = {"type": "trade_history_update", **FUND_SERVICE.trade_history()}
+                response = await _fund_response(request_type)
                 try:
                     await websocket.send(json.dumps(response))
                 except (ConnectionError, ConnectionClosed):

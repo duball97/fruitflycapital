@@ -102,6 +102,7 @@ class RpcWalletClient:
             wallet_address,
             expected_chain_id=int(os.getenv("FUND_CHAIN_ID", "4663")),
             gas_reserve_wei=int(os.getenv("FUND_GAS_RESERVE_WEI", "2000000000000000")),
+            timeout_seconds=max(1.0, float(os.getenv("FUND_RPC_TIMEOUT_SECONDS", "5.0"))),
         )
 
     def call(self, method: str, params: list[Any]) -> Any:
