@@ -214,28 +214,37 @@ class TradeExecutor:
             "updated_ms": int(time.time() * 1000),
         })
         self.runtime.tokens_by_address[(token.chain_id, token.address.lower())] = token
-        registered = self.runtime.register_broadcast(
-            intent.idempotency_key,
-            tx_hash,
-            expected_output=prepared.get("expectedOutput"),
-            biological_event_id=intent.biological_event_id,
-            wallet_before_native_wei=prepared.get("walletBeforeNativeWei"),
-        )
-        if not registered:
-            raise RuntimeError("broadcast succeeded but the execution record could not be registered")
+        registration_error: str | None = None
+        try:
+            self.runtime.record_broadcast(
+                intent,
+                token,
+                tx_hash,
+                expected_output=prepared.get("expectedOutput"),
+                biological_event_id=intent.biological_event_id,
+                wallet_before_native_wei=prepared.get("walletBeforeNativeWei"),
+            )
+        except Exception as exc:
+            # A real hash must remain visible even if the local execution cache
+            # is unavailable. The shared queue record below is the recovery
+            # handoff used by the brain service and will reconcile from RPC.
+            registration_error = str(exc)
         if self.shared_queue is not None:
             try:
                 # Make the real hash visible to the brain service immediately;
                 # the final receipt transition is written below after polling.
+                result = {
+                    "status": "BROADCAST",
+                    "executionId": intent.idempotency_key,
+                    "txHash": tx_hash,
+                    "expectedOutput": prepared.get("expectedOutput"),
+                }
+                if registration_error:
+                    result["registrationError"] = registration_error
                 self.shared_queue.finish(
                     intent.idempotency_key,
                     "broadcast",
-                    result={
-                        "status": "BROADCAST",
-                        "executionId": intent.idempotency_key,
-                        "txHash": tx_hash,
-                        "expectedOutput": prepared.get("expectedOutput"),
-                    },
+                    result=result,
                 )
             except Exception:
                 # The local executor ledger and RPC receipt remain canonical;
@@ -243,7 +252,10 @@ class TradeExecutor:
                 pass
         status, receipt = self._wait_for_receipt(tx_hash)
         self.runtime.snapshot()
-        return {"status": status, "executionId": intent.idempotency_key, "txHash": tx_hash, "receipt": receipt, "expectedOutput": prepared.get("expectedOutput")}
+        result = {"status": status, "executionId": intent.idempotency_key, "txHash": tx_hash, "receipt": receipt, "expectedOutput": prepared.get("expectedOutput")}
+        if registration_error:
+            result["registrationError"] = registration_error
+        return result
 
     def _prepare(self, intent: ExecutionIntent, token: TokenRef) -> dict[str, Any]:
         wallet = self.wallet.snapshot()

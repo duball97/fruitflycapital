@@ -420,6 +420,23 @@ class AutonomousTradingRuntime:
         self._persist_broadcast(intent, token, tx_hash, expected_output=expected_output, biological_event_id=biological_event_id, wallet_before_native_wei=wallet_before_native_wei)
         return True
 
+    def record_broadcast(self, intent: ExecutionIntent, token: TokenRef, tx_hash: str, *, expected_output: str | None = None, biological_event_id: str | None = None, wallet_before_native_wei: int | None = None) -> None:
+        """Persist a hash using the intent already validated by the executor.
+
+        The separate runner already has the complete intent and token context.
+        Reconstructing that context by searching a local ledger can fail after
+        a process/database restart, so the post-broadcast path uses this
+        direct, idempotent writer instead.
+        """
+        self._persist_broadcast(
+            intent,
+            token,
+            tx_hash,
+            expected_output=expected_output,
+            biological_event_id=biological_event_id,
+            wallet_before_native_wei=wallet_before_native_wei,
+        )
+
     def ingest(self, intents: Iterable[BehaviorTradeIntent], *, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
         actions: list[AllocationIntent] = []
@@ -536,15 +553,26 @@ class AutonomousTradingRuntime:
                 "flyIds": [],
             })
         for item in actual_by_token.values():
+            token_ref = self.tokens_by_address.get(_token_key(int(item.get("chainId") or os.getenv("FUND_CHAIN_ID", "4663")), str(item.get("tokenAddress") or "")))
+            if token_ref is not None and token_ref.price_usd is not None:
+                item["priceUsd"] = token_ref.price_usd
             if self.wallet is not None:
                 try:
                     decimals = self.wallet.erc20_decimals(item["tokenAddress"])
                     raw = self.wallet.erc20_balance_raw(item["tokenAddress"])
                     observed_amount = raw / (10**decimals)
                     item.update({"observedBalanceRaw": str(raw), "observedDecimals": decimals, "observedAmount": observed_amount, "amountDelta": observed_amount - item["intendedAmount"], "reconciliation": "matched" if abs(observed_amount - item["intendedAmount"]) <= 1e-12 else "discrepancy"})
+                    if item.get("priceUsd") is not None:
+                        item["observedValueUsd"] = observed_amount * float(item["priceUsd"])
                 except Exception as exc:
                     item["observationError"] = str(exc)
             actual.append(item)
+        observed_token_positions = [
+            item for item in actual
+            if str(item.get("tokenAddress") or "").lower() != ZERO_ADDRESS.lower()
+            and float(item.get("observedAmount") or 0.0) > 0.0
+        ]
+        observed_token_value_usd = sum(float(item["observedValueUsd"]) for item in observed_token_positions if item.get("observedValueUsd") is not None)
         mainnet_executions = [_execution_payload(row) for row in self.ledger.rows("mainnet_executions", limit=100)]
         pending_execution = [item for item in mainnet_executions if item["status"] in {ReceiptStatus.BROADCAST, ReceiptStatus.PENDING}]
         return {
@@ -562,6 +590,8 @@ class AutonomousTradingRuntime:
             "flies": [self.positions[f"fly-{index:03d}"].as_dict() for index in range(1, self.expected_agents + 1)],
             "biologicalTargetPortfolio": [{"chainId": chain_id, "tokenAddress": token, "allocationFraction": fraction, "allocationPercent": fraction * 100.0} for (chain_id, token), fraction in biological.items()],
             "actualWalletPortfolio": actual,
+            "observedPositionCount": len(observed_token_positions),
+            "observedTokenValueUsd": observed_token_value_usd,
             "pendingRebalance": list(self.pending_rebalance[-100:]),
             "pendingExecution": pending_execution,
             "mainnetExecutions": mainnet_executions,

@@ -47,6 +47,7 @@ tokenLogoOverlay.className = 'token-logo-overlay'
 app.append(tokenLogoOverlay)
 type TokenLogoEntry = {
   element: HTMLImageElement
+  fallback: HTMLSpanElement
   button: HTMLButtonElement
   sources: string[]
   source: string
@@ -102,7 +103,15 @@ function updateTokenLogoOverlay() {
       element.draggable = false
       element.loading = 'eager'
       element.referrerPolicy = 'no-referrer'
-      const nextEntry: TokenLogoEntry = { element, button, sources, source: sources[0]!, failedSources: new Set() }
+      const fallback = document.createElement('span')
+      fallback.className = 'token-logo-fallback'
+      fallback.textContent = logoSymbolFromLabel(habitat.state.label)
+      fallback.hidden = true
+      const nextEntry: TokenLogoEntry = { element, fallback, button, sources, source: sources[0]!, failedSources: new Set() }
+      element.addEventListener('load', () => {
+        element.hidden = false
+        fallback.hidden = true
+      })
       element.addEventListener('error', () => {
         // Provider images are optional. Try the next provider/address lookup
         // before falling back to the deterministic local mark.
@@ -111,21 +120,33 @@ function updateTokenLogoOverlay() {
         if (nextSource && nextSource !== nextEntry.source) {
           nextEntry.source = nextSource
           element.src = nextSource
+          element.hidden = false
+          fallback.hidden = true
+        } else {
+          // A provider can fail or block both remote URLs. Keep the clickable
+          // habitat identity visible as initials instead of exposing a broken
+          // image icon.
+          element.hidden = true
+          fallback.hidden = false
         }
-        element.hidden = false
         button.hidden = false
       })
-      button.append(element)
+      button.append(element, fallback)
       tokenLogoOverlay.append(button)
       entry = nextEntry
       tokenLogoElements.set(id, entry)
+      // The initial source used to be selected but never assigned to the
+      // image, leaving every habitat with an empty/broken image element.
+      element.src = nextEntry.source
     }
     entry.sources = sources
+    entry.fallback.textContent = logoSymbolFromLabel(habitat.state.label)
     const source = sources.find((candidate) => !entry!.failedSources.has(candidate)) ?? fallbackSource
-    if (entry.source !== source) {
+    if (entry.source !== source || !entry.element.src) {
       entry.source = source
       entry.button.hidden = false
       entry.element.hidden = false
+      entry.fallback.hidden = true
       entry.element.src = source
     }
     entry.button.setAttribute('aria-label', `Open ${habitat.state.label} token details`)
@@ -585,10 +606,25 @@ function updatePortfolioSummary() {
   if (!fund) return
   reconcileServerIntentHistory()
   const wallet = (fund.wallet || {}) as Record<string, unknown>
-  const positions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
+  const legacyPositions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
+  const autonomous = (fund.autonomous || {}) as Record<string, unknown>
+  const actualWalletPortfolio = Array.isArray(autonomous.actualWalletPortfolio)
+    ? autonomous.actualWalletPortfolio as Record<string, unknown>[]
+    : []
+  const observedTokenPositions = actualWalletPortfolio.filter((position) => {
+    const address = String(position.tokenAddress || position.token_address || '')
+    const amount = Number(position.observedAmount ?? position.amount ?? 0)
+    return /^0x[a-fA-F0-9]{40}$/.test(address)
+      && address.toLowerCase() !== zeroAddress.toLowerCase()
+      && Number.isFinite(amount)
+      && amount > 0
+  })
+  const positions = legacyPositions.length ? legacyPositions : observedTokenPositions
   const available = typeof wallet.availableToTrade === 'number' ? `${wallet.availableToTrade.toFixed(6)} ETH` : '—'
   const walletTotal = typeof wallet.nativeBalance === 'number' ? `${wallet.nativeBalance.toFixed(6)} ETH` : '—'
-  const returnPct = typeof fund.returnPct === 'number' ? `${fund.returnPct >= 0 ? '+' : ''}${fund.returnPct.toFixed(2)}%` : '—'
+  const returnPct = typeof fund.returnPct === 'number' && (legacyPositions.length > 0 || observedTokenPositions.length === 0)
+    ? `${fund.returnPct >= 0 ? '+' : ''}${fund.returnPct.toFixed(2)}%`
+    : observedTokenPositions.length > 0 ? '—' : 'AWAITING COST BASIS'
   portfolioSummaryFields.wallet.textContent = walletTotal
   portfolioSummaryFields.available.textContent = available
   portfolioSummaryFields.positions.textContent = `${positions.length}`
@@ -598,7 +634,7 @@ function updatePortfolioSummary() {
     portfolioSummaryFields.walletLink.href = `https://robinhoodchain.blockscout.com/address/${walletAddress}`
   }
   portfolioSummaryFields.holdings.textContent = positions.length
-    ? positions.slice(0, 4).map((position) => String(position.symbol || position.token_address || 'TOKEN')).join(' · ')
+    ? positions.slice(0, 4).map((position) => String(position.symbol || position.tokenSymbol || position.token_address || position.tokenAddress || 'TOKEN')).join(' · ')
     : 'No token positions yet · proposals remain visible in the behavior log'
   updateExecutionToast()
   renderIntentLog()

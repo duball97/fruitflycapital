@@ -29,7 +29,7 @@ const mainnetExecutionCard = (item: Record<string, unknown>) => {
 
 function render(data: Portfolio | null, status = 'CONNECTING') {
   const fund = data?.fund || {}
-  const positions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
+  const legacyPositions = Array.isArray(fund.positions) ? fund.positions as Record<string, unknown>[] : []
   const trades = Array.isArray(fund.recentTrades) ? fund.recentTrades as Record<string, unknown>[] : []
   const chains = Array.isArray(fund.allocationByChain) ? fund.allocationByChain as Record<string, unknown>[] : []
   const security = (fund.security || {}) as Record<string, unknown>
@@ -44,18 +44,43 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
   const mainnetExecutions = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
   const pendingExecution = Array.isArray(autonomous.pendingExecution) ? autonomous.pendingExecution as Record<string, unknown>[] : []
   const native = (value: unknown) => typeof value === 'number' ? `${value.toFixed(6)} ETH` : '—'
+  const observedTokenPositions = actual.filter((item) => {
+    const address = String(item.tokenAddress || item.token_address || '')
+    const amount = Number(item.observedAmount ?? item.amount ?? 0)
+    return /^0x[a-fA-F0-9]{40}$/.test(address)
+      && !/^0x0{40}$/i.test(address)
+      && Number.isFinite(amount)
+      && amount > 0
+  })
+  const positions = legacyPositions.length
+    ? legacyPositions
+    : observedTokenPositions.map((item) => ({
+      symbol: item.tokenSymbol,
+      token_address: item.tokenAddress,
+      chain_id: item.chainId,
+      amount: item.observedAmount,
+      value_usd: item.observedValueUsd,
+      unrealized_pnl_usd: null,
+    }))
+  const observedTokenValueUsd = observedTokenPositions.reduce((sum, item) => {
+    const value = Number(item.observedValueUsd)
+    return Number.isFinite(value) ? sum + value : sum
+  }, 0)
   const walletAddress = String(wallet.address || fund.treasuryAddress || 'not configured')
   const walletExplorerLink = /^0x[a-fA-F0-9]{40}$/.test(walletAddress) ? `<a class="explorer-button" href="https://robinhoodchain.blockscout.com/address/${walletAddress}" target="_blank" rel="noopener noreferrer">WATCH WALLET ON BLOCKSCOUT ↗</a>` : ''
   const walletStatus = wallet.status === 'error' ? `RPC ERROR · ${String(wallet.error || 'unable to read balance')}` : wallet.configured ? 'RPC BALANCE LIVE' : 'WALLET NOT CONFIGURED'
   const walletChain = String(wallet.chainId || fund.chainId || '—')
   const displayedNav = typeof fund.navUsd === 'number' && fund.navUsd > 0
     ? money(fund.navUsd)
+    : observedTokenValueUsd > 0
+      ? money(observedTokenValueUsd)
     : typeof wallet.nativeBalance === 'number'
       ? `${wallet.nativeBalance.toFixed(6)} ${String(wallet.nativeSymbol || 'ETH')}`
       : money(fund.navUsd)
+  const displayedReturn = legacyPositions.length || observedTokenPositions.length === 0 ? percent(fund.returnPct) : '—'
   app.innerHTML = `<header class="site-header"><a class="portfolio-brand site-brand" href="/" aria-label="FruitFly Capital home"><img src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></a><nav class="site-nav" aria-label="Primary navigation"><a href="/">Simulation</a><a href="/about/">About</a><a class="is-active" href="/portfolio/">Portfolio</a><a href="/#buy">Buy</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav><a class="social-link header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a></header><div class="portfolio-title"><h1>FRUITFLY CAPITAL</h1><p>AUTONOMOUS BIOLOGICAL FUND</p></div>
     <section class="notice">${data?.demoData ? 'DEMO DATA · NOT A LIVE PORTFOLIO' : 'ROBINHOOD WALLET · UNISWAP EXECUTION RUNTIME'} · ${walletStatus} · ${String(autonomous.executionAdapter || 'adapter pending')}</section>
-    <section class="metrics">${[['WALLET TOTAL', native(wallet.nativeBalance)], ['AVAILABLE TO TRADE', native(wallet.availableToTrade)], ['GAS RESERVE', native(wallet.gasReserve)], ['PER FLY BUDGET', native(allocation.perFlyBudget)], ['TOTAL FUND NAV', displayedNav], ['FUND RETURN', percent(fund.returnPct)]].map(([label, value]) => `<article><small>${label}</small><strong>${value}</strong></article>`).join('')}</section>
+    <section class="metrics">${[['WALLET TOTAL', native(wallet.nativeBalance)], ['AVAILABLE TO TRADE', native(wallet.availableToTrade)], ['GAS RESERVE', native(wallet.gasReserve)], ['PER FLY BUDGET', native(allocation.perFlyBudget)], ['TOTAL FUND NAV', displayedNav], ['FUND RETURN', displayedReturn]].map(([label, value]) => `<article><small>${label}</small><strong>${value}</strong></article>`).join('')}</section>
     <section class="panel wallet-summary"><div><small>ROBINHOOD WALLET</small><code>${walletAddress}</code></div><div><small>NATIVE BALANCE</small><strong>${native(wallet.nativeBalance)}</strong></div><div><small>AVAILABLE AFTER GAS RESERVE</small><strong>${native(wallet.availableToTrade)}</strong></div><div><small>CHAIN</small><strong>Robinhood · ${walletChain}</strong></div><div><small>RPC STATUS</small><strong class="wallet-status ${wallet.status === 'error' ? 'is-error' : ''}">${walletStatus}</strong></div>${walletExplorerLink}</section>
     <section class="panel"><h2>FLY ALLOCATION STATE</h2><div class="table"><div class="thead"><span>FLY</span><span>STATE</span><span>TOKEN</span><span>VALUE</span><span>REALIZED</span><span>UNREALIZED</span></div>${flies.map(item => `<div class="tr"><span>${String(item.flyId || '—')}</span><span>${String(item.state || '—')}</span><span>${String(item.tokenSymbol || item.tokenAddress || 'EXPLORING')}</span><span>${money(item.currentValueUsd)}</span><span>${money(item.realizedPnlUsd)}</span><span>${money(item.unrealizedPnlUsd)}</span></div>`).join('') || '<p class="muted">No fly state received yet.</p>'}</div></section>
     <section class="grid"><article class="panel"><h2>BIOLOGICAL TARGET PORTFOLIO</h2>${target.length ? target.map(item => `<div class="row"><span>${String(item.tokenAddress || '—')}</span><b>${typeof item.allocationPercent === 'number' ? item.allocationPercent.toFixed(2) : '0.00'}%</b></div>`).join('') : '<p class="muted">No fly is holding a token.</p>'}</article><article class="panel"><h2>ACTUAL WALLET PORTFOLIO</h2>${actual.length ? actual.map(item => `<div class="trade"><b>${String(item.tokenSymbol || item.tokenAddress || '—')}</b><span>planned ${String(item.intendedAmount ?? '—')}</span><span>observed ${String(item.observedAmount ?? '—')}</span><span>${String(item.reconciliation || item.observationError || 'pending')}</span></div>`).join('') : '<p class="muted">No token balances observed yet.</p>'}</article></section>

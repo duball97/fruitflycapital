@@ -9,7 +9,7 @@ from malecns.fund.privy_client import FakePrivyClient, PrivyConfig
 from malecns.fund.nav_reporter import FundNavReporter
 from malecns.fund.valuation import FakeValuationProvider
 from malecns.fund.wallet import RpcWalletClient, WalletSnapshot
-from malecns.fund.autonomous import AutonomousTradingRuntime, QueueExecutionAdapter, SimulationExecutionAdapter, SupabaseExecutionAdapter
+from malecns.fund.autonomous import AutonomousTradingRuntime, ExecutionIntent, QueueExecutionAdapter, SimulationExecutionAdapter, SupabaseExecutionAdapter, TokenRef
 from malecns.fund.supabase_queue import SupabaseIntentQueue
 from malecns.fund.receipts import BlockscoutClient, ReceiptStatus, observe_receipt
 from malecns.swarm.observer import BehaviorTradeIntent
@@ -343,3 +343,26 @@ def test_external_broadcast_registration_keeps_simulation_hashes_out_of_mainnet(
     assert execution["chain_id"] == 4663
     assert execution["tx_hash"] == "0x" + "b" * 64
     assert not any(str(event.get("tx_hash", "")).startswith("0xsim") for event in ledger.rows("mainnet_executions"))
+
+
+def test_direct_broadcast_record_does_not_depend_on_ledger_lookup():
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16)
+    token = TokenRef(4663, "0x4444444444444444444444444444444444444444", "AERO")
+    intent = ExecutionIntent(
+        "execution-direct",
+        "buy",
+        4663,
+        "0x0000000000000000000000000000000000000000",
+        token.address,
+        "156250000000000",
+        ("fly-007",),
+        0.5,
+        1000,
+        "bio-direct",
+    )
+
+    runtime.record_broadcast(intent, token, "0x" + "c" * 64, expected_output="123")
+    execution = ledger.rows("mainnet_executions")[0]
+    assert execution["tx_hash"] == "0x" + "c" * 64
+    assert execution["status"] == ReceiptStatus.BROADCAST

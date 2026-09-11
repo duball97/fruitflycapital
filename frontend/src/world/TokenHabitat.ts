@@ -87,7 +87,9 @@ export class TokenHabitat {
     // old text sprite visible underneath produced a duplicate token name
     // behind provider logos, especially in close camera views.
     this.logo.visible = false
-    this.group.add(this.logo)
+    // Provider logos are rendered by the projected DOM overlay in main.ts.
+    // Do not add the legacy initials sprite to the 3D scene: it can appear as
+    // a second, oversized token-name plate beneath the real logo.
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0x6d654f, metalness: 0.4, roughness: 0.58 }))
     this.pile.position.y = 0.028
