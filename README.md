@@ -166,6 +166,33 @@ receipt, and lets the existing receipt/Blockscout layer classify and reconcile
 the real hash. Simulation fills never enter the mainnet-executed table. The
 Uniswap API key is server-side only and is never sent to the frontend.
 
+### Manual buy and sell scripts
+
+The repository also includes standalone commands for one-off wallet trades.
+They prepare a quote by default; `--broadcast` is the explicit switch that
+allows signing and submission. BUY defaults to the established `1/16` of the
+current ETH balance available after the gas reserve. SELL defaults to the full
+token balance. Use the token contract address, not a DEX pair address:
+
+```bash
+# Read-only preparation
+PYTHONPATH=src .venv/bin/python scripts/buy_token.py \
+  --token 0xYourTokenContract --symbol TOKEN
+PYTHONPATH=src .venv/bin/python scripts/sell_token.py \
+  --token 0xYourTokenContract --symbol TOKEN
+
+# Live execution
+PYTHONPATH=src .venv/bin/python scripts/buy_token.py \
+  --token 0xYourTokenContract --symbol TOKEN --broadcast
+PYTHONPATH=src .venv/bin/python scripts/sell_token.py \
+  --token 0xYourTokenContract --symbol TOKEN --broadcast
+```
+
+BUY sizing can be overridden with `--eth 0.001` or `--fraction 1/8`.
+SELL sizing can be overridden with `--amount 12.5` or `--amount-raw 1250000`.
+The scripts reuse the executor's quote, approval, fee, signer, receipt, and
+idempotency checks and emit compact JSON suitable for shell automation.
+
 For Robinhood testnet use `FUND_CHAIN_ID=46630`,
 `FUND_RPC_URL=https://rpc.testnet.chain.robinhood.com`, and the testnet
 explorer URL. Direct routing is currently configured for chain 4663; supply
