@@ -21,7 +21,7 @@ import { SceneAtmosphere } from './rendering/SceneAtmosphere'
 import type { TokenState } from './world/TokenState'
 import { SwarmObserver } from './swarm/SwarmObserver'
 import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
-import type { BehaviorTradeIntent } from './networking/protocol'
+import type { BehaviorTradeIntent, EnvironmentUpdateMessage } from './networking/protocol'
 import { resolveBrainWebSocketUrl } from './networking/brainUrl'
 import { SceneAudio } from './audio/SceneAudio'
 
@@ -598,6 +598,42 @@ const environment = new Environment()
 environment.setupLighting(scene)
 const atmosphere = new SceneAtmosphere()
 scene.add(atmosphere.group)
+
+const LIVE_ENVIRONMENT_CACHE_KEY = 'ffc.lastLiveEnvironment.v1'
+const STARTUP_MARKET_TIMEOUT_SECONDS = 12
+let marketFeedStatus: EnvironmentUpdateMessage['environment']['status'] | 'cached' | 'waiting' = 'waiting'
+let lastCachedEnvironmentObservedAtMs = 0
+
+function applyMarketEnvironment(update: EnvironmentUpdateMessage['environment']) {
+  marketFeedStatus = update.status
+  // A non-empty snapshot is usable even when the provider labels it
+  // discovery_only. The previous status === "ok" check could leave the
+  // loader waiting forever with valid habitats in hand.
+  if (update.habitats.length === 0) return
+  environment.applyMarketHabitats(update)
+  if (update.observedAtMs <= lastCachedEnvironmentObservedAtMs) return
+  lastCachedEnvironmentObservedAtMs = update.observedAtMs
+  try {
+    window.localStorage.setItem(LIVE_ENVIRONMENT_CACHE_KEY, JSON.stringify(update))
+  } catch {
+    // Storage is an enhancement only; a private browsing quota must not stop
+    // the live scene.
+  }
+}
+
+function restoreCachedMarketEnvironment() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LIVE_ENVIRONMENT_CACHE_KEY) ?? 'null') as EnvironmentUpdateMessage['environment'] | null
+    if (!parsed || !Array.isArray(parsed.habitats) || parsed.habitats.length === 0) return
+    marketFeedStatus = 'cached'
+    lastCachedEnvironmentObservedAtMs = Number(parsed.observedAtMs) || 0
+    environment.applyMarketHabitats(parsed)
+  } catch {
+    // A stale/corrupt cache must never prevent the live feed from starting.
+  }
+}
+
+restoreCachedMarketEnvironment()
 
 const causalStatus = document.createElement('div')
 causalStatus.className = 'causal-status debug-only'
@@ -1380,7 +1416,7 @@ function animate(now: number) {
     nextIntentMotionUiAt += 0.25
   }
   const marketEnvironment = brainSocket.environmentUpdate()
-  if (marketEnvironment?.status === 'ok') environment.applyMarketHabitats(marketEnvironment)
+  if (marketEnvironment) applyMarketEnvironment(marketEnvironment)
   if (world.elapsedSeconds >= nextPortfolioUiAt) {
     updatePortfolioSummary()
     nextPortfolioUiAt = world.elapsedSeconds + 1
@@ -1517,10 +1553,14 @@ function updateStartupGate() {
     startupMessage.textContent = 'LOADING FLY BODIES'
     startupDetail.textContent = 'Preparing the canonical fly bodies…'
     startupProgress.style.width = '35%'
-  } else if (!habitatsReady) {
+  } else if (!habitatsReady && world.elapsedSeconds < STARTUP_MARKET_TIMEOUT_SECONDS) {
     startupMessage.textContent = 'LOADING TOKEN HABITATS'
     startupDetail.textContent = 'Waiting for the live token places to appear…'
     startupProgress.style.width = '70%'
+  } else if (!habitatsReady) {
+    startupMessage.textContent = 'MARKET FEED OFFLINE'
+    startupDetail.textContent = `Scene active · ${marketFeedStatus} · reconnecting in the background…`
+    startupProgress.style.width = '100%'
   } else if (brainSocket.getStatus() !== 'connected') {
     startupMessage.textContent = 'TOKEN HABITATS READY'
     startupDetail.textContent = 'Waiting for the autonomous brain feed…'
@@ -1537,7 +1577,10 @@ function updateStartupGate() {
 
   // Do not reveal an empty floor. Both the fly assets and the first non-empty
   // live token snapshot must be ready before the loading screen can clear.
-  if (canonicalBodiesReady && habitatsReady) {
+  // Never trap the user behind a full-screen loader because a hosted brain or
+  // market provider is down. Cached habitats are preferred; after the timeout
+  // the scene still opens and the status explicitly says the feed is offline.
+  if (canonicalBodiesReady && (habitatsReady || world.elapsedSeconds >= STARTUP_MARKET_TIMEOUT_SECONDS)) {
     startupReleased = true
     startupScreen.classList.add('is-ready')
     window.setTimeout(() => startupScreen.remove(), 500)
