@@ -359,18 +359,19 @@ function updateExecutionToast() {
 
 const intentLogPanel = document.createElement('section')
 intentLogPanel.className = 'intent-log-panel'
-intentLogPanel.setAttribute('aria-label', 'Recorded fly buy and sell activity')
+intentLogPanel.setAttribute('aria-label', 'Fly buy and sell log')
 intentLogPanel.innerHTML = `
   <div class="intent-log-header">
     <div>
       <div class="intent-log-kicker">FRUITFLY CAPITAL · TRADING LOG</div>
       <div class="intent-log-title">BUY / SELL ACTIVITY</div>
     </div>
-    <div class="intent-log-mode">RECORDED TRADES<br>ON-CHAIN ACTIVITY</div>
+    <div class="intent-log-mode">RECORDED TRADES<br>BEHAVIOR INTENTS</div>
   </div>
   <div class="intent-log-summary"><span class="intent-buy-count">BUY 0</span><span class="intent-sell-count">SELL 0</span><span class="intent-log-live">LIVE</span></div>
   <div class="intent-log-motion">FLIGHT · CRUISE 0 · DESCENDING 0 · LANDED 0 · CLOSEST —</div>
   <div class="intent-log-holdings"><div class="intent-log-holdings-heading"><span>FUND HOLDINGS</span><a href="/portfolio/">FULL PORTFOLIO →</a></div><div class="intent-log-holdings-list">Waiting for live portfolio data…</div></div>
+  <div class="intent-log-tabs" role="tablist" aria-label="Trading log view"><button type="button" class="intent-log-tab is-active" data-log-view="behavior" role="tab" aria-selected="true">BEHAVIOR INTENTS</button><button type="button" class="intent-log-tab" data-log-view="trades" role="tab" aria-selected="false">BUY / SELL</button></div>
   <label class="intent-log-search"><span>SEARCH LOG</span><input type="search" placeholder="Token, fly, buy or sell…" aria-label="Search recorded trades" /></label>
   <div class="intent-log-list"></div>
 `
@@ -382,9 +383,26 @@ const intentLogLive = intentLogPanel.querySelector<HTMLSpanElement>('.intent-log
 const intentLogMotion = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-motion')!
 const intentLogHoldingsList = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-holdings-list')!
 const intentLogSearch = intentLogPanel.querySelector<HTMLInputElement>('.intent-log-search input')!
+const intentLogTabs = Array.from(intentLogPanel.querySelectorAll<HTMLButtonElement>('.intent-log-tab'))
 const seenIntentIds = new Set<string>()
+const intentHistory: BehaviorTradeIntent[] = []
+let buyIntentCount = 0
+let sellIntentCount = 0
 let intentSearchTerm = ''
+let intentLogView: 'trades' | 'behavior' = 'behavior'
 let focusCinematicOnIntent: ((intent: BehaviorTradeIntent) => void) | null = null
+
+intentLogTabs.forEach((button) => {
+  button.addEventListener('click', () => {
+    intentLogView = button.dataset.logView === 'trades' ? 'trades' : 'behavior'
+    intentLogTabs.forEach((candidate) => {
+      const active = candidate === button
+      candidate.classList.toggle('is-active', active)
+      candidate.setAttribute('aria-selected', String(active))
+    })
+    renderIntentLog()
+  })
+})
 
 intentLogSearch.addEventListener('input', () => {
   intentSearchTerm = intentLogSearch.value.trim().toLowerCase()
@@ -394,10 +412,10 @@ intentLogSearch.addEventListener('input', () => {
 function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
   for (const intent of intents) {
     if (seenIntentIds.has(intent.intentId)) continue
-    // A departure is only a SELL proposal when the fund actually holds the
-    // token. A queued/unfilled BUY must not create a phantom sale.
-    if (intent.side === 'sell' && !flyHasHeldPosition(intent.flyId)) continue
     seenIntentIds.add(intent.intentId)
+    intentHistory.push(intent)
+    if (intent.side === 'buy') buyIntentCount += 1
+    else sellIntentCount += 1
     const isFresh = Number.isFinite(intent.observedAtMs) && Date.now() - intent.observedAtMs < 1500
     if (isFresh) sceneAudio.playTradeCue(intent.side)
     // Replayed history should populate the log without making a page reload
@@ -406,8 +424,7 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
     if (Date.now() - intent.observedAtMs < 12000) focusCinematicOnIntent?.(intent)
   }
   if (intents.length > 0) {
-    // The raw proposals are sent with swarm telemetry and persisted by the
-    // server. The public panel intentionally renders only real transactions.
+    while (intentHistory.length > 200) intentHistory.shift()
     renderIntentLog()
   }
 }
@@ -506,8 +523,8 @@ function renderIntentLog() {
   const tradeRecords = tradeActivityRecords()
   const tradeBuyCount = tradeRecords.filter((item) => item.side === 'BUY').length
   const tradeSellCount = tradeRecords.filter((item) => item.side === 'SELL').length
-  intentBuyCount.textContent = `BUY ${tradeBuyCount}`
-  intentSellCount.textContent = `SELL ${tradeSellCount}`
+  intentBuyCount.textContent = `BUY ${intentLogView === 'trades' ? tradeBuyCount : buyIntentCount}`
+  intentSellCount.textContent = `SELL ${intentLogView === 'trades' ? tradeSellCount : sellIntentCount}`
   intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
   const fund = brainSocket.portfolio()
   const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
@@ -527,6 +544,46 @@ function renderIntentLog() {
     }
   }
   intentLogList.replaceChildren()
+  if (intentLogView === 'behavior') {
+    const visibleIntents = intentHistory.filter((intent) => {
+      if (!intentSearchTerm) return true
+      const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
+      return [intent.flyId, intent.side, intent.reason, intent.habitatId, habitat?.state.label].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+    })
+    if (visibleIntents.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'intent-log-empty'
+      empty.textContent = intentHistory.length === 0 ? 'No intents yet · contact + dwell creates BUY · departure creates SELL' : 'No matching intents.'
+      intentLogList.append(empty)
+      return
+    }
+    for (const intent of visibleIntents.slice(-40).reverse()) {
+      const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
+      const token = habitat?.state.label || intent.habitatId
+      const holding = currentFlyHolding(intent.flyId)
+      const heldAmount = Number(holding?.heldAmount)
+      const heldToken = String(holding?.tokenSymbol || token)
+      const holdingDetails = Number.isFinite(heldAmount) && heldAmount > 0
+        ? `HELD ${formatTokenAmount(heldAmount)} ${heldToken}`
+        : intent.side === 'buy'
+          ? `TARGET ${(intent.portfolioWeight * 100).toFixed(2)}% · AWAITING EXECUTION`
+          : `SELL PROPOSAL · NO CONFIRMED HOLDING`
+      const dwell = Number(intent.metrics?.dwellSeconds ?? 0)
+      const distance = Number(intent.metrics?.distanceM ?? 0)
+      const confidence = Math.round(Number(intent.confidence || 0) * 100)
+      const row = document.createElement('div')
+      row.className = `intent-log-row ${intent.side}`
+      const time = new Date(intent.observedAtMs).toLocaleTimeString([], { hour12: false })
+      row.innerHTML = '<div class="intent-log-row-top"><strong></strong><span></span><em>PROPOSAL</em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>'
+      row.querySelector('strong')!.textContent = `${intent.side.toUpperCase()} INTENT`
+      row.querySelector('span')!.textContent = `${time} · ${intent.flyId}`
+      row.querySelector('.intent-log-token')!.textContent = token
+      row.querySelector('.intent-log-holding')!.textContent = holdingDetails
+      row.querySelector('.intent-log-details')!.textContent = `${intent.reason.toUpperCase()} · dwell ${dwell.toFixed(2)}s · ${distance.toFixed(3)}m · confidence ${confidence}%`
+      intentLogList.append(row)
+    }
+    return
+  }
   const visibleTrades = tradeRecords.filter((item) => {
     if (!intentSearchTerm) return true
     return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status, item.source].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
@@ -534,7 +591,7 @@ function renderIntentLog() {
   if (visibleTrades.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'intent-log-empty'
-    empty.textContent = tradeRecords.length === 0 ? 'No on-chain buys or sells recorded yet.' : 'No matching buys or sells.'
+    empty.textContent = tradeRecords.length === 0 ? `No on-chain buys or sells recorded yet · ${buyIntentCount} BUY / ${sellIntentCount} SELL proposals in Behavior Intents.` : 'No matching buys or sells.'
     intentLogList.append(empty)
     return
   }

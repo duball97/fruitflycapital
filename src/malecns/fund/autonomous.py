@@ -361,6 +361,7 @@ class AutonomousTradingRuntime:
         for row in self.ledger.rows("fly_positions", limit=100000):
             self.positions[str(row["fly_id"])] = FlyCapitalPosition(str(row["fly_id"]), str(row["state"]), row["chain_id"], row["token_address"], row["token_symbol"], float(row["allocation_fraction"]), row["entry_timestamp_ms"], row["entry_price_usd"], float(row.get("held_amount") or 0), float(row["current_value_usd"]), float(row["realized_pnl_usd"]), float(row["unrealized_pnl_usd"]), row["departure_reason"], int(row["updated_ms"]))
         self.events: list[dict[str, Any]] = []
+        self.reconciled_failed_execution_ids: set[str] = set()
         # Shared behavioral feed for every connected viewer. The browser may
         # show an event immediately, but this server-owned history is the
         # canonical cross-user source of truth.
@@ -440,6 +441,10 @@ class AutonomousTradingRuntime:
     def ingest(self, intents: Iterable[BehaviorTradeIntent], *, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
         actions: list[AllocationIntent] = []
+        # Reconcile failures before handling a new habitat visit.  Otherwise
+        # a failed external BUY can leave a fly in QUALIFYING forever and the
+        # next real BUY proposal will be audit-logged but never re-queued.
+        self._sync_shared_execution_results()
         self._flush_departures(timestamp, actions)
         for behavior in intents:
             if behavior.intent_id in self.processed_events:
@@ -610,6 +615,7 @@ class AutonomousTradingRuntime:
 
         if not isinstance(self.adapter, SupabaseExecutionAdapter):
             return
+        self._reconcile_shared_execution_failures()
         try:
             rows = self.adapter.queue.execution_results()
         except Exception:
@@ -672,6 +678,51 @@ class AutonomousTradingRuntime:
             self._persist_broadcast(intent, token, tx_hash, expected_output=str(result.get("expectedOutput") or "") or None, biological_event_id=intent.biological_event_id)
             known_ids.add(intent.idempotency_key)
             known_hashes.add(tx_hash.lower())
+
+    def _reconcile_shared_execution_failures(self) -> None:
+        """Release fly slots after failures that happened before broadcast.
+
+        A failed queue row is not a fill and must not alter holdings.  For
+        deterministic pre-broadcast failures, however, the corresponding
+        fly slot must be released so a later biological BUY can enqueue a new
+        attempt.  Rows that say a broadcast may already have succeeded are
+        deliberately left unresolved because re-queuing them could double
+        spend; those require transaction-hash reconciliation first.
+        """
+
+        if not isinstance(self.adapter, SupabaseExecutionAdapter):
+            return
+        failure_reader = getattr(self.adapter.queue, "execution_failures", None)
+        if not callable(failure_reader):
+            return
+        try:
+            rows = failure_reader(limit=100)
+        except Exception:
+            return
+        for row in rows:
+            execution_id = str(row.get("idempotency_key") or "")
+            if not execution_id or execution_id in self.reconciled_failed_execution_ids:
+                continue
+            error = str(row.get("error") or "")
+            result = row.get("result")
+            tx_hash = result.get("txHash") if isinstance(result, Mapping) else None
+            if _is_real_tx_hash(str(tx_hash or "")) or "broadcast succeeded" in error.lower():
+                # Never automatically retry an ambiguous post-broadcast row.
+                self.reconciled_failed_execution_ids.add(execution_id)
+                continue
+            side = str(row.get("side") or "").lower()
+            for fly_id in (row.get("fly_ids") or []):
+                position = self.positions.get(str(fly_id))
+                if position is None:
+                    continue
+                if side == "buy" and position.state == FlyBehaviorState.QUALIFYING.value and position.held_amount <= 0:
+                    self._save(replace(position, state=FlyBehaviorState.EXPLORING.value, departure_reason=None, updated_ms=int(time.time() * 1000)))
+                    self.events.append({"type": "BUY_RETRY_READY", "status": "reconciled", "flyId": position.fly_id, "executionId": execution_id, "reason": error[:240]})
+                elif side == "sell" and position.state == FlyBehaviorState.DEPARTING.value and position.held_amount > 0:
+                    self.pending_departures.pop(position.fly_id, None)
+                    self._save(replace(position, state=FlyBehaviorState.HOLDING.value, departure_reason=None, updated_ms=int(time.time() * 1000)))
+                    self.events.append({"type": "SELL_RETRY_READY", "status": "reconciled", "flyId": position.fly_id, "executionId": execution_id, "reason": error[:240]})
+            self.reconciled_failed_execution_ids.add(execution_id)
 
     def _flush_departures(self, timestamp: int, actions: list[AllocationIntent]) -> None:
         for fly_id, (due, target, reason, biological_event_id) in list(self.pending_rotations.items()):

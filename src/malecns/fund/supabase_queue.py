@@ -130,6 +130,22 @@ class SupabaseIntentQueue:
         )
         return [dict(row) for row in rows] if isinstance(rows, list) else []
 
+    def execution_failures(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return failed executable rows for brain-state reconciliation.
+
+        ``observed`` proposal rows are intentionally excluded.  The brain
+        needs the failed amount-bearing rows so a fly that was left in
+        ``QUALIFYING`` after a quote/gas failure can become eligible for a new
+        visit instead of being suppressed forever.
+        """
+
+        rows = self._request(
+            "GET",
+            self.table,
+            query=f"?select=idempotency_key,side,fly_ids,biological_event_id,status,error,result,created_at,updated_at&status=eq.failed&order=updated_at.desc&limit={max(1, min(int(limit), 500))}",
+        )
+        return [dict(row) for row in rows] if isinstance(rows, list) else []
+
     @staticmethod
     def new_worker_id() -> str:
         return f"render-worker-{uuid.uuid4().hex[:12]}"

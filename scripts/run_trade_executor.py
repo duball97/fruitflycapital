@@ -28,7 +28,7 @@ from malecns.fund.autonomous import AutonomousTradingRuntime, ExecutionIntent, T
 from malecns.fund.ledger import FundLedger
 from malecns.fund.wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
 from malecns.market.direct_uniswap import DirectUniswapClient
-from malecns.market.uniswap_client import UniswapTradingClient
+from malecns.market.uniswap_client import UniswapApiError, UniswapTradingClient
 from malecns.fund.supabase_queue import SupabaseIntentQueue
 
 
@@ -134,7 +134,11 @@ class TradeExecutor:
         if self.wallet is None:
             raise RuntimeError("FUND_RPC_URL and FUND_WALLET_ADDRESS are required")
         self.api_client = UniswapTradingClient.from_env()
-        self.client = self.api_client or DirectUniswapClient.from_env(self.wallet)
+        # Keep the direct RPC route available even when a hosted API key is
+        # configured.  The hosted endpoint can be blocked by Cloudflare
+        # (HTTP 403), while the on-chain V2/V3 route remains usable.
+        self.direct_client = DirectUniswapClient.from_env(self.wallet)
+        self.client = self.api_client or self.direct_client
         if mode == "broadcast" and os.getenv("FUND_RUNNER_CONFIRM_BROADCAST", "false").lower() != "true":
             raise RuntimeError("set FUND_RUNNER_CONFIRM_BROADCAST=true to enable broadcasting")
         # In Supabase queue mode the brain service owns the canonical queue.
@@ -262,15 +266,30 @@ class TradeExecutor:
         if wallet.chain_id != intent.chain_id:
             raise WalletRpcError(f"wallet RPC chain {wallet.chain_id} does not match intent chain {intent.chain_id}")
         if self.api_client is not None:
-            return self._prepare_with_api(intent, token, wallet)
-        quote = self.client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=_int_value(intent.amount_in))
+            try:
+                return self._prepare_with_api(intent, token, wallet)
+            except UniswapApiError as api_error:
+                # A hosted API outage must not turn every biological decision
+                # into a permanent dead slot.  Fall back only to the direct
+                # RPC route, which still requires a real deployed V2/V3 pool
+                # and therefore cannot manufacture a fill for an unroutable
+                # token.
+                try:
+                    return self._prepare_direct(intent, token, wallet)
+                except Exception as direct_error:
+                    raise WalletRpcError(f"Uniswap API unavailable ({api_error}); direct route unavailable ({direct_error})") from direct_error
+        return self._prepare_direct(intent, token, wallet)
+
+    def _prepare_direct(self, intent: ExecutionIntent, token: TokenRef, wallet: Any) -> dict[str, Any]:
+        client = self.direct_client
+        quote = client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=_int_value(intent.amount_in))
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
             token_balance = self.wallet.erc20_balance_raw(intent.token_in)
             if token_balance < _int_value(intent.amount_in):
                 raise WalletRpcError("insufficient token balance for sell")
-            allowance = self.client.allowance(intent.token_in, wallet.wallet_address, route_kind=quote.kind)
+            allowance = client.allowance(intent.token_in, wallet.wallet_address, route_kind=quote.kind)
             if allowance < _int_value(intent.amount_in):
-                approval = self.client.approval_transaction(intent.token_in, _int_value(intent.amount_in), route_kind=quote.kind)
+                approval = client.approval_transaction(intent.token_in, _int_value(intent.amount_in), route_kind=quote.kind)
                 if self.mode == "prepare":
                     raise RuntimeError("token approval transaction is required before the swap")
                 approval_tx = _transaction_from_swap(approval)
@@ -278,7 +297,7 @@ class TradeExecutor:
                 approval_status, _ = self._wait_for_receipt(approval_hash)
                 if approval_status != "CONFIRMED":
                     raise RuntimeError(f"approval transaction {approval_hash} ended {approval_status}")
-        swap = self.client.build_swap(quote, recipient=wallet.wallet_address, slippage_tolerance=intent.slippage_tolerance)
+        swap = client.build_swap(quote, recipient=wallet.wallet_address, slippage_tolerance=intent.slippage_tolerance)
         transaction = _transaction_from_swap(swap)
         gas_hex = self.wallet.call("eth_estimateGas", [_rpc_transaction(transaction, wallet.wallet_address), "latest"])
         transaction["gas"] = _int_value(gas_hex)
@@ -411,6 +430,7 @@ def main() -> int:
     offset_path = Path(os.getenv("FUND_RUNNER_OFFSET_PATH", f"{queue_path}.offset"))
     offset = int(offset_path.read_text(encoding="utf-8").strip() or "0") if offset_path.exists() else 0
     print(json.dumps({"status": "ready", "backend": args.backend, "mode": args.mode, "workerId": worker_id}, sort_keys=True), flush=True)
+    last_wait_log = 0.0
     while True:
         if queue is not None:
             try:
@@ -421,6 +441,14 @@ def main() -> int:
                     return 2
                 time.sleep(max(0.1, args.poll_seconds))
                 continue
+            if not records:
+                now = time.monotonic()
+                if args.once:
+                    print(json.dumps({"status": "no_pending_intents", "backend": "supabase", "workerId": worker_id}, sort_keys=True), flush=True)
+                    return 0
+                if now - last_wait_log >= 15.0:
+                    print(json.dumps({"status": "waiting_for_execution_intents", "backend": "supabase", "workerId": worker_id}, sort_keys=True), flush=True)
+                    last_wait_log = now
             for record in records:
                 raw_payload = record.get("payload")
                 try:
