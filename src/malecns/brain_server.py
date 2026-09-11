@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections.abc import Mapping
 from http import HTTPStatus
 from pathlib import Path
@@ -108,16 +109,30 @@ def _sync_restored_fly_commitments() -> None:
 class SwarmProducerLease:
     """Allow exactly one browser connection to author swarm telemetry."""
 
-    def __init__(self) -> None:
+    def __init__(self, stale_after_s: float | None = None) -> None:
         self._producer: Any | None = None
+        # A browser tab can disappear without a WebSocket close frame (mobile
+        # sleep, a proxy reset, or a crashed tab). Keep the single-writer
+        # invariant, but let a healthy new tab take over after the old writer
+        # has stopped sending telemetry.
+        if stale_after_s is None:
+            try:
+                stale_after_s = float(os.getenv("NEUROSWARM_PRODUCER_STALE_SECONDS", "8.0"))
+            except ValueError:
+                stale_after_s = 8.0
+        self.stale_after_s = max(1.0, float(stale_after_s))
+        self._last_activity = 0.0
         self._lock: asyncio.Lock | None = None
 
     async def claim(self, connection: Any) -> str:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            if self._producer is None or self._producer is connection:
+            now = time.monotonic()
+            stale = self._producer is not None and now - self._last_activity > self.stale_after_s
+            if self._producer is None or self._producer is connection or stale:
                 self._producer = connection
+                self._last_activity = now
                 return "producer"
             return "observer"
 
@@ -128,6 +143,17 @@ class SwarmProducerLease:
             if self._producer is not connection:
                 return False
             self._producer = None
+            self._last_activity = 0.0
+            return True
+
+    async def touch(self, connection: Any) -> bool:
+        """Refresh the active writer lease after accepted telemetry."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._producer is not connection:
+                return False
+            self._last_activity = time.monotonic()
             return True
 
     async def is_producer(self, connection: Any) -> bool:
@@ -299,6 +325,7 @@ async def handle_client(websocket: Any) -> None:
                         break
                     if role != "producer":
                         continue
+                await TELEMETRY_PRODUCER.touch(websocket)
                 observations = _parse_swarm_telemetry(message)
                 if observations:
                     decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)

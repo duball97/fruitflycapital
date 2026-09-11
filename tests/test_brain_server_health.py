@@ -82,3 +82,17 @@ def test_only_one_connection_can_produce_swarm_telemetry() -> None:
         return first_role, second_role, released, second_after_release
 
     assert asyncio.run(claim_and_release()) == ("producer", "observer", True, "producer")
+
+
+def test_stale_producer_lease_handoffs_to_a_healthy_connection() -> None:
+    lease = SwarmProducerLease(stale_after_s=1.0)
+    first = object()
+    second = object()
+
+    async def claim_after_stall() -> tuple[str, str]:
+        first_role = await lease.claim(first)
+        await asyncio.sleep(1.05)
+        second_role = await lease.claim(second)
+        return first_role, second_role
+
+    assert asyncio.run(claim_after_stall()) == ("producer", "producer")
