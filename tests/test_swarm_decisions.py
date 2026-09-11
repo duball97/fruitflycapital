@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from malecns.fund import SwarmDecisionPipeline
-from malecns.swarm.observer import FlyObservation, HabitatObservation
+from malecns.swarm.observer import FlyObservation, HabitatObservation, SwarmObserver
 
 
 def _frame(timestamp_ms: int, positions: dict[str, tuple[float, float, float]], distances: dict[str, dict[str, float]]):
@@ -80,3 +80,28 @@ def test_contact_dwell_emits_buy_and_departure_emits_sell_intents():
     assert intents[1].metrics["contact"] is False
     assert intents[0].portfolio_weight == 0.0625
     assert intents[1].portfolio_weight == 0.0625
+
+
+def test_observer_allows_only_one_active_commitment_per_fly():
+    observer = SwarmObserver(
+        expected_agents=1,
+        sustained_dwell_s=1.0,
+        intent_cooldown_s=30.0,
+    )
+
+    def frame(timestamp_ms, first_distance, second_distance, first_contact=False, second_contact=False):
+        return [FlyObservation(
+            "fly-001",
+            timestamp_ms,
+            (0.0, 0.0, 0.0),
+            (
+                HabitatObservation("TOKEN-A", first_distance, 0.05, contact=first_contact),
+                HabitatObservation("TOKEN-B", second_distance, 0.05, contact=second_contact),
+            ),
+        )]
+
+    observer.ingest(frame(0, 0.03, 0.30, True, False))
+    observer.ingest(frame(1_000, 0.03, 0.03, True, True))
+    observer.ingest(frame(2_000, 0.03, 0.03, True, True))
+    buys = [intent for intent in observer.snapshot().behavior_intents if intent.side == "buy"]
+    assert [intent.habitat_id for intent in buys] == ["TOKEN-A"]

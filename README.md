@@ -6,7 +6,7 @@
 
 Fruit Fly Capital's multi-agent system is called **NeuroSwarm**. It combines the
 official MaleCNS v1.0 connectome, Brian2 neural dynamics, the canonical
-TuragaLab/Flybody body, Three.js, The Graph, and a quote-only Uniswap boundary.
+TuragaLab/Flybody body, Three.js, The Graph, and a direct on-chain Uniswap boundary.
 
 ```text
 market data → sensory world → MaleCNS circuits → body movement
@@ -139,8 +139,9 @@ FUND_INTENT_QUEUE_PATH=data/fund/execution-intents.jsonl
 
 Start the brain server as usual, then run the executor from the repository
 root. It consumes netted intents, resolves the exact chain/address, checks
-balances and liquidity, requests the Uniswap quote and calldata, estimates
-gas, and records the result in the shared fund ledger:
+balances and liquidity, discovers a direct V2/V3 route and quote over
+JSON-RPC, builds router calldata, estimates gas, and records the result in
+the shared fund ledger. It does not call the hosted Uniswap Trading API:
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py
@@ -163,9 +164,9 @@ the real hash. Simulation fills never enter the mainnet-executed table.
 
 For Robinhood testnet use `FUND_CHAIN_ID=46630`,
 `FUND_RPC_URL=https://rpc.testnet.chain.robinhood.com`, and the testnet
-explorer URL. The current Uniswap Trading API integration is configured for
-Robinhood mainnet; a testnet quote/router endpoint must be supplied before
-testnet swaps can be prepared.
+explorer URL. Direct routing is currently configured for chain 4663; supply
+the testnet V2/V3 factory, quoter, router, and WETH addresses through the
+`UNISWAP_*` environment variables before preparing testnet swaps.
 
 ```bash
 PYTHONPATH=src python -m malecns.fund.bootstrap_privy

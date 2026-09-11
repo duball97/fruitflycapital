@@ -23,6 +23,7 @@ import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
 import { TradeExecutionBoundary } from './trading/TradeExecutionBoundary'
 import type { BehaviorTradeIntent } from './networking/protocol'
 import { resolveBrainWebSocketUrl } from './networking/brainUrl'
+import { SceneAudio } from './audio/SceneAudio'
 
 // The public experience is intentionally autonomous. Manual actuation remains
 // available only inside the controller module for isolated developer tests; it
@@ -34,6 +35,7 @@ const canvas = document.createElement('canvas')
 canvas.className = 'world-canvas'
 canvas.style.touchAction = 'none'
 app.append(canvas)
+const sceneAudio = new SceneAudio()
 
 // Provider logos can be loaded by the browser as normal DOM images even when
 // the provider does not opt into WebGL canvas CORS. Keep the Three.js logo as
@@ -43,7 +45,16 @@ app.append(canvas)
 const tokenLogoOverlay = document.createElement('div')
 tokenLogoOverlay.className = 'token-logo-overlay'
 app.append(tokenLogoOverlay)
-const tokenLogoElements = new Map<string, { element: HTMLImageElement; button: HTMLButtonElement; source: string; failed: boolean }>()
+type TokenLogoEntry = {
+  element: HTMLImageElement
+  button: HTMLButtonElement
+  source: string
+  fallbackSource: string
+  usingFallback: boolean
+  failedSource: string | null
+}
+const tokenLogoElements = new Map<string, TokenLogoEntry>()
+const fallbackLogoCache = new Map<string, string>()
 const logoWorldPosition = new Vector3()
 const logoEdgePosition = new Vector3()
 const drawOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -67,12 +78,21 @@ function updateTokenLogoOverlay() {
   const visibleIds = new Set<string>()
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
+  // Projection happens before the renderer's next pass. Refresh the camera
+  // matrices here so logos do not get classified as off-screen for one frame
+  // after a cinematic/follow camera update.
+  activeCamera.updateMatrixWorld(true)
   for (const habitat of environment.habitats) {
-    const source = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
-    if (!source) continue
     const id = habitat.state.id
     visibleIds.add(id)
+    const remoteSource = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
+    const fallbackSource = fallbackLogoCache.get(id) ?? fallbackLogoUrl(habitat.state.label)
+    fallbackLogoCache.set(id, fallbackSource)
+    const normalizedRemoteSource = remoteSource ? normalizeImageUrl(remoteSource) : null
     let entry = tokenLogoElements.get(id)
+    const source = entry?.usingFallback && entry.failedSource === normalizedRemoteSource
+      ? fallbackSource
+      : normalizedRemoteSource ?? fallbackSource
     if (!entry) {
       const button = document.createElement('button')
       button.className = 'token-logo-link'
@@ -87,22 +107,38 @@ function updateTokenLogoOverlay() {
       element.draggable = false
       element.loading = 'eager'
       element.referrerPolicy = 'no-referrer'
-      const nextEntry = { element, button, source: '', failed: false }
-      element.addEventListener('error', () => { nextEntry.failed = true; button.hidden = true })
+      const nextEntry: TokenLogoEntry = { element, button, source: '', fallbackSource, usingFallback: true, failedSource: null }
+      element.addEventListener('error', () => {
+        // DexScreener/CDN token images are optional. Never turn a network
+        // failure into an empty habitat: swap to the deterministic local mark.
+        if (!nextEntry.usingFallback) {
+          nextEntry.usingFallback = true
+          nextEntry.failedSource = nextEntry.source
+          nextEntry.source = nextEntry.fallbackSource
+          element.hidden = false
+          button.hidden = false
+          element.src = nextEntry.fallbackSource
+          return
+        }
+        element.hidden = false
+        button.hidden = false
+      })
       button.append(element)
       tokenLogoOverlay.append(button)
       entry = nextEntry
       tokenLogoElements.set(id, entry)
     }
+    entry.fallbackSource = fallbackSource
     if (entry.source !== source) {
       entry.source = source
-      entry.failed = false
+      entry.usingFallback = source === fallbackSource
+      if (!entry.usingFallback) entry.failedSource = null
       entry.button.hidden = false
+      entry.element.hidden = false
       entry.element.src = normalizeImageUrl(source)
     }
     entry.button.setAttribute('aria-label', `Open ${habitat.state.label} token details`)
     entry.button.tabIndex = 0
-    if (entry.failed) continue
     // Project the same local anchor used by the Three.js logo sprite. Using
     // raw group coordinates here ignored the habitat's visual scale, which
     // made DOM logos float well above their plates during close cinematic
@@ -117,7 +153,7 @@ function updateTokenLogoOverlay() {
       && logoWorldPosition.x >= -1.15 && logoWorldPosition.x <= 1.15
       && logoWorldPosition.y >= -1.15 && logoWorldPosition.y <= 1.15
     if (!onScreen) {
-      entry.element.hidden = true
+      entry.button.hidden = true
       continue
     }
     const centerX = (logoWorldPosition.x * 0.5 + 0.5) * viewportWidth
@@ -133,6 +169,17 @@ function updateTokenLogoOverlay() {
   for (const [id, entry] of tokenLogoElements) {
     if (!visibleIds.has(id)) entry.button.hidden = true
   }
+}
+
+function fallbackLogoUrl(label: string) {
+  const symbol = logoSymbolFromLabel(label)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><radialGradient id="g" cx="30%" cy="25%"><stop stop-color="#55766a"/><stop offset="1" stop-color="#0b171b"/></radialGradient></defs><circle cx="64" cy="64" r="59" fill="url(#g)" stroke="#dcebe2" stroke-width="2"/><text x="64" y="70" fill="#f4f7f4" font-family="Arial,sans-serif" font-size="${symbol.length > 3 ? 26 : 34}" font-weight="700" text-anchor="middle">${symbol}</text></svg>`
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+}
+
+function logoSymbolFromLabel(label: string) {
+  const value = label.split('·')[0]?.trim() || label
+  return value.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase() || '?'
 }
 
 function imageUrlFromProvenance(provenance: Array<Record<string, unknown>>) {
@@ -181,9 +228,33 @@ hud.className = 'hud'
 hud.innerHTML = `
   <a class="brand site-brand" href="/" aria-label="FruitFly Capital home"><img class="brand-logo" src="/fruitfly-logo.png" alt="" /> <span>FRUITFLY CAPITAL</span></a>
   <nav class="site-nav" aria-label="Primary navigation"><a class="is-active" href="/">Simulation</a><a href="/about/">About</a><a href="/portfolio/">Portfolio</a><a href="/#buy">Buy</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav>
-  <a class="social-link header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a>
+  <div class="header-tools"><a class="social-link header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a><button class="audio-toggle" type="button" aria-pressed="false">SOUND OFF</button></div>
 `
 app.append(hud)
+const audioToggle = hud.querySelector<HTMLButtonElement>('.audio-toggle')!
+
+function renderAudioToggle() {
+  audioToggle.textContent = sceneAudio.isEnabled ? 'SOUND ON' : 'SOUND OFF'
+  audioToggle.setAttribute('aria-pressed', String(sceneAudio.isEnabled))
+  audioToggle.setAttribute('aria-label', sceneAudio.isEnabled ? 'Mute scene audio' : 'Enable scene audio')
+}
+
+audioToggle.addEventListener('click', async () => {
+  await sceneAudio.toggle()
+  renderAudioToggle()
+})
+
+// Web Audio is blocked until a user gesture. Start the ambient bed on the
+// first interaction anywhere in the scene, while keeping a visible mute
+// control for visitors who prefer a silent experience.
+const unlockSceneAudio = () => {
+  void sceneAudio.enable().then(renderAudioToggle)
+  window.removeEventListener('pointerdown', unlockSceneAudio, true)
+  window.removeEventListener('keydown', unlockSceneAudio, true)
+}
+window.addEventListener('pointerdown', unlockSceneAudio, true)
+window.addEventListener('keydown', unlockSceneAudio, true)
+renderAudioToggle()
 
 const sceneFooter = document.createElement('footer')
 sceneFooter.className = 'scene-footer'
@@ -300,6 +371,8 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
     seenIntentIds.add(intent.intentId)
     if (intent.side === 'buy') buyIntentCount += 1
     else sellIntentCount += 1
+    const isFresh = Number.isFinite(intent.observedAtMs) && Date.now() - intent.observedAtMs < 1500
+    if (isFresh) sceneAudio.playTradeCue(intent.side)
     // Replayed history should populate the log without making a page reload
     // trigger an old camera cut. Only fresh biological events can focus the
     // cinematic director.
@@ -576,10 +649,11 @@ visualRenderers.forEach((flyRenderer) => world.add(flyRenderer.group))
 // embodiments and must never become extra portfolio votes or trade events.
 // A qualifying buy requires sustained contact, not a transient startup
 // overlap. Keep this client threshold aligned with the server observer.
-// Slow the proposal cadence: contact must persist for eight seconds and a
-// held fly must remain outside for six seconds before SELL is logged. The
+// Slow the proposal cadence: contact must persist for eight seconds, a held
+// fly must remain outside for six seconds before SELL is logged, and each fly
+// has one active commitment plus a five-minute post-intent cooldown. The
 // trading runtime still applies its independent 120-second minimum hold.
-const swarmObserver = new SwarmObserver(SWARM_SIZE, 8, 0.0005, 6, 120)
+const swarmObserver = new SwarmObserver(SWARM_SIZE, 8, 0.0005, 6, 120, 300)
 
 function updateFlightMotionStatus() {
   const cruise = agents.filter((agent) => agent.landingState === 'cruise').length

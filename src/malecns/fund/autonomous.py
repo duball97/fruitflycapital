@@ -13,7 +13,7 @@ from typing import Any, Iterable, Mapping, Protocol
 
 from malecns.swarm.observer import BehaviorTradeIntent
 
-from ..market.uniswap_client import UniswapTradingClient
+from ..market.direct_uniswap import DirectUniswapClient
 from .ledger import FundLedger
 from .receipts import BlockscoutClient, ReceiptStatus, explorer_url, observe_receipt
 from .wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
@@ -205,7 +205,7 @@ class MainnetExecutionAdapter:
     boundary and is intentionally not performed here.
     """
 
-    def __init__(self, wallet: RpcWalletClient, client: UniswapTradingClient) -> None:
+    def __init__(self, wallet: RpcWalletClient, client: DirectUniswapClient) -> None:
         self.wallet = wallet
         self.client = client
 
@@ -215,21 +215,22 @@ class MainnetExecutionAdapter:
             raise WalletRpcError("execution chain does not match wallet RPC chain")
         if intent.token_in.lower() == ZERO_ADDRESS.lower() and int(intent.amount_in) > wallet.available_native_wei:
             raise WalletRpcError("insufficient native balance after gas reserve")
+        amount_in = int(intent.amount_in)
+        quote = self.client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=amount_in)
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
-            approval = self.client.check_approval({"walletAddress": wallet.wallet_address, "token": intent.token_in, "amount": intent.amount_in, "chainId": intent.chain_id, "tokenOut": intent.token_out, "tokenOutChainId": intent.chain_id})
-            if approval.get("approval"):
-                return {"status": "approval_required", "approval": approval, "txHash": None}
-        quote = self.client.quote({"swapper": wallet.wallet_address, "tokenIn": intent.token_in, "tokenOut": intent.token_out, "tokenInChainId": str(intent.chain_id), "tokenOutChainId": str(intent.chain_id), "amount": intent.amount_in, "type": "EXACT_INPUT", "slippageTolerance": intent.slippage_tolerance})
-        swap = self.client.create_unsigned_swap(quote)
-        tx = swap.get("swap")
-        if not isinstance(tx, Mapping) or not isinstance(tx.get("to"), str) or not ADDRESS_RE.fullmatch(str(tx.get("to"))) or not isinstance(tx.get("data"), str) or tx.get("data") in {"", "0x"} or tx.get("value") is None:
-            raise WalletRpcError("Uniswap returned an invalid transaction payload")
+            allowance = self.client.allowance(intent.token_in, wallet.wallet_address, route_kind=quote.kind)
+            if allowance < amount_in:
+                approval = self.client.approval_transaction(intent.token_in, amount_in, route_kind=quote.kind)
+                return {"status": "approval_required", "approval": {"transaction": approval, "source": "onchain-rpc"}, "txHash": None}
+        tx = self.client.build_swap(quote, recipient=wallet.wallet_address, slippage_tolerance=intent.slippage_tolerance)
+        if not isinstance(tx.get("to"), str) or not ADDRESS_RE.fullmatch(str(tx.get("to"))) or not isinstance(tx.get("data"), str) or tx.get("data") in {"", "0x"} or tx.get("value") is None:
+            raise WalletRpcError("direct Uniswap route returned invalid transaction calldata")
         try:
             estimated_gas = self.wallet.call("eth_estimateGas", [{"from": wallet.wallet_address, "to": tx["to"], "data": tx["data"], "value": str(tx["value"])}, "latest"])
         except Exception as exc:
             raise WalletRpcError(f"gas estimation failed: {exc}") from exc
         nonce = self.wallet.call("eth_getTransactionCount", [wallet.wallet_address, "pending"])
-        return {"status": "prepared_external_authorization", "txHash": None, "quote": quote, "swap": swap, "nonce": nonce, "estimatedGas": estimated_gas, "executionPrice": token.price_native, "gas": quote.get("gasFee") or quote.get("gasFeeUSD"), "slippage": intent.slippage_tolerance}
+        return {"status": "prepared_external_authorization", "txHash": None, "quote": quote.as_dict(), "swap": tx, "nonce": nonce, "estimatedGas": estimated_gas, "executionPrice": token.price_native, "gas": None, "slippage": intent.slippage_tolerance}
 
 
 class QueueExecutionAdapter:
@@ -340,11 +341,10 @@ class AutonomousTradingRuntime:
 
     @classmethod
     def from_env(cls, ledger: FundLedger, wallet: RpcWalletClient | None = None) -> "AutonomousTradingRuntime":
-        client = UniswapTradingClient.from_env()
         mode = os.getenv("FUND_ADAPTER", "simulation").lower()
         adapter: ExecutionAdapter = SimulationExecutionAdapter()
-        if mode == "mainnet" and wallet is not None and client is not None:
-            adapter = MainnetExecutionAdapter(wallet, client)
+        if mode == "mainnet" and wallet is not None:
+            adapter = MainnetExecutionAdapter(wallet, DirectUniswapClient.from_env(wallet))
         elif mode == "queue":
             adapter = QueueExecutionAdapter(os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
         elif mode == "supabase":

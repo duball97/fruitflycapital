@@ -192,6 +192,7 @@ class SwarmObserver:
         sustained_dwell_s: float = 0.6,
         departure_debounce_s: float = 0.0,
         min_hold_s: float = 0.0,
+        intent_cooldown_s: float = 0.0,
         congregation_radius_m: float = 0.12,
         max_sample_gap_s: float = 2.0,
         distance_history_size: int = 600,
@@ -203,6 +204,7 @@ class SwarmObserver:
         self.sustained_dwell_s = max(0.0, float(sustained_dwell_s))
         self.departure_debounce_s = max(0.0, float(departure_debounce_s))
         self.min_hold_s = max(0.0, float(min_hold_s))
+        self.intent_cooldown_s = max(0.0, float(intent_cooldown_s))
         self.congregation_radius_m = max(0.001, float(congregation_radius_m))
         self.max_sample_gap_s = max(0.0, float(max_sample_gap_s))
         self.distance_history_size = max(2, int(distance_history_size))
@@ -216,6 +218,11 @@ class SwarmObserver:
         # websocket decision would otherwise grow memory and payload size
         # forever during a long-running market session.
         self._behavior_intents: deque[BehaviorTradeIntent] = deque(maxlen=256)
+        # The fund has one allocation slot per fly. Keep the biological
+        # observer aligned with that reality: a fly cannot open a second
+        # commitment while its previous habitat is still held.
+        self._active_commitments: dict[str, str] = {}
+        self._last_intent_at_ms: dict[str, int] = {}
 
     def ingest(self, observations: Iterable[FlyObservation]) -> SwarmSnapshot:
         frame = tuple(observations)
@@ -290,8 +297,11 @@ class SwarmObserver:
                 and track.buy_issued_at_ms is not None
                 and timestamp_ms - track.buy_issued_at_ms >= self.min_hold_s * 1000
                 and track.outside_time_s >= self.departure_debounce_s
+                and self._active_commitments.get(track.fly_id) == track.habitat_id
             ):
                 self._emit_behavior_intent(track, "sell", "departure", timestamp_ms, distance_m, False)
+                self._active_commitments.pop(track.fly_id, None)
+                self._last_intent_at_ms[track.fly_id] = timestamp_ms
                 track.departure_candidate = False
                 track.buy_issued_for_visit = False
                 track.buy_issued_at_ms = None
@@ -309,8 +319,12 @@ class SwarmObserver:
                 habitat.contact
                 and track.current_visit_dwell_s >= self.sustained_dwell_s
                 and not track.buy_issued_for_visit
+                and self._active_commitments.get(track.fly_id) is None
+                and self._cooldown_elapsed(track.fly_id, timestamp_ms)
             ):
                 self._emit_behavior_intent(track, "buy", "dwell", timestamp_ms, distance_m, True)
+                self._active_commitments[track.fly_id] = track.habitat_id
+                self._last_intent_at_ms[track.fly_id] = timestamp_ms
                 track.buy_issued_for_visit = True
                 track.buy_issued_at_ms = timestamp_ms
 
@@ -382,6 +396,12 @@ class SwarmObserver:
                 },
             )
         )
+
+    def _cooldown_elapsed(self, fly_id: str, timestamp_ms: int) -> bool:
+        last_intent_at_ms = self._last_intent_at_ms.get(fly_id)
+        if last_intent_at_ms is None:
+            return True
+        return timestamp_ms - last_intent_at_ms >= self.intent_cooldown_s * 1000
     def _summary(self, habitat_id: str) -> HabitatSwarmSummary:
         tracks = tuple(track for (fly_id, candidate_id), track in self._tracks.items() if candidate_id == habitat_id)
         behaviors = tuple(self._behavior(track) for track in sorted(tracks, key=lambda item: item.fly_id))

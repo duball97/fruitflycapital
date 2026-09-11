@@ -2,9 +2,9 @@
 """Run the separate FruitFly execution service.
 
 The brain server publishes netted ExecutionIntent records when
-``FUND_ADAPTER=queue``. This process consumes those records, requests a
-Uniswap quote, handles approval transactions when needed, and can either
-prepare or broadcast the transaction.
+``FUND_ADAPTER=queue``. This process consumes those records, discovers a
+direct on-chain Uniswap V2/V3 route over JSON-RPC, handles approval
+transactions when needed, and can either prepare or broadcast the transaction.
 
 Examples:
     PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py --once
@@ -27,7 +27,7 @@ from malecns.config import load_project_env
 from malecns.fund.autonomous import AutonomousTradingRuntime, ExecutionIntent, TokenRef
 from malecns.fund.ledger import FundLedger
 from malecns.fund.wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
-from malecns.market.uniswap_client import UniswapTradingClient
+from malecns.market.direct_uniswap import DirectUniswapClient
 from malecns.fund.supabase_queue import SupabaseIntentQueue
 
 
@@ -126,15 +126,10 @@ def _load_record(raw: str) -> tuple[ExecutionIntent, TokenRef]:
 class TradeExecutor:
     def __init__(self, mode: str) -> None:
         self.mode = mode
-        # This process is the autonomous execution client. The brain server
-        # can keep its default human-mediated header when it is only quoting.
-        os.environ.setdefault("UNISWAP_DECISION_ORIGIN", "autonomous")
         self.wallet = RpcWalletClient.from_env()
-        self.client = UniswapTradingClient.from_env()
         if self.wallet is None:
             raise RuntimeError("FUND_RPC_URL and FUND_WALLET_ADDRESS are required")
-        if self.client is None:
-            raise RuntimeError("UNISWAP_API_KEY is required")
+        self.client = DirectUniswapClient.from_env(self.wallet)
         if mode == "broadcast" and os.getenv("FUND_RUNNER_CONFIRM_BROADCAST", "false").lower() != "true":
             raise RuntimeError("set FUND_RUNNER_CONFIRM_BROADCAST=true to enable broadcasting")
         # In Supabase queue mode the brain service owns the canonical queue.
@@ -186,13 +181,14 @@ class TradeExecutor:
         wallet = self.wallet.snapshot()
         if wallet.chain_id != intent.chain_id:
             raise WalletRpcError(f"wallet RPC chain {wallet.chain_id} does not match intent chain {intent.chain_id}")
+        quote = self.client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=_int_value(intent.amount_in))
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
             token_balance = self.wallet.erc20_balance_raw(intent.token_in)
             if token_balance < _int_value(intent.amount_in):
                 raise WalletRpcError("insufficient token balance for sell")
-            approval_response = self.client.check_approval({"walletAddress": wallet.wallet_address, "token": intent.token_in, "amount": intent.amount_in, "chainId": intent.chain_id, "tokenOut": intent.token_out, "tokenOutChainId": intent.chain_id})
-            approval = approval_response.get("approval") or approval_response.get("approvalTransaction")
-            if approval is not None:
+            allowance = self.client.allowance(intent.token_in, wallet.wallet_address, route_kind=quote.kind)
+            if allowance < _int_value(intent.amount_in):
+                approval = self.client.approval_transaction(intent.token_in, _int_value(intent.amount_in), route_kind=quote.kind)
                 if self.mode == "prepare":
                     raise RuntimeError("token approval transaction is required before the swap")
                 approval_tx = _transaction_from_swap(approval)
@@ -200,8 +196,7 @@ class TradeExecutor:
                 approval_status, _ = self._wait_for_receipt(approval_hash)
                 if approval_status != "CONFIRMED":
                     raise RuntimeError(f"approval transaction {approval_hash} ended {approval_status}")
-        quote = self.client.quote({"swapper": wallet.wallet_address, "tokenIn": intent.token_in, "tokenOut": intent.token_out, "tokenInChainId": str(intent.chain_id), "tokenOutChainId": str(intent.chain_id), "amount": intent.amount_in, "type": "EXACT_INPUT", "slippageTolerance": intent.slippage_tolerance})
-        swap = self.client.create_unsigned_swap(quote)
+        swap = self.client.build_swap(quote, recipient=wallet.wallet_address, slippage_tolerance=intent.slippage_tolerance)
         transaction = _transaction_from_swap(swap)
         gas_hex = self.wallet.call("eth_estimateGas", [_rpc_transaction(transaction, wallet.wallet_address), "latest"])
         transaction["gas"] = _int_value(gas_hex)
@@ -211,7 +206,7 @@ class TradeExecutor:
         required = native_input + transaction["gas"] * gas_price + wallet.gas_reserve_wei
         if required > wallet.native_balance_wei:
             raise WalletRpcError("input plus estimated gas would consume the gas reserve")
-        return {"transaction": transaction, "quote": quote, "swap": swap, "estimatedGas": transaction["gas"], "gasPrice": gas_price, "expectedOutput": self._expected_output(quote), "walletBeforeNativeWei": wallet.native_balance_wei}
+        return {"transaction": transaction, "quote": quote.as_dict(), "swap": swap, "estimatedGas": transaction["gas"], "gasPrice": gas_price, "expectedOutput": str(quote.amount_out), "walletBeforeNativeWei": wallet.native_balance_wei}
 
     def _broadcast(self, transaction: Mapping[str, Any], intent: ExecutionIntent, token: TokenRef) -> str:
         wallet = self.wallet.snapshot()
@@ -246,22 +241,6 @@ class TradeExecutor:
                 return ("CONFIRMED" if _int_value(receipt["status"]) == 1 else "REVERTED"), dict(receipt)
             time.sleep(min(3.0, max(0.25, deadline - time.monotonic())))
         return "PENDING", None
-
-    @staticmethod
-    def _expected_output(quote: Mapping[str, Any]) -> str | None:
-        raw_quote = quote.get("quote") if isinstance(quote.get("quote"), Mapping) else quote
-        if not isinstance(raw_quote, Mapping):
-            return None
-        output = raw_quote.get("output")
-        if isinstance(output, Mapping) and output.get("amount") is not None:
-            return str(output["amount"])
-        order_info = raw_quote.get("orderInfo")
-        if isinstance(order_info, Mapping) and isinstance(order_info.get("outputs"), list) and order_info["outputs"]:
-            first = order_info["outputs"][0]
-            if isinstance(first, Mapping) and first.get("startAmount") is not None:
-                return str(first["startAmount"])
-        return None
-
 
 def main() -> int:
     load_project_env()

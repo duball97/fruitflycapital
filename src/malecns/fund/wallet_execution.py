@@ -6,7 +6,7 @@ import os
 from typing import Any, Mapping
 
 from .models import TradeIntent
-from ..market.uniswap_client import UniswapTradingClient
+from ..market.direct_uniswap import DirectUniswapClient
 from .wallet import ZERO_ADDRESS, RpcWalletClient
 
 
@@ -21,7 +21,7 @@ class DirectWalletUniswapAdapter:
     ``autonomous.py``, which stops at unsigned transaction preparation.
     """
 
-    def __init__(self, wallet: RpcWalletClient, client: UniswapTradingClient, private_key: str) -> None:
+    def __init__(self, wallet: RpcWalletClient, client: DirectUniswapClient, private_key: str) -> None:
         self.wallet = wallet
         self.client = client
         self.private_key = private_key

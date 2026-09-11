@@ -45,6 +45,7 @@ SWARM_SIZE = 16
 # increase these windows, but cannot silently make the feed more aggressive.
 BEHAVIOR_DWELL_SECONDS = max(8.0, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "8.0")))
 BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS = max(6.0, float(os.getenv("FUND_BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS", "6.0")))
+BEHAVIOR_INTENT_COOLDOWN_SECONDS = max(60.0, float(os.getenv("FUND_BEHAVIOR_INTENT_COOLDOWN_SECONDS", "300.0")))
 SWARM_DECISIONS = SwarmDecisionPipeline(
     max(1, SWARM_SIZE),
     observer=SwarmObserver(
@@ -52,6 +53,7 @@ SWARM_DECISIONS = SwarmDecisionPipeline(
         sustained_dwell_s=BEHAVIOR_DWELL_SECONDS,
         departure_debounce_s=BEHAVIOR_DEPARTURE_DEBOUNCE_SECONDS,
         min_hold_s=120.0,
+        intent_cooldown_s=BEHAVIOR_INTENT_COOLDOWN_SECONDS,
     ),
 )
 FUND_SERVICE = FundService.from_env()

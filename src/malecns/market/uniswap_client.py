@@ -1,7 +1,9 @@
-"""Uniswap Trading API boundary.
+"""Legacy hosted Uniswap Trading API compatibility boundary.
 
-This client can request a quote and unsigned calldata. It intentionally has
-no private key, signer, wallet, or broadcast method.
+The fund executor no longer imports or calls this client. Direct execution
+uses :mod:`malecns.market.direct_uniswap`, which quotes over JSON-RPC and
+builds router calldata locally. This module remains only for older callers
+that explicitly import the legacy API surface.
 """
 
 from __future__ import annotations

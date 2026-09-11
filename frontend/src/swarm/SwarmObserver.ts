@@ -39,6 +39,8 @@ interface Track {
 export class SwarmObserver {
   private readonly tracks = new Map<string, Track>()
   private readonly pendingIntents: BehaviorTradeIntent[] = []
+  private readonly activeCommitments = new Map<string, string>()
+  private readonly lastIntentAtMs = new Map<string, number>()
 
   constructor(
     private readonly expectedAgents: number,
@@ -46,6 +48,7 @@ export class SwarmObserver {
     private readonly approachEpsilonM = 0.0005,
     private readonly departureDebounceSeconds = 0,
     private readonly minHoldSeconds = 0,
+    private readonly intentCooldownSeconds = 0,
   ) {
     if (!Number.isInteger(expectedAgents) || expectedAgents < 1) throw new Error('expectedAgents must be positive')
   }
@@ -103,9 +106,12 @@ export class SwarmObserver {
             track.buyIssuedForVisit &&
             track.buyIssuedAtMs !== null &&
             timestampMs - track.buyIssuedAtMs >= this.minHoldSeconds * 1000 &&
-            track.outsideSeconds >= this.departureDebounceSeconds
+            track.outsideSeconds >= this.departureDebounceSeconds &&
+            this.activeCommitments.get(track.flyId) === track.habitatId
           ) {
             this.emitIntent(track, 'sell', 'departure', timestampMs, distanceM, false)
+            this.activeCommitments.delete(track.flyId)
+            this.lastIntentAtMs.set(track.flyId, timestampMs)
             track.departureCandidate = false
             track.buyIssuedForVisit = false
             track.buyIssuedAtMs = null
@@ -126,9 +132,13 @@ export class SwarmObserver {
           agent.body.contact.ground &&
           agent.landingState === 'landed' &&
           track.currentVisitDwellSeconds >= this.minBuyDwellSeconds &&
-          !track.buyIssuedForVisit
+          !track.buyIssuedForVisit &&
+          this.activeCommitments.get(track.flyId) === undefined &&
+          this.cooldownElapsed(track.flyId, timestampMs)
         ) {
           this.emitIntent(track, 'buy', 'dwell', timestampMs, distanceM, true)
+          this.activeCommitments.set(track.flyId, track.habitatId)
+          this.lastIntentAtMs.set(track.flyId, timestampMs)
           track.buyIssuedForVisit = true
           track.buyIssuedAtMs = timestampMs
         } else if (previousLandingState === 'landed' && agent.landingState === 'departing' && track.buyIssuedForVisit) {
@@ -242,6 +252,11 @@ export class SwarmObserver {
 
   private key(flyId: string, habitatId: string) {
     return `${flyId}\u0000${habitatId}`
+  }
+
+  private cooldownElapsed(flyId: string, timestampMs: number) {
+    const lastIntentAtMs = this.lastIntentAtMs.get(flyId)
+    return lastIntentAtMs === undefined || timestampMs - lastIntentAtMs >= this.intentCooldownSeconds * 1000
   }
 }
 
