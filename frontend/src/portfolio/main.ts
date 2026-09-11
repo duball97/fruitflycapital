@@ -86,9 +86,11 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
       && Number.isFinite(amount)
       && amount > 0
   })
-  const positions = legacyPositions.length
-    ? legacyPositions
-    : observedTokenPositions.map((item) => ({
+  // The wallet observation is authoritative for what is held right now.
+  // Ledger positions can lag after a broadcast, so prefer observed balances
+  // whenever they are available and only use the ledger as a fallback.
+  const positions = observedTokenPositions.length
+    ? observedTokenPositions.map((item) => ({
       symbol: item.tokenSymbol,
       token_address: item.tokenAddress,
       chain_id: item.chainId,
@@ -96,6 +98,7 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
       value_usd: item.observedValueUsd,
       unrealized_pnl_usd: null,
     }))
+    : legacyPositions
   const observedTokenValueUsd = observedTokenPositions.reduce((sum, item) => {
     const value = Number(item.observedValueUsd)
     return Number.isFinite(value) ? sum + value : sum

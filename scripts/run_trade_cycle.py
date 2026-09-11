@@ -85,7 +85,7 @@ def run_cycle(
 
         held_keys = {address.lower() for address, _ in held}
         candidates = [address for address in addresses if address.lower() not in held_keys]
-        
+
         if not candidates and held:
             print("All tokens held—must sell to free up buying capacity")
             candidates = addresses
@@ -96,9 +96,9 @@ def run_cycle(
         except Exception as exc:
             print(f"ERROR: Failed to get wallet snapshot: {exc}", file=sys.stderr)
             per_fly_wei = 0
-        
+
         eth_low = per_fly_wei <= 0 or len(held) > 5
-        
+
         if per_fly_wei <= 0:
             print("WARNING: No ETH available for buys—selling mode only", file=sys.stderr)
             per_fly_eth = "0"
@@ -106,15 +106,15 @@ def run_cycle(
             per_fly_eth = format(Decimal(per_fly_wei) / Decimal(10**18), "f")
 
         rng = random.SystemRandom()
-        
+
         if held:
             min_sells = 1 if not eth_low else min(2, len(held))
             sell_count = rng.randint(min_sells, min(max_sells, len(held)))
         else:
             sell_count = 0
-        
+
         buy_count = rng.randint(1, min(max_buys, len(candidates))) if candidates and per_fly_wei > 0 else 0
-        
+
         try:
             selected = rng.sample(candidates, buy_count) if candidates else []
             sell_targets = rng.sample(held, sell_count) if held else []
@@ -127,7 +127,7 @@ def run_cycle(
             print("BROADCAST CYCLE")
         else:
             print("PREPARE-ONLY CYCLE")
-        
+
         if sell_targets:
             print(f"selling {len(sell_targets)} full positions to free up ETH")
         if selected:
@@ -147,16 +147,16 @@ def run_cycle(
                 )
             except Exception as exc:
                 print(f"ERROR: Sell failed for {address}: {exc}", file=sys.stderr)
-                
+
         for address in selected:
             try:
                 _run_prepare("buy_token.py", address, _token_symbol(wallet, address), ["--eth", per_fly_eth], broadcast=broadcast)
             except Exception as exc:
                 print(f"ERROR: Buy failed for {address}: {exc}", file=sys.stderr)
-                
+
         if not broadcast:
             print("No transaction was broadcast. Review each prepared result and run the existing manual command explicitly.")
-            
+
     except Exception as exc:
         print(f"ERROR: Cycle failed: {exc}", file=sys.stderr)
         traceback.print_exc()
@@ -172,18 +172,18 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="run one cycle and exit")
     parser.add_argument("--broadcast", action="store_true", help="broadcast transactions (default: prepare-only)")
     args = parser.parse_args()
-    
+
     if args.min_interval_seconds <= 0 or args.max_interval_seconds < args.min_interval_seconds:
         parser.error("interval bounds must be positive and max must be >= min")
     if args.max_buys < 1 or args.max_sells < 0:
         parser.error("--max-buys must be positive and --max-sells cannot be negative")
-    
+
     try:
         load_project_env()
     except Exception as exc:
         print(f"ERROR: Failed to load project env: {exc}", file=sys.stderr)
         return 1
-    
+
     try:
         wallet = RpcWalletClient.from_env()
         if wallet is None:
@@ -197,7 +197,7 @@ def main() -> int:
     while True:
         cycle_count += 1
         print(f"\n=== Cycle {cycle_count} ===")
-        
+
         try:
             run_cycle(
                 wallet,
@@ -213,11 +213,11 @@ def main() -> int:
             print(f"CRITICAL ERROR in cycle {cycle_count}: {exc}", file=sys.stderr)
             traceback.print_exc()
             print("Continuing to next cycle...", file=sys.stderr)
-            
+
         if args.once:
             print("Single cycle complete (--once specified)")
             return 0
-            
+
         delay = random.SystemRandom().uniform(args.min_interval_seconds, args.max_interval_seconds)
         minutes = delay / 60
         print(f"Next cycle in {minutes:.1f} minutes...")
