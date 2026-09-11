@@ -356,7 +356,12 @@ export class TokenHabitat {
     // Keep the plume readable from the air, but local enough that adjacent
     // places do not turn the whole floor into one saturated landing zone.
     // Contact remains physical and is not widened by this sensory calibration.
-    const sigma = 0.44 + this.properties.physicalRadiusM * 0.7
+    // Live market feeds can have quiet normalized odor values even when the
+    // habitat is a valid target. Give the biological sensors a stronger,
+    // slightly wider plume so free flies can actually find and contact it.
+    // This is sensory calibration only; it does not alter market data or
+    // choose a token for the swarm.
+    const sigma = 0.50 + this.properties.physicalRadiusM * 0.8
     const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma))
     // Odor is a living plume rather than a constant beacon. Let the pulse
     // reach a real low-signal window; otherwise the old 0.79 minimum meant a
@@ -364,8 +369,9 @@ export class TokenHabitat {
     // whole swarm eventually parked on the floor.
     const pulsePhase = timeSeconds * (0.2 + this.properties.chaos * 0.32) + this.group.position.x * 4.0 + this.group.position.z * 2.6
     const fluctuation = 0.05 + 0.95 * (0.5 + 0.5 * Math.sin(pulsePhase))
+    const attractiveStrength = Math.min(1, this.properties.attractiveOdor * 1.55)
     return {
-      attractive: Math.min(1, Math.max(0, gaussian * this.properties.attractiveOdor * fluctuation)),
+      attractive: Math.min(1, Math.max(0, gaussian * attractiveStrength * fluctuation)),
       aversive: Math.min(1, Math.max(0, gaussian * this.properties.aversiveDanger * fluctuation)),
     }
   }

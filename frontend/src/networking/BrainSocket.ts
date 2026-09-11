@@ -184,7 +184,9 @@ export class BrainSocket {
 
   private claimTelemetryProducer() {
     if (this.socket?.readyState !== WebSocket.OPEN) return false
-    this.socket.send(JSON.stringify({ type: 'swarm_claim' }))
+    const host = window.location.hostname
+    const preferredProducer = host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
+    this.socket.send(JSON.stringify({ type: 'swarm_claim', preferredProducer }))
     return true
   }
 

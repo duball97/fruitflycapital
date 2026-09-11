@@ -15,11 +15,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -126,6 +129,36 @@ def _load_record(raw: str) -> tuple[ExecutionIntent, TokenRef]:
     return intent, token
 
 
+def _brain_health_url() -> str:
+    """Resolve the HTTP health URL paired with the brain WebSocket."""
+
+    value = os.getenv("FUND_BRAIN_HEALTH_URL", "").strip() or os.getenv("VITE_BRAIN_WS_URL", "").strip()
+    if value.startswith("ws://"):
+        value = "http://" + value[5:]
+    elif value.startswith("wss://"):
+        value = "https://" + value[6:]
+    if value and not re.search(r"/healthz(?:\?|$)", value):
+        value = value.rstrip("/") + "/healthz"
+    return value
+
+
+def _brain_is_healthy(url: str) -> bool:
+    if not url:
+        return True
+    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            if response.status != 200:
+                return False
+            raw = response.read().decode("utf-8", errors="replace")
+            if not raw:
+                return True
+            payload = json.loads(raw)
+            return not isinstance(payload, Mapping) or payload.get("status") in {None, "ok"}
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return False
+
+
 class TradeExecutor:
     def __init__(self, mode: str, shared_queue: SupabaseIntentQueue | None = None) -> None:
         self.mode = mode
@@ -151,6 +184,93 @@ class TradeExecutor:
             ledger_path = "data/fund/executor.db"
         ledger = FundLedger(ledger_path or os.getenv("FUND_DB_PATH", "data/fund/fund.db"))
         self.runtime = AutonomousTradingRuntime.from_env(ledger, self.wallet)
+
+    def emergency_sell_confirmed_holdings(
+        self,
+        queue: SupabaseIntentQueue,
+        *,
+        incident_id: str,
+    ) -> list[dict[str, Any]]:
+        """Queue full-balance SELLs for confirmed BUY holdings.
+
+        This is a recovery mechanism for a brain-service outage. It only
+        creates durable Supabase SELL intents; the normal executor loop still
+        performs all quote, approval, gas, signer, and broadcast checks.
+        Holdings are discovered from the wallet RPC, so a stale local ledger
+        cannot cause an incorrect sell amount.
+        """
+
+        holdings: dict[tuple[int, str], dict[str, Any]] = {}
+        for row in queue.execution_results(limit=500):
+            if str(row.get("side") or "").lower() != "buy":
+                continue
+            if str(row.get("status") or "").lower() != "confirmed":
+                continue
+            payload = row.get("payload") if isinstance(row.get("payload"), Mapping) else {}
+            raw_token = payload.get("token") if isinstance(payload.get("token"), Mapping) else {}
+            token_address = str(
+                raw_token.get("address")
+                or row.get("token_out")
+                or ""
+            )
+            if not ADDRESS_RE.fullmatch(token_address) or token_address.lower() == ZERO_ADDRESS.lower():
+                continue
+            chain_id = int(row.get("chain_id") or raw_token.get("chainId") or self.wallet.expected_chain_id or 4663)
+            key = (chain_id, token_address.lower())
+            item = holdings.setdefault(
+                key,
+                {
+                    "chainId": chain_id,
+                    "address": token_address,
+                    "symbol": str(raw_token.get("symbol") or token_address[:8]),
+                    "liquidityUsd": raw_token.get("liquidityUsd"),
+                    "priceUsd": raw_token.get("priceUsd"),
+                    "priceNative": raw_token.get("priceNative"),
+                    "flyIds": set(),
+                },
+            )
+            item["flyIds"].update(str(fly_id) for fly_id in (row.get("fly_ids") or []) if str(fly_id))
+
+        queued: list[dict[str, Any]] = []
+        for item in holdings.values():
+            token_address = str(item["address"])
+            try:
+                balance_raw = self.wallet.erc20_balance_raw(token_address)
+            except Exception as exc:
+                queued.append({"status": "skipped", "tokenAddress": token_address, "reason": f"balance read failed: {exc}"})
+                continue
+            if balance_raw <= 0:
+                continue
+            digest = hashlib.sha256(f"{incident_id}:{item['chainId']}:{token_address.lower()}".encode()).hexdigest()
+            execution_id = f"server-down-sell:{digest}"
+            intent = ExecutionIntent(
+                idempotency_key=execution_id,
+                side="sell",
+                chain_id=int(item["chainId"]),
+                token_in=token_address,
+                token_out=ZERO_ADDRESS,
+                amount_in=str(balance_raw),
+                fly_ids=tuple(sorted(item["flyIds"])),
+                slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")),
+                created_at_ms=int(time.time() * 1000),
+                biological_event_id=f"server-down:{incident_id}:{item['chainId']}:{token_address.lower()}",
+            )
+            payload = {
+                "executionIntent": intent.as_dict(),
+                "token": {
+                    "chainId": int(item["chainId"]),
+                    "address": token_address,
+                    "symbol": item["symbol"],
+                    "liquidityUsd": item["liquidityUsd"],
+                    "priceUsd": item["priceUsd"],
+                    "priceNative": item["priceNative"],
+                },
+                "queuedAtMs": int(time.time() * 1000),
+                "emergencyReason": "brain server health endpoint stale",
+            }
+            queue.enqueue(payload)
+            queued.append({"status": "queued", "side": "sell", "token": item["symbol"], "tokenAddress": token_address, "amountRaw": str(balance_raw), "executionId": execution_id})
+        return queued
 
     def process(self, intent: ExecutionIntent, token: TokenRef) -> dict[str, Any]:
         # A process crash after broadcast but before the queue offset is
@@ -431,8 +551,41 @@ def main() -> int:
     offset = int(offset_path.read_text(encoding="utf-8").strip() or "0") if offset_path.exists() else 0
     print(json.dumps({"status": "ready", "backend": args.backend, "mode": args.mode, "workerId": worker_id}, sort_keys=True), flush=True)
     last_wait_log = 0.0
+    health_url = _brain_health_url() if queue is not None else ""
+    emergency_enabled = os.getenv("FUND_EMERGENCY_SELL_ON_SERVER_DOWN", "false").lower() == "true"
+    outage_after_seconds = max(30.0, float(os.getenv("FUND_BRAIN_OUTAGE_SELL_AFTER_SECONDS", "120")))
+    health_poll_seconds = max(5.0, float(os.getenv("FUND_BRAIN_HEALTH_POLL_SECONDS", "15")))
+    last_health_check = 0.0
+    outage_started_at: float | None = None
+    emergency_incident_id: str | None = None
     while True:
         if queue is not None:
+            now = time.monotonic()
+            if health_url and not args.once and now - last_health_check >= health_poll_seconds:
+                last_health_check = now
+                healthy = _brain_is_healthy(health_url)
+                if healthy:
+                    if outage_started_at is not None:
+                        print(json.dumps({"status": "brain_recovered", "healthUrl": health_url}, sort_keys=True), flush=True)
+                    outage_started_at = None
+                    emergency_incident_id = None
+                else:
+                    outage_started_at = outage_started_at if outage_started_at is not None else now
+                    outage_age = now - outage_started_at
+                    if (
+                        emergency_enabled
+                        and args.mode == "broadcast"
+                        and os.getenv("FUND_RUNNER_CONFIRM_BROADCAST", "false").lower() == "true"
+                        and outage_age >= outage_after_seconds
+                        and emergency_incident_id is None
+                    ):
+                        emergency_incident_id = f"{int(time.time())}"
+                        try:
+                            recovery = executor.emergency_sell_confirmed_holdings(queue, incident_id=emergency_incident_id)
+                            print(json.dumps({"status": "brain_down_emergency_sells", "healthUrl": health_url, "outageSeconds": round(outage_age, 1), "results": recovery}, sort_keys=True), flush=True)
+                        except Exception as exc:
+                            emergency_incident_id = None
+                            print(json.dumps({"status": "emergency_sell_error", "healthUrl": health_url, "error": str(exc)}, sort_keys=True), flush=True)
             try:
                 records = queue.claim(worker_id, limit=1)
             except Exception as exc:

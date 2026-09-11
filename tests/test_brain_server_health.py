@@ -96,3 +96,16 @@ def test_stale_producer_lease_handoffs_to_a_healthy_connection() -> None:
         return first_role, second_role
 
     assert asyncio.run(claim_after_stall()) == ("producer", "producer")
+
+
+def test_local_preferred_producer_can_take_over_from_a_remote_viewer() -> None:
+    lease = SwarmProducerLease()
+    remote = object()
+    local = object()
+
+    async def claim_local() -> tuple[str, str, bool]:
+        remote_role = await lease.claim(remote)
+        local_role = await lease.claim(local, prefer=True)
+        return remote_role, local_role, await lease.is_producer(local)
+
+    assert asyncio.run(claim_local()) == ("producer", "producer", True)

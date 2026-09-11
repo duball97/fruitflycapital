@@ -124,13 +124,13 @@ class SwarmProducerLease:
         self._last_activity = 0.0
         self._lock: asyncio.Lock | None = None
 
-    async def claim(self, connection: Any) -> str:
+    async def claim(self, connection: Any, *, prefer: bool = False) -> str:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
             now = time.monotonic()
             stale = self._producer is not None and now - self._last_activity > self.stale_after_s
-            if self._producer is None or self._producer is connection or stale:
+            if self._producer is None or self._producer is connection or stale or prefer:
                 self._producer = connection
                 self._last_activity = now
                 return "producer"
@@ -306,7 +306,10 @@ async def handle_client(websocket: Any) -> None:
             except (TypeError, json.JSONDecodeError):
                 continue
             if isinstance(message, dict) and message.get("type") == "swarm_claim":
-                role = await TELEMETRY_PRODUCER.claim(websocket)
+                role = await TELEMETRY_PRODUCER.claim(
+                    websocket,
+                    prefer=bool(message.get("preferredProducer")),
+                )
                 try:
                     await websocket.send(json.dumps({"type": "swarm_role", "role": role}))
                     if role == "observer" and LATEST_SWARM_UPDATE is not None:
