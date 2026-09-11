@@ -28,6 +28,7 @@ from malecns.fund.autonomous import AutonomousTradingRuntime, ExecutionIntent, T
 from malecns.fund.ledger import FundLedger
 from malecns.fund.wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
 from malecns.market.direct_uniswap import DirectUniswapClient
+from malecns.market.uniswap_client import UniswapTradingClient
 from malecns.fund.supabase_queue import SupabaseIntentQueue
 
 
@@ -76,6 +77,8 @@ def _transaction_from_swap(payload: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "nonce", "chainId"):
         if candidate.get(key) is not None:
             transaction[key] = _int_value(candidate[key])
+    if candidate.get("gasLimit") is not None and candidate.get("gas") is None:
+        transaction["gas"] = _int_value(candidate["gasLimit"])
     return transaction
 
 
@@ -124,12 +127,14 @@ def _load_record(raw: str) -> tuple[ExecutionIntent, TokenRef]:
 
 
 class TradeExecutor:
-    def __init__(self, mode: str) -> None:
+    def __init__(self, mode: str, shared_queue: SupabaseIntentQueue | None = None) -> None:
         self.mode = mode
+        self.shared_queue = shared_queue
         self.wallet = RpcWalletClient.from_env()
         if self.wallet is None:
             raise RuntimeError("FUND_RPC_URL and FUND_WALLET_ADDRESS are required")
-        self.client = DirectUniswapClient.from_env(self.wallet)
+        self.api_client = UniswapTradingClient.from_env()
+        self.client = self.api_client or DirectUniswapClient.from_env(self.wallet)
         if mode == "broadcast" and os.getenv("FUND_RUNNER_CONFIRM_BROADCAST", "false").lower() != "true":
             raise RuntimeError("set FUND_RUNNER_CONFIRM_BROADCAST=true to enable broadcasting")
         # In Supabase queue mode the brain service owns the canonical queue.
@@ -162,7 +167,52 @@ class TradeExecutor:
         prepared = self._prepare(intent, token)
         if self.mode == "prepare":
             return {"status": "prepared", "executionId": intent.idempotency_key, **prepared}
+
+        # Persist the attempt before spending gas. register_broadcast() needs
+        # this identity, and the separate executor ledger must retain enough
+        # context to recover a hash even if the process exits immediately
+        # after eth_sendRawTransaction returns.
+        self.runtime.ledger.record_execution_attempt({
+            "attempt_id": intent.idempotency_key,
+            "idempotency_key": intent.idempotency_key,
+            "status": "prepared",
+            "side": intent.side,
+            "chain_id": intent.chain_id,
+            "token_in": intent.token_in,
+            "token_out": intent.token_out,
+            "amount_in": intent.amount_in,
+            "amount_out": prepared.get("expectedOutput"),
+            "fly_ids_json": json.dumps(list(intent.fly_ids)),
+            "execution_price": token.price_native,
+            "gas": prepared.get("estimatedGas"),
+            "slippage": intent.slippage_tolerance,
+            "tx_hash": None,
+            "nonce": prepared.get("transaction", {}).get("nonce"),
+            "error": None,
+            "created_ms": intent.created_at_ms,
+            "updated_ms": int(time.time() * 1000),
+        })
         tx_hash = self._broadcast(prepared["transaction"], intent, token)
+        self.runtime.ledger.record_execution_attempt({
+            "attempt_id": intent.idempotency_key,
+            "idempotency_key": intent.idempotency_key,
+            "status": "BROADCAST",
+            "side": intent.side,
+            "chain_id": intent.chain_id,
+            "token_in": intent.token_in,
+            "token_out": intent.token_out,
+            "amount_in": intent.amount_in,
+            "amount_out": prepared.get("expectedOutput"),
+            "fly_ids_json": json.dumps(list(intent.fly_ids)),
+            "execution_price": token.price_native,
+            "gas": prepared.get("estimatedGas"),
+            "slippage": intent.slippage_tolerance,
+            "tx_hash": tx_hash,
+            "nonce": None,
+            "error": None,
+            "created_ms": intent.created_at_ms,
+            "updated_ms": int(time.time() * 1000),
+        })
         self.runtime.tokens_by_address[(token.chain_id, token.address.lower())] = token
         registered = self.runtime.register_broadcast(
             intent.idempotency_key,
@@ -173,6 +223,24 @@ class TradeExecutor:
         )
         if not registered:
             raise RuntimeError("broadcast succeeded but the execution record could not be registered")
+        if self.shared_queue is not None:
+            try:
+                # Make the real hash visible to the brain service immediately;
+                # the final receipt transition is written below after polling.
+                self.shared_queue.finish(
+                    intent.idempotency_key,
+                    "broadcast",
+                    result={
+                        "status": "BROADCAST",
+                        "executionId": intent.idempotency_key,
+                        "txHash": tx_hash,
+                        "expectedOutput": prepared.get("expectedOutput"),
+                    },
+                )
+            except Exception:
+                # The local executor ledger and RPC receipt remain canonical;
+                # the queue can be refreshed by the final finish below.
+                pass
         status, receipt = self._wait_for_receipt(tx_hash)
         self.runtime.snapshot()
         return {"status": status, "executionId": intent.idempotency_key, "txHash": tx_hash, "receipt": receipt, "expectedOutput": prepared.get("expectedOutput")}
@@ -181,6 +249,8 @@ class TradeExecutor:
         wallet = self.wallet.snapshot()
         if wallet.chain_id != intent.chain_id:
             raise WalletRpcError(f"wallet RPC chain {wallet.chain_id} does not match intent chain {intent.chain_id}")
+        if self.api_client is not None:
+            return self._prepare_with_api(intent, token, wallet)
         quote = self.client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=_int_value(intent.amount_in))
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
             token_balance = self.wallet.erc20_balance_raw(intent.token_in)
@@ -203,6 +273,69 @@ class TradeExecutor:
         gas_price_hex = self.wallet.call("eth_gasPrice", [])
         gas_price = _int_value(gas_price_hex)
         native_input = _int_value(intent.amount_in) if intent.token_in.lower() == ZERO_ADDRESS.lower() else 0
+        required = native_input + transaction["gas"] * gas_price + wallet.gas_reserve_wei
+        if required > wallet.native_balance_wei:
+            raise WalletRpcError("input plus estimated gas would consume the gas reserve")
+        return {"transaction": transaction, "quote": quote.as_dict(), "swap": swap, "estimatedGas": transaction["gas"], "gasPrice": gas_price, "expectedOutput": str(quote.amount_out), "walletBeforeNativeWei": wallet.native_balance_wei}
+
+    def _prepare_with_api(self, intent: ExecutionIntent, token: TokenRef, wallet: Any) -> dict[str, Any]:
+        amount_in = _int_value(intent.amount_in)
+        if intent.token_in.lower() == ZERO_ADDRESS.lower() and amount_in > wallet.available_native_wei:
+            raise WalletRpcError("insufficient native balance after gas reserve")
+
+        # The backend uses Uniswap's proxy-approval compatibility flow. It
+        # returns ordinary approval calldata and keeps the permit signature
+        # out of the autonomous runner.
+        if intent.token_in.lower() != ZERO_ADDRESS.lower():
+            approval_response = self.api_client.check_approval_for_swap(
+                wallet_address=wallet.wallet_address,
+                token=intent.token_in,
+                amount=amount_in,
+                chain_id=intent.chain_id,
+            )
+            cancel = approval_response.get("cancel")
+            approval = approval_response.get("approval")
+            if isinstance(cancel, Mapping) and self.mode == "prepare":
+                return {"status": "approval_cancel_required", "approval": _transaction_from_swap(cancel), "approvalSource": "uniswap-api", "walletBeforeNativeWei": wallet.native_balance_wei}
+            if isinstance(cancel, Mapping):
+                cancel_hash = self._broadcast(_transaction_from_swap(cancel), intent, token)
+                cancel_status, _ = self._wait_for_receipt(cancel_hash)
+                if cancel_status != "CONFIRMED":
+                    raise RuntimeError(f"approval cancellation transaction {cancel_hash} ended {cancel_status}")
+            if isinstance(approval, Mapping):
+                if self.mode == "prepare":
+                    return {"status": "approval_required", "approval": _transaction_from_swap(approval), "approvalSource": "uniswap-api", "walletBeforeNativeWei": wallet.native_balance_wei}
+                approval_tx = _transaction_from_swap(approval)
+                approval_hash = self._broadcast(approval_tx, intent, token)
+                approval_status, _ = self._wait_for_receipt(approval_hash)
+                if approval_status != "CONFIRMED":
+                    raise RuntimeError(f"approval transaction {approval_hash} ended {approval_status}")
+
+        quote = self.api_client.quote_exact_input(
+            swapper=wallet.wallet_address,
+            token_in=intent.token_in,
+            token_out=intent.token_out,
+            chain_id=intent.chain_id,
+            amount_in=amount_in,
+            slippage_tolerance=intent.slippage_tolerance,
+        )
+        swap = self.api_client.create_swap_transaction(quote)
+        api_from = swap.get("from")
+        if api_from and str(api_from).lower() != wallet.wallet_address.lower():
+            raise WalletRpcError("Uniswap API transaction sender does not match the strategy wallet")
+        api_chain_id = swap.get("chainId")
+        if api_chain_id is not None and _int_value(api_chain_id) != wallet.chain_id:
+            raise WalletRpcError("Uniswap API transaction chain does not match the wallet RPC chain")
+        transaction = _transaction_from_swap(swap)
+        if not isinstance(transaction.get("data"), str) or transaction["data"] in {"", "0x"}:
+            raise WalletRpcError("Uniswap API returned empty transaction calldata")
+        try:
+            estimated_gas = self.wallet.call("eth_estimateGas", [_rpc_transaction(transaction, wallet.wallet_address), "latest"])
+        except Exception as exc:
+            raise WalletRpcError(f"gas estimation failed: {exc}") from exc
+        transaction["gas"] = _int_value(estimated_gas)
+        gas_price = _int_value(self.wallet.call("eth_gasPrice", []))
+        native_input = amount_in if intent.token_in.lower() == ZERO_ADDRESS.lower() else 0
         required = native_input + transaction["gas"] * gas_price + wallet.gas_reserve_wei
         if required > wallet.native_balance_wei:
             raise WalletRpcError("input plus estimated gas would consume the gas reserve")
@@ -252,14 +385,14 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=float, default=float(os.getenv("FUND_RUNNER_POLL_SECONDS", "1")))
     args = parser.parse_args()
     os.environ["FUND_INTENT_QUEUE_BACKEND"] = args.backend
-    try:
-        executor = TradeExecutor(args.mode)
-    except Exception as exc:
-        print(json.dumps({"status": "startup_error", "error": str(exc)}), file=sys.stderr)
-        return 2
     queue = SupabaseIntentQueue.from_env() if args.backend == "supabase" else None
     if args.backend == "supabase" and queue is None:
         print(json.dumps({"status": "startup_error", "error": "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for --backend supabase"}), file=sys.stderr)
+        return 2
+    try:
+        executor = TradeExecutor(args.mode, shared_queue=queue)
+    except Exception as exc:
+        print(json.dumps({"status": "startup_error", "error": str(exc)}), file=sys.stderr)
         return 2
     worker_id = SupabaseIntentQueue.new_worker_id() if queue is not None else "file-worker"
     queue_path = Path(args.queue)

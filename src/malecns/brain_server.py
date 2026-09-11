@@ -40,7 +40,11 @@ MARKET_ENGINE = MarketSignalEngine.from_env()
 REALTIME_CACHE = Path(os.getenv("MALECNS_REALTIME_CACHE", str(default_realtime_cache())))
 REALTIME_SEED = int(os.getenv("MALECNS_REALTIME_SEED", "0"))
 REALTIME_WINDOW_MS = float(os.getenv("MALECNS_REALTIME_WINDOW_MS", "50"))
-SWARM_SIZE = 16
+try:
+    _configured_swarm_size = int(os.getenv("NEUROSWARM_SWARM_SIZE", "8"))
+except ValueError:
+    _configured_swarm_size = 8
+SWARM_SIZE = max(1, min(100, _configured_swarm_size))
 # Keep the live proposal stream deliberately calm. Environment values may
 # increase these windows, but cannot silently make the feed more aggressive.
 BEHAVIOR_DWELL_SECONDS = max(8.0, float(os.getenv("FUND_BEHAVIOR_DWELL_SECONDS", "8.0")))
@@ -58,6 +62,59 @@ SWARM_DECISIONS = SwarmDecisionPipeline(
 )
 FUND_SERVICE = FundService.from_env()
 AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)
+
+
+class SwarmProducerLease:
+    """Allow exactly one browser connection to author swarm telemetry."""
+
+    def __init__(self) -> None:
+        self._producer: Any | None = None
+        self._lock: asyncio.Lock | None = None
+
+    async def claim(self, connection: Any) -> str:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._producer is None or self._producer is connection:
+                self._producer = connection
+                return "producer"
+            return "observer"
+
+    async def release(self, connection: Any) -> bool:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._producer is not connection:
+                return False
+            self._producer = None
+            return True
+
+    async def is_producer(self, connection: Any) -> bool:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            return self._producer is connection
+
+
+TELEMETRY_PRODUCER = SwarmProducerLease()
+CONNECTED_CLIENTS: set[Any] = set()
+LATEST_SWARM_UPDATE: dict[str, Any] | None = None
+
+
+async def _broadcast(payload: Mapping[str, Any]) -> None:
+    """Send one authoritative server event to every connected screen."""
+
+    raw = json.dumps(dict(payload))
+    clients = tuple(CONNECTED_CLIENTS)
+    if not clients:
+        return
+    results = await asyncio.gather(
+        *(client.send(raw) for client in clients),
+        return_exceptions=True,
+    )
+    for client, result in zip(clients, results):
+        if isinstance(result, BaseException):
+            CONNECTED_CLIENTS.discard(client)
 
 
 def _stable_fly_seed(fly_id: str, base_seed: int = REALTIME_SEED) -> int:
@@ -172,6 +229,8 @@ def command_for_sensor_frame(
 
 
 async def handle_client(websocket: Any) -> None:
+    global LATEST_SWARM_UPDATE
+    CONNECTED_CLIENTS.add(websocket)
     try:
         await websocket.send(json.dumps({"type": "hello", "protocol": "male-cns-fly-world", "version": 1}))
         async for raw in websocket:
@@ -179,7 +238,26 @@ async def handle_client(websocket: Any) -> None:
                 message = json.loads(raw)
             except (TypeError, json.JSONDecodeError):
                 continue
+            if isinstance(message, dict) and message.get("type") == "swarm_claim":
+                role = await TELEMETRY_PRODUCER.claim(websocket)
+                try:
+                    await websocket.send(json.dumps({"type": "swarm_role", "role": role}))
+                    if role == "observer" and LATEST_SWARM_UPDATE is not None:
+                        await websocket.send(json.dumps(LATEST_SWARM_UPDATE))
+                except (ConnectionError, ConnectionClosed):
+                    break
+                continue
             if isinstance(message, dict) and message.get("type") == "swarm_telemetry":
+                # Backward-compatible implicit claim for an older frontend,
+                # but never accept telemetry from a second connection.
+                if not await TELEMETRY_PRODUCER.is_producer(websocket):
+                    role = await TELEMETRY_PRODUCER.claim(websocket)
+                    try:
+                        await websocket.send(json.dumps({"type": "swarm_role", "role": role}))
+                    except (ConnectionError, ConnectionClosed):
+                        break
+                    if role != "producer":
+                        continue
                 observations = _parse_swarm_telemetry(message)
                 if observations:
                     decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
@@ -190,8 +268,9 @@ async def handle_client(websocket: Any) -> None:
                     )
                     decision_payload = decision.as_dict()
                     decision_payload["autonomousTrading"] = autonomous
+                    LATEST_SWARM_UPDATE = {"type": "swarm_update", "decision": decision_payload}
                     try:
-                        await websocket.send(json.dumps({"type": "swarm_update", "decision": decision_payload}))
+                        await _broadcast(LATEST_SWARM_UPDATE)
                     except (ConnectionError, ConnectionClosed):
                         break
                 continue
@@ -249,7 +328,10 @@ async def handle_client(websocket: Any) -> None:
             if "spikeRates" in runtime_metadata:
                 output["spikeRates"] = runtime_metadata["spikeRates"]
             try:
-                await websocket.send(json.dumps(output))
+                # Brain commands are part of the same authoritative stream as
+                # swarm decisions. Viewers consume the producer's output and
+                # never submit a second sensory stream.
+                await _broadcast(output)
             except (ConnectionError, ConnectionClosed):
                 break
     except (ConnectionError, ConnectionClosed):
@@ -257,6 +339,10 @@ async def handle_client(websocket: Any) -> None:
         # close frame. This is a normal client lifecycle event, not a server
         # error that should fill the logs or take down the process.
         return
+    finally:
+        CONNECTED_CLIENTS.discard(websocket)
+        if await TELEMETRY_PRODUCER.release(websocket):
+            await _broadcast({"type": "swarm_role", "role": "available"})
 
 
 def process_http_request(connection: Any, request: Any) -> Any | None:

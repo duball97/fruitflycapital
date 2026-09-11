@@ -83,6 +83,10 @@ export class TokenHabitat {
     this.logo.userData.tokenHabitatId = state.id
     this.logo.position.y = 0.17
     this.logo.scale.set(0.076, 0.076, 1)
+    // Identity is rendered by the projected DOM logo overlay. Keeping the
+    // old text sprite visible underneath produced a duplicate token name
+    // behind provider logos, especially in close camera views.
+    this.logo.visible = false
     this.group.add(this.logo)
 
     this.pile = new Mesh(new CylinderGeometry(0.065, 0.09, 0.035, 18), new MeshStandardMaterial({ color: 0x6d654f, metalness: 0.4, roughness: 0.58 }))

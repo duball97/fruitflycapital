@@ -378,7 +378,9 @@ class SwarmObserver:
                 reason=reason,
                 confidence=confidence,
                 observed_at_ms=timestamp_ms,
-                portfolio_weight=1.0 / max(1, self.expected_agents),
+                # Keep the former sixteen-brain 6.25% capital ceiling when
+                # the active population is reduced to eight.
+                portfolio_weight=min(1.0 / max(1, self.expected_agents), 0.0625),
                 metrics={
                     "distanceM": round(distance_m, 6),
                     "visits": track.visits,

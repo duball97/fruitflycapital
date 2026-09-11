@@ -1,5 +1,7 @@
 export type TradeAudioSide = 'buy' | 'sell'
 
+type AudioContextConstructor = new () => AudioContext
+
 /**
  * A small procedural sound bed keeps the experience self-contained and fast:
  * no large MP3 download, no third-party player, and no CDN audio dependency.
@@ -12,38 +14,64 @@ export class SceneAudio {
   private ambientSources: AudioScheduledSourceNode[] = []
   private enabled = false
   private lastCueAt: Record<TradeAudioSide, number> = { buy: 0, sell: 0 }
+  private transition: Promise<boolean> | null = null
 
   get isEnabled() {
     return this.enabled
   }
 
-  async enable() {
-    const AudioContextConstructor = window.AudioContext
-    if (!AudioContextConstructor) return false
-    if (!this.context) {
-      this.context = new AudioContextConstructor()
-      this.master = this.context.createGain()
-      this.master.gain.value = 0.055
-      this.master.connect(this.context.destination)
-      this.startAmbient()
+  async enable(): Promise<boolean> {
+    if (this.transition) return this.transition
+    this.transition = this.startAudio()
+    try {
+      return await this.transition
+    } finally {
+      this.transition = null
     }
-    if (this.context.state === 'suspended') await this.context.resume()
-    this.enabled = this.context.state === 'running'
-    return this.enabled
   }
 
-  async disable() {
-    if (!this.context) return
-    await this.context.suspend()
-    this.enabled = false
+  async disable(): Promise<void> {
+    if (!this.context) {
+      this.enabled = false
+      return
+    }
+    try {
+      await this.context.suspend()
+    } finally {
+      this.enabled = false
+    }
   }
 
-  async toggle() {
+  async toggle(): Promise<boolean> {
     if (this.enabled) {
       await this.disable()
       return false
     }
     return this.enable()
+  }
+
+  private async startAudio(): Promise<boolean> {
+    const audioWindow = window as Window & { webkitAudioContext?: AudioContextConstructor }
+    const AudioContextImplementation = window.AudioContext ?? audioWindow.webkitAudioContext
+    if (!AudioContextImplementation) return false
+
+    try {
+      if (!this.context) {
+        this.context = new AudioContextImplementation()
+        this.master = this.context.createGain()
+        this.master.gain.value = 0.055
+        this.master.connect(this.context.destination)
+        this.startAmbient()
+      }
+
+      const state = String(this.context.state)
+      if (state === 'suspended' || state === 'interrupted') await this.context.resume()
+      this.enabled = this.context.state === 'running'
+      return this.enabled
+    } catch {
+      this.enabled = false
+      return false
+    }
   }
 
   playTradeCue(side: TradeAudioSide) {

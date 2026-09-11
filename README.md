@@ -20,14 +20,14 @@ then sensed through the embodied loop.
 
 ## Current reality
 
-The current interactive default is a **16-brain pilot**, not 100 completed
-full-CNS simulations. The browser renders five canonical Flybody views per
-brain by default, so 16 brains produce 80 visible flies. Each numbered primary
-agent (`fly-001` through `fly-016`) has its
+The current interactive default is an **8-brain pilot**, not 100 completed
+full-CNS simulations. The browser renders one canonical Flybody view per
+brain by default, so 8 brains produce 8 visible flies. Each numbered primary
+agent (`fly-001` through `fly-008`) has its
 own Flybody pose, sensor frame, actuator state, and server-side Brian2 runtime
 identity/seed. The connectome topology and model parameters are shared as
 immutable configuration; membrane state, spikes, history, and RNG state are
-not shared. Four additional bodies per primary are render-only followers: they
+not shared. Additional bodies can be enabled as render-only followers: they
 share the primary actuator intent with small deterministic spacing and timing
 variation, but do not sense, run a brain, or add votes.
 
@@ -45,10 +45,11 @@ independent Brian2 runtime, decoded, and sent through the shared
 issue a hidden “go to coin” command. If the validated pathway is quiet, the
 command remains neutral and the UI reports that state.
 
-The product strategy uses exactly sixteen independent brains:
+The product strategy uses eight independent brains by default:
 
 ```env
-VITE_BODIES_PER_BRAIN=5
+VITE_SWARM_SIZE=8
+VITE_BODIES_PER_BRAIN=1
 ```
 
 `VITE_BODIES_PER_BRAIN` controls render-only followers. Followers never sense,
@@ -139,9 +140,11 @@ FUND_INTENT_QUEUE_PATH=data/fund/execution-intents.jsonl
 
 Start the brain server as usual, then run the executor from the repository
 root. It consumes netted intents, resolves the exact chain/address, checks
-balances and liquidity, discovers a direct V2/V3 route and quote over
-JSON-RPC, builds router calldata, estimates gas, and records the result in
-the shared fund ledger. It does not call the hosted Uniswap Trading API:
+balances, obtains a route/quote, builds transaction calldata, estimates gas,
+and records the result in the shared fund ledger. When `UNISWAP_API_KEY` is
+set, it uses the hosted Uniswap Trading API so Robinhood Chain V4 and
+multihop routes are available. Without that key it falls back to the direct
+JSON-RPC V2/V3 adapter:
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py
@@ -160,7 +163,8 @@ PYTHONPATH=src .venv/bin/python scripts/run_trade_executor.py --mode broadcast
 The runner signs only with `PRIVATE_KEY` from its own process, verifies that it
 controls `FUND_WALLET_ADDRESS`, submits the raw transaction, polls the RPC
 receipt, and lets the existing receipt/Blockscout layer classify and reconcile
-the real hash. Simulation fills never enter the mainnet-executed table.
+the real hash. Simulation fills never enter the mainnet-executed table. The
+Uniswap API key is server-side only and is never sent to the frontend.
 
 For Robinhood testnet use `FUND_CHAIN_ID=46630`,
 `FUND_RPC_URL=https://rpc.testnet.chain.robinhood.com`, and the testnet
@@ -450,11 +454,12 @@ metric definitions, provenance, and the planned provider boundaries.
 
 ## NeuroSwarm population pilot
 
-The current milestone is a sixteen-brain population pilot rendered as eighty
-canonical Flybody bodies. Each primary has its own body, sensor frame,
+The current milestone is an eight-brain population pilot rendered as eight
+canonical Flybody bodies by default. Each primary has its own body, sensor frame,
 actuator state, unique `fly-NNN` brain ID, and server-side RNG stream. Four
-render-only followers are attached to each primary; they do not sense, create
-brain runtimes, or add consensus votes. Live mode dynamically creates one
+render-only followers can be attached to each primary with
+`VITE_BODIES_PER_BRAIN`; they do not sense, create brain runtimes, or add
+consensus votes. Live mode dynamically creates one
 `TokenHabitat` per market ID up to the world capacity. Each habitat exposes
 only physical proxies—visual brightness/motion, attractive odor, and aversive
 danger. The local test scenarios can still create eight fixture habitats; those
@@ -464,7 +469,7 @@ reserved for developer tests and are not part of the product surface.
 
 ## Swarm behavior and fund boundary
 
-The browser sends throttled behavior telemetry for the sixteen primary bodies
+The browser sends throttled behavior telemetry for the eight primary bodies
 to the Python server. `malecns.swarm.SwarmObserver` measures per-agent,
 per-habitat visits, approach episodes, departures, dwell, repeat visits,
 distance history, contact, congregation, and persistence. The

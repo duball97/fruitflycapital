@@ -236,7 +236,9 @@ export class SwarmObserver {
       reason,
       confidence: round(confidence),
       observedAtMs,
-      portfolioWeight: 1 / this.expectedAgents,
+      // Preserve the former sixteen-brain 6.25% capital ceiling when the
+      // active population is reduced to eight.
+      portfolioWeight: Math.min(1 / this.expectedAgents, 0.0625),
       metrics: {
         distanceM: round(distanceM),
         visits: track.visits,

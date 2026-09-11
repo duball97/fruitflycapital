@@ -1,7 +1,8 @@
-import type { ActuatorCommand, BrainActivity, BrainInputMessage, EnvironmentUpdateMessage, MaleCNSSensoryStimulation, SwarmTelemetryMessage, FundStatusUpdateMessage, PortfolioUpdateMessage, TradeHistoryUpdateMessage } from './protocol'
-import { isBrainOutputMessage, isEnvironmentUpdateMessage, isSwarmUpdateMessage } from './protocol'
+import type { ActuatorCommand, BrainActivity, BrainInputMessage, EnvironmentUpdateMessage, MaleCNSSensoryStimulation, SwarmTelemetryMessage, SwarmRoleMessage, FundStatusUpdateMessage, PortfolioUpdateMessage, TradeHistoryUpdateMessage } from './protocol'
+import { isBrainOutputMessage, isEnvironmentUpdateMessage, isSwarmRoleMessage, isSwarmUpdateMessage } from './protocol'
 
 export type BrainSocketStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+export type SwarmTelemetryRole = SwarmRoleMessage['role'] | 'unknown'
 
 const neutralCommand: ActuatorCommand = {
   forwardThrust: 0,
@@ -27,6 +28,8 @@ export class BrainSocket {
   private reconnectTimer: number | null = null
   private reconnectAttempt = 0
   private shouldReconnect = true
+  private role: SwarmTelemetryRole = 'unknown'
+  private readonly roleListeners = new Set<(role: SwarmTelemetryRole) => void>()
 
   constructor(private readonly url: string) {}
 
@@ -38,12 +41,15 @@ export class BrainSocket {
     this.socket = socket
     socket.addEventListener('open', () => {
       this.reconnectAttempt = 0
+      this.setRole('unknown')
       this.setStatus('connected')
+      this.claimTelemetryProducer()
     })
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return
       this.socket = null
       this.pendingInputs.clear()
+      this.setRole('unknown')
       this.setStatus('disconnected')
       this.scheduleReconnect()
     })
@@ -58,6 +64,7 @@ export class BrainSocket {
     this.socket?.close()
     this.socket = null
     this.pendingInputs.clear()
+    this.setRole('unknown')
     this.setStatus('disconnected')
   }
 
@@ -66,8 +73,13 @@ export class BrainSocket {
     return () => this.listeners.delete(listener)
   }
 
+  onSwarmRoleChange(listener: (role: SwarmTelemetryRole) => void) {
+    this.roleListeners.add(listener)
+    return () => this.roleListeners.delete(listener)
+  }
+
   send(frame: BrainInputMessage) {
-    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    if (this.socket?.readyState !== WebSocket.OPEN || this.role !== 'producer') return false
     // The Brian2 adapter is deliberately slower than the render loop. Never
     // let one fly build an unbounded queue of stale sensory frames while its
     // previous fixed window is still running.
@@ -84,9 +96,13 @@ export class BrainSocket {
   }
 
   sendSwarmTelemetry(message: SwarmTelemetryMessage) {
-    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    if (this.socket?.readyState !== WebSocket.OPEN || this.role !== 'producer') return false
     this.socket.send(JSON.stringify(message))
     return true
+  }
+
+  telemetryRole() {
+    return this.role
   }
 
   swarmDecision() {
@@ -146,6 +162,9 @@ export class BrainSocket {
         this.latestEnvironment = message.environment
       } else if (isSwarmUpdateMessage(message)) {
         this.latestSwarmDecision = message.decision
+      } else if (isSwarmRoleMessage(message)) {
+        this.setRole(message.role === 'available' ? 'unknown' : message.role)
+        if (message.role === 'available') this.claimTelemetryProducer()
       } else if (message && typeof message === 'object' && (message as { type?: string }).type === 'fund_status_update') {
         this.latestFundStatus = (message as FundStatusUpdateMessage).fund
       } else if (message && typeof message === 'object' && (message as { type?: string }).type === 'portfolio_update') {
@@ -163,9 +182,21 @@ export class BrainSocket {
     this.socket.send(JSON.stringify(message)); return true
   }
 
+  private claimTelemetryProducer() {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    this.socket.send(JSON.stringify({ type: 'swarm_claim' }))
+    return true
+  }
+
   private setStatus(status: BrainSocketStatus) {
     this.status = status
     this.listeners.forEach((listener) => listener(status))
+  }
+
+  private setRole(role: SwarmTelemetryRole) {
+    if (this.role === role) return
+    this.role = role
+    this.roleListeners.forEach((listener) => listener(role))
   }
 
   private scheduleReconnect() {

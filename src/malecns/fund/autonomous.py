@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping, Protocol
 from malecns.swarm.observer import BehaviorTradeIntent
 
 from ..market.direct_uniswap import DirectUniswapClient
+from ..market.uniswap_client import UniswapTradingClient
 from .ledger import FundLedger
 from .receipts import BlockscoutClient, ReceiptStatus, explorer_url, observe_receipt
 from .wallet import ZERO_ADDRESS, RpcWalletClient, WalletRpcError
@@ -205,7 +206,7 @@ class MainnetExecutionAdapter:
     boundary and is intentionally not performed here.
     """
 
-    def __init__(self, wallet: RpcWalletClient, client: DirectUniswapClient) -> None:
+    def __init__(self, wallet: RpcWalletClient, client: DirectUniswapClient | UniswapTradingClient) -> None:
         self.wallet = wallet
         self.client = client
 
@@ -216,6 +217,29 @@ class MainnetExecutionAdapter:
         if intent.token_in.lower() == ZERO_ADDRESS.lower() and int(intent.amount_in) > wallet.available_native_wei:
             raise WalletRpcError("insufficient native balance after gas reserve")
         amount_in = int(intent.amount_in)
+        if isinstance(self.client, UniswapTradingClient):
+            if intent.token_in.lower() != ZERO_ADDRESS.lower():
+                approval_response = self.client.check_approval_for_swap(wallet_address=wallet.wallet_address, token=intent.token_in, amount=amount_in, chain_id=intent.chain_id)
+                cancel = approval_response.get("cancel")
+                approval = approval_response.get("approval")
+                if isinstance(cancel, Mapping):
+                    return {"status": "approval_cancel_required", "approval": {"transaction": cancel, "source": "uniswap-trading-api"}, "txHash": None}
+                if isinstance(approval, Mapping):
+                    return {"status": "approval_required", "approval": {"transaction": approval, "source": "uniswap-trading-api"}, "txHash": None}
+            quote = self.client.quote_exact_input(swapper=wallet.wallet_address, token_in=intent.token_in, token_out=intent.token_out, chain_id=intent.chain_id, amount_in=amount_in, slippage_tolerance=intent.slippage_tolerance)
+            tx = self.client.create_swap_transaction(quote)
+            if tx.get("from") and str(tx["from"]).lower() != wallet.wallet_address.lower():
+                raise WalletRpcError("Uniswap API transaction sender does not match the strategy wallet")
+            if tx.get("chainId") is not None and int(tx["chainId"]) != wallet.chain_id:
+                raise WalletRpcError("Uniswap API transaction chain does not match the wallet RPC chain")
+            if not isinstance(tx.get("to"), str) or not ADDRESS_RE.fullmatch(str(tx.get("to"))) or not isinstance(tx.get("data"), str) or tx.get("data") in {"", "0x"} or tx.get("value") is None:
+                raise WalletRpcError("Uniswap API returned invalid transaction calldata")
+            try:
+                estimated_gas = self.wallet.call("eth_estimateGas", [{"from": wallet.wallet_address, "to": tx["to"], "data": tx["data"], "value": hex(int(str(tx["value"]), 16) if str(tx["value"]).startswith("0x") else int(str(tx["value"])))}, "latest"])
+            except Exception as exc:
+                raise WalletRpcError(f"gas estimation failed: {exc}") from exc
+            nonce = self.wallet.call("eth_getTransactionCount", [wallet.wallet_address, "pending"])
+            return {"status": "prepared_external_authorization", "txHash": None, "quote": quote.as_dict(), "swap": tx, "nonce": nonce, "estimatedGas": estimated_gas, "executionPrice": token.price_native, "gas": None, "slippage": intent.slippage_tolerance}
         quote = self.client.quote(token_in=intent.token_in, token_out=intent.token_out, amount_in=amount_in)
         if intent.token_in.lower() != ZERO_ADDRESS.lower():
             allowance = self.client.allowance(intent.token_in, wallet.wallet_address, route_kind=quote.kind)
@@ -297,11 +321,15 @@ class SupabaseExecutionAdapter:
 
 
 class AutonomousTradingRuntime:
-    """Stateful 16-fly allocation runtime with netted execution intents."""
+    """Stateful fly allocation runtime with netted execution intents."""
 
-    def __init__(self, ledger: FundLedger, *, expected_agents: int = 16, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_hold_seconds: float = 120.0, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5) -> None:
+    def __init__(self, ledger: FundLedger, *, expected_agents: int = 8, wallet: RpcWalletClient | None = None, adapter: ExecutionAdapter | None = None, departure_debounce_ms: int = 1_500, min_hold_seconds: float = 120.0, min_liquidity_usd: float = 0.0, slippage_tolerance: float = 0.5, max_per_fly_allocation_fraction: float = 0.0625) -> None:
         self.ledger = ledger
         self.expected_agents = max(1, int(expected_agents))
+        # Preserve the former sixteen-brain capital ceiling after reducing
+        # the active population: eight brains still max out at 6.25% each.
+        self.max_per_fly_allocation_fraction = max(0.0, min(1.0, float(max_per_fly_allocation_fraction)))
+        self.per_fly_allocation_fraction = min(1.0 / self.expected_agents, self.max_per_fly_allocation_fraction)
         self.wallet = wallet
         self.adapter = adapter or SimulationExecutionAdapter()
         self.receipt_poll_seconds = max(0.5, float(os.getenv("FUND_RECEIPT_POLL_SECONDS", "3")))
@@ -329,7 +357,7 @@ class AutonomousTradingRuntime:
         self.processed_events = {str(row["idempotency_key"]) for row in self.ledger.rows("execution_attempts", limit=100000)}
         for index in range(1, self.expected_agents + 1):
             fly_id = f"fly-{index:03d}"
-            self.positions[fly_id] = FlyCapitalPosition(fly_id, allocation_fraction=1.0 / self.expected_agents)
+            self.positions[fly_id] = FlyCapitalPosition(fly_id, allocation_fraction=self.per_fly_allocation_fraction)
         for row in self.ledger.rows("fly_positions", limit=100000):
             self.positions[str(row["fly_id"])] = FlyCapitalPosition(str(row["fly_id"]), str(row["state"]), row["chain_id"], row["token_address"], row["token_symbol"], float(row["allocation_fraction"]), row["entry_timestamp_ms"], row["entry_price_usd"], float(row.get("held_amount") or 0), float(row["current_value_usd"]), float(row["realized_pnl_usd"]), float(row["unrealized_pnl_usd"]), row["departure_reason"], int(row["updated_ms"]))
         self.events: list[dict[str, Any]] = []
@@ -344,7 +372,8 @@ class AutonomousTradingRuntime:
         mode = os.getenv("FUND_ADAPTER", "simulation").lower()
         adapter: ExecutionAdapter = SimulationExecutionAdapter()
         if mode == "mainnet" and wallet is not None:
-            adapter = MainnetExecutionAdapter(wallet, DirectUniswapClient.from_env(wallet))
+            api_client = UniswapTradingClient.from_env()
+            adapter = MainnetExecutionAdapter(wallet, api_client or DirectUniswapClient.from_env(wallet))
         elif mode == "queue":
             adapter = QueueExecutionAdapter(os.getenv("FUND_INTENT_QUEUE_PATH", "data/fund/execution-intents.jsonl"))
         elif mode == "supabase":
@@ -352,7 +381,11 @@ class AutonomousTradingRuntime:
             if queue is None:
                 raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for FUND_ADAPTER=supabase")
             adapter = SupabaseExecutionAdapter(queue)
-        return cls(ledger, expected_agents=16, wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_hold_seconds=float(os.getenv("FUND_MIN_HOLD_SECONDS", "120")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")))
+        try:
+            expected_agents = int(os.getenv("NEUROSWARM_SWARM_SIZE", "8"))
+        except ValueError:
+            expected_agents = 8
+        return cls(ledger, expected_agents=max(1, min(100, expected_agents)), wallet=wallet, adapter=adapter, departure_debounce_ms=int(os.getenv("FUND_DEPARTURE_DEBOUNCE_MS", "1500")), min_hold_seconds=float(os.getenv("FUND_MIN_HOLD_SECONDS", "120")), min_liquidity_usd=float(os.getenv("FUND_MIN_LIQUIDITY_USD", "0")), slippage_tolerance=float(os.getenv("FUND_SLIPPAGE_TOLERANCE", "0.5")), max_per_fly_allocation_fraction=float(os.getenv("FUND_MAX_PER_FLY_ALLOCATION_FRACTION", "0.0625")))
 
     def update_habitats(self, habitats: Iterable[Mapping[str, Any]]) -> None:
         for habitat in habitats:
@@ -410,8 +443,16 @@ class AutonomousTradingRuntime:
                 self._event(behavior, "BLOCKED", "token identity unavailable")
                 self.processed_events.add(behavior.intent_id)
                 continue
-            position = self.positions.setdefault(behavior.fly_id, FlyCapitalPosition(behavior.fly_id, allocation_fraction=1.0 / self.expected_agents))
+            position = self.positions.setdefault(behavior.fly_id, FlyCapitalPosition(behavior.fly_id, allocation_fraction=self.per_fly_allocation_fraction))
             if behavior.side == "buy":
+                # A queued external BUY is not a fill. Keep one pending
+                # allocation slot per fly so repeated habitat visits cannot
+                # create an unbounded stream of buys before the first one is
+                # confirmed or rejected by the executor.
+                if position.state == FlyBehaviorState.QUALIFYING.value and position.held_amount <= 0:
+                    self._event(behavior, "PENDING", "previous buy is awaiting execution")
+                    self.processed_events.add(behavior.intent_id)
+                    continue
                 if self._position_matches_token(position, token) and position.state in {FlyBehaviorState.HOLDING.value, FlyBehaviorState.QUALIFYING.value}:
                     self.pending_departures.pop(behavior.fly_id, None)
                     self.pending_rotations.pop(behavior.fly_id, None)
@@ -450,6 +491,7 @@ class AutonomousTradingRuntime:
 
     def snapshot(self, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
+        self._sync_shared_execution_results()
         self._poll_mainnet_receipts(timestamp)
         wallet: dict[str, Any] = {"configured": self.wallet is not None}
         if self.wallet is not None:
@@ -512,9 +554,10 @@ class AutonomousTradingRuntime:
             "executionBoundary": "simulation-fill" if isinstance(self.adapter, SimulationExecutionAdapter) else "transaction-preparation-only",
             "minimumHoldSeconds": self.min_hold_seconds,
             "externalBroadcast": bool(mainnet_executions),
-            "perFlyAllocationFraction": 1.0 / self.expected_agents,
-            "perFlyAllocationPercent": 100.0 / self.expected_agents,
-            "perFlyBudgetWei": str(deployable // self.expected_agents),
+            "perFlyAllocationFraction": self.per_fly_allocation_fraction,
+            "perFlyAllocationPercent": self.per_fly_allocation_fraction * 100.0,
+            "maxStrategyAllocationFraction": min(1.0, self.per_fly_allocation_fraction * self.expected_agents),
+            "perFlyBudgetWei": str(int(deployable * self.per_fly_allocation_fraction)),
             "wallet": wallet,
             "flies": [self.positions[f"fly-{index:03d}"].as_dict() for index in range(1, self.expected_agents + 1)],
             "biologicalTargetPortfolio": [{"chainId": chain_id, "tokenAddress": token, "allocationFraction": fraction, "allocationPercent": fraction * 100.0} for (chain_id, token), fraction in biological.items()],
@@ -525,6 +568,80 @@ class AutonomousTradingRuntime:
             "events": list(self.events[-100:]),
             "behaviorIntents": [intent.as_dict() for intent in self.behavior_intents[-256:]],
         }
+
+    def _sync_shared_execution_results(self) -> None:
+        """Import real executor results into the brain service's ledger.
+
+        Supabase is the only shared durable transport between a deployed brain
+        server and a separately-run executor. Only rows with a validated real
+        transaction hash are imported; observed proposals and failed queue
+        rows remain out of MAINNET EXECUTED.
+        """
+
+        if not isinstance(self.adapter, SupabaseExecutionAdapter):
+            return
+        try:
+            rows = self.adapter.queue.execution_results()
+        except Exception:
+            return
+        existing = self.ledger.rows("mainnet_executions", limit=100000)
+        known_ids = {str(row.get("execution_id")) for row in existing}
+        known_hashes = {str(row.get("tx_hash", "")).lower() for row in existing}
+        for row in rows:
+            result = row.get("result")
+            if not isinstance(result, Mapping):
+                continue
+            tx_hash = str(result.get("txHash") or "")
+            if not _is_real_tx_hash(tx_hash) or str(row.get("idempotency_key")) in known_ids or tx_hash.lower() in known_hashes:
+                continue
+            payload = row.get("payload") if isinstance(row.get("payload"), Mapping) else {}
+            raw_token = payload.get("token") if isinstance(payload.get("token"), Mapping) else {}
+            token_address = str(raw_token.get("address") or (row.get("token_out") if str(row.get("side")) == "buy" else row.get("token_in")) or "")
+            if not token_address:
+                continue
+            token = TokenRef(
+                int(row.get("chain_id") or os.getenv("FUND_CHAIN_ID", "4663")),
+                token_address,
+                str(raw_token.get("symbol") or token_address[:8]),
+                float(raw_token["liquidityUsd"]) if raw_token.get("liquidityUsd") is not None else None,
+                float(raw_token["priceUsd"]) if raw_token.get("priceUsd") is not None else None,
+                float(raw_token["priceNative"]) if raw_token.get("priceNative") is not None else None,
+            )
+            intent = ExecutionIntent(
+                str(row.get("idempotency_key")),
+                str(row.get("side") or "buy"),
+                int(row.get("chain_id") or token.chain_id),
+                str(row.get("token_in")),
+                str(row.get("token_out")),
+                str(row.get("amount_in")),
+                tuple(str(item) for item in (row.get("fly_ids") or [])),
+                self.slippage_tolerance,
+                int(time.time() * 1000),
+                str(row.get("biological_event_id") or "") or None,
+            )
+            self.ledger.record_execution_attempt({
+                "attempt_id": intent.idempotency_key,
+                "idempotency_key": intent.idempotency_key,
+                "status": "BROADCAST",
+                "side": intent.side,
+                "chain_id": intent.chain_id,
+                "token_in": intent.token_in,
+                "token_out": intent.token_out,
+                "amount_in": intent.amount_in,
+                "amount_out": result.get("expectedOutput"),
+                "fly_ids_json": json.dumps(list(intent.fly_ids)),
+                "execution_price": token.price_native,
+                "gas": None,
+                "slippage": intent.slippage_tolerance,
+                "tx_hash": tx_hash,
+                "nonce": None,
+                "error": None,
+                "created_ms": intent.created_at_ms,
+                "updated_ms": int(time.time() * 1000),
+            })
+            self._persist_broadcast(intent, token, tx_hash, expected_output=str(result.get("expectedOutput") or "") or None, biological_event_id=intent.biological_event_id)
+            known_ids.add(intent.idempotency_key)
+            known_hashes.add(tx_hash.lower())
 
     def _flush_departures(self, timestamp: int, actions: list[AllocationIntent]) -> None:
         for fly_id, (due, target, reason, biological_event_id) in list(self.pending_rotations.items()):
@@ -741,7 +858,7 @@ class AutonomousTradingRuntime:
         if self.wallet is None:
             return 10**15 * count
         try:
-            return (self.wallet.snapshot().available_native_wei // self.expected_agents) * count
+            return int(self.wallet.snapshot().available_native_wei * self.per_fly_allocation_fraction) * count
         except Exception:
             return 0
 

@@ -115,6 +115,21 @@ class SupabaseIntentQueue:
         body.pop("updated_at")
         self._request("PATCH", self.table, body, query=query, prefer="return=minimal")
 
+    def execution_results(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return shared queue rows that contain a real executor result.
+
+        The browser-facing brain service and the separately-run executor do
+        not share a filesystem. The queue result is therefore the durable
+        handoff for a real transaction hash and receipt status.
+        """
+
+        rows = self._request(
+            "GET",
+            self.table,
+            query=f"?select=idempotency_key,side,chain_id,token_in,token_out,amount_in,fly_ids,biological_event_id,payload,status,result,created_at,updated_at&status=in.(broadcast,confirmed)&order=updated_at.desc&limit={max(1, min(int(limit), 500))}",
+        )
+        return [dict(row) for row in rows] if isinstance(rows, list) else []
+
     @staticmethod
     def new_worker_id() -> str:
         return f"render-worker-{uuid.uuid4().hex[:12]}"

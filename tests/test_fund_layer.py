@@ -132,6 +132,27 @@ def test_autonomous_runtime_enforces_two_minute_minimum_hold_before_sell():
     assert any(row["status"] == "filled" and row["side"] == "sell" for row in ledger.rows("execution_attempts"))
 
 
+def test_unfilled_buy_does_not_open_another_buy_slot_for_same_fly():
+    class PreparedAdapter:
+        def execute(self, intent, token):
+            return {"status": "prepared_external_authorization"}
+
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=8, adapter=PreparedAdapter())
+    first_token = "0x1111111111111111111111111111111111111111"
+    second_token = "0x2222222222222222222222222222222222222222"
+    runtime.update_habitats([
+        {"id": "market-first", "label": "FIRST", "chainId": "4663", "tokenAddress": first_token},
+        {"id": "market-second", "label": "SECOND", "chainId": "4663", "tokenAddress": second_token},
+    ])
+    runtime.ingest([BehaviorTradeIntent("pending-buy-1", "fly-001", "market-first", "buy", "dwell", .9, 1000, {}, .0625)], observed_at_ms=1000)
+    snapshot = runtime.ingest([BehaviorTradeIntent("pending-buy-2", "fly-001", "market-second", "buy", "dwell", .9, 2000, {}, .0625)], observed_at_ms=2000)
+
+    assert len(ledger.rows("execution_attempts")) == 1
+    assert snapshot["flies"][0]["state"] == "QUALIFYING"
+    assert snapshot["events"][-1]["type"] == "PENDING"
+
+
 def test_prepared_external_execution_never_becomes_a_fill():
     class PreparedAdapter:
         def execute(self, intent, token):
@@ -240,6 +261,34 @@ def test_supabase_runtime_records_behavior_and_netted_execution(monkeypatch):
     assert len(queue.executions) == 1
     assert queue.executions[0]["executionIntent"]["side"] == "buy"
     assert queue.executions[0]["executionIntent"]["flyIds"] == ["fly-001", "fly-002"]
+
+
+def test_supabase_runtime_imports_real_executor_results_for_shared_ui():
+    token = "0x2222222222222222222222222222222222222222"
+    tx_hash = "0x" + "a" * 64
+
+    class ResultQueue:
+        def execution_results(self, limit=100):
+            return [{
+                "idempotency_key": "execution-1",
+                "side": "buy",
+                "chain_id": 4663,
+                "token_in": "0x0000000000000000000000000000000000000000",
+                "token_out": token,
+                "amount_in": "156250000000000",
+                "fly_ids": ["fly-007"],
+                "biological_event_id": "bio-1",
+                "payload": {"token": {"address": token, "symbol": "AERO", "priceUsd": 1.0}},
+                "status": "confirmed",
+                "result": {"status": "CONFIRMED", "txHash": tx_hash, "expectedOutput": "123"},
+            }]
+
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=SupabaseExecutionAdapter(ResultQueue()))
+    snapshot = runtime.snapshot(observed_at_ms=1000)
+    assert snapshot["mainnetExecutions"][0]["txHash"] == tx_hash
+    assert snapshot["mainnetExecutions"][0]["status"] == ReceiptStatus.BROADCAST
+    assert snapshot["mainnetExecutions"][0]["flyIds"] == ["fly-007"]
 
 
 def test_mainnet_receipt_uses_rpc_as_canonical_and_enriches_with_blockscout():

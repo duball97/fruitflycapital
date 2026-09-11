@@ -4,7 +4,7 @@ import asyncio
 from http import HTTPStatus
 from types import SimpleNamespace
 
-from malecns.brain_server import RuntimeRegistry, process_http_request
+from malecns.brain_server import RuntimeRegistry, SwarmProducerLease, process_http_request
 
 
 class _Connection:
@@ -67,3 +67,18 @@ def test_runtime_registry_falls_back_after_memory_safe_cap() -> None:
     assert second is not None
     assert overflow is None
     assert len(created) == 2
+
+
+def test_only_one_connection_can_produce_swarm_telemetry() -> None:
+    lease = SwarmProducerLease()
+    first = object()
+    second = object()
+
+    async def claim_and_release() -> tuple[str, str, bool, str]:
+        first_role = await lease.claim(first)
+        second_role = await lease.claim(second)
+        released = await lease.release(first)
+        second_after_release = await lease.claim(second)
+        return first_role, second_role, released, second_after_release
+
+    assert asyncio.run(claim_and_release()) == ("producer", "observer", True, "producer")

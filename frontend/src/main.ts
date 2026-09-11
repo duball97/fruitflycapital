@@ -1,6 +1,7 @@
 import './style.css'
 import { BufferGeometry, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, Object3D, Plane, Points, PointsMaterial, Raycaster, Scene, Shape, ShapeGeometry, Vector2, Vector3, WebGLRenderer } from 'three'
 import { Environment } from './world/Environment'
+import type { TokenHabitat } from './world/TokenHabitat'
 import { World } from './world/World'
 import { BrainSocket } from './networking/BrainSocket'
 import type { FlyAgent } from './fly/FlyAgent'
@@ -20,7 +21,6 @@ import { SceneAtmosphere } from './rendering/SceneAtmosphere'
 import type { TokenState } from './world/TokenState'
 import { SwarmObserver } from './swarm/SwarmObserver'
 import { PRESENTATION_SCENE_HALF_EXTENT } from './world/Arena'
-import { TradeExecutionBoundary } from './trading/TradeExecutionBoundary'
 import type { BehaviorTradeIntent } from './networking/protocol'
 import { resolveBrainWebSocketUrl } from './networking/brainUrl'
 import { SceneAudio } from './audio/SceneAudio'
@@ -48,10 +48,9 @@ app.append(tokenLogoOverlay)
 type TokenLogoEntry = {
   element: HTMLImageElement
   button: HTMLButtonElement
+  sources: string[]
   source: string
-  fallbackSource: string
-  usingFallback: boolean
-  failedSource: string | null
+  failedSources: Set<string>
 }
 const tokenLogoElements = new Map<string, TokenLogoEntry>()
 const fallbackLogoCache = new Map<string, string>()
@@ -85,14 +84,10 @@ function updateTokenLogoOverlay() {
   for (const habitat of environment.habitats) {
     const id = habitat.state.id
     visibleIds.add(id)
-    const remoteSource = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
     const fallbackSource = fallbackLogoCache.get(id) ?? fallbackLogoUrl(habitat.state.label)
     fallbackLogoCache.set(id, fallbackSource)
-    const normalizedRemoteSource = remoteSource ? normalizeImageUrl(remoteSource) : null
+    const sources = logoSources(habitat, fallbackSource)
     let entry = tokenLogoElements.get(id)
-    const source = entry?.usingFallback && entry.failedSource === normalizedRemoteSource
-      ? fallbackSource
-      : normalizedRemoteSource ?? fallbackSource
     if (!entry) {
       const button = document.createElement('button')
       button.className = 'token-logo-link'
@@ -107,18 +102,15 @@ function updateTokenLogoOverlay() {
       element.draggable = false
       element.loading = 'eager'
       element.referrerPolicy = 'no-referrer'
-      const nextEntry: TokenLogoEntry = { element, button, source: '', fallbackSource, usingFallback: true, failedSource: null }
+      const nextEntry: TokenLogoEntry = { element, button, sources, source: sources[0]!, failedSources: new Set() }
       element.addEventListener('error', () => {
-        // DexScreener/CDN token images are optional. Never turn a network
-        // failure into an empty habitat: swap to the deterministic local mark.
-        if (!nextEntry.usingFallback) {
-          nextEntry.usingFallback = true
-          nextEntry.failedSource = nextEntry.source
-          nextEntry.source = nextEntry.fallbackSource
-          element.hidden = false
-          button.hidden = false
-          element.src = nextEntry.fallbackSource
-          return
+        // Provider images are optional. Try the next provider/address lookup
+        // before falling back to the deterministic local mark.
+        nextEntry.failedSources.add(nextEntry.source)
+        const nextSource = nextEntry.sources.find((candidate) => !nextEntry.failedSources.has(candidate))
+        if (nextSource && nextSource !== nextEntry.source) {
+          nextEntry.source = nextSource
+          element.src = nextSource
         }
         element.hidden = false
         button.hidden = false
@@ -128,14 +120,13 @@ function updateTokenLogoOverlay() {
       entry = nextEntry
       tokenLogoElements.set(id, entry)
     }
-    entry.fallbackSource = fallbackSource
+    entry.sources = sources
+    const source = sources.find((candidate) => !entry!.failedSources.has(candidate)) ?? fallbackSource
     if (entry.source !== source) {
       entry.source = source
-      entry.usingFallback = source === fallbackSource
-      if (!entry.usingFallback) entry.failedSource = null
       entry.button.hidden = false
       entry.element.hidden = false
-      entry.element.src = normalizeImageUrl(source)
+      entry.element.src = source
     }
     entry.button.setAttribute('aria-label', `Open ${habitat.state.label} token details`)
     entry.button.tabIndex = 0
@@ -159,7 +150,9 @@ function updateTokenLogoOverlay() {
     const centerX = (logoWorldPosition.x * 0.5 + 0.5) * viewportWidth
     const centerY = (-logoWorldPosition.y * 0.5 + 0.5) * viewportHeight
     const projectedRadius = Math.abs(logoEdgePosition.x - logoWorldPosition.x) * 0.5 * viewportWidth
-    const size = clamp(projectedRadius * 1.35 * environment.getHabitatVisualScale(), 16, 46)
+    // Give the logo enough presence to identify a habitat from the overview
+    // while keeping a sensible cap for close cinematic shots.
+    const size = clamp(projectedRadius * 1.72 * environment.getHabitatVisualScale(), 22, 72)
     entry.button.hidden = false
     entry.button.style.width = `${size}px`
     entry.button.style.height = `${size}px`
@@ -175,6 +168,27 @@ function fallbackLogoUrl(label: string) {
   const symbol = logoSymbolFromLabel(label)
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><radialGradient id="g" cx="30%" cy="25%"><stop stop-color="#55766a"/><stop offset="1" stop-color="#0b171b"/></radialGradient></defs><circle cx="64" cy="64" r="59" fill="url(#g)" stroke="#dcebe2" stroke-width="2"/><text x="64" y="70" fill="#f4f7f4" font-family="Arial,sans-serif" font-size="${symbol.length > 3 ? 26 : 34}" font-weight="700" text-anchor="middle">${symbol}</text></svg>`
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+}
+
+function logoSources(habitat: TokenHabitat, fallbackSource: string) {
+  const sources: string[] = []
+  const remoteSource = habitat.state.imageUrl ?? imageUrlFromProvenance(habitat.state.provenance)
+  if (remoteSource) sources.push(normalizeImageUrl(remoteSource))
+
+  // Lightweight Robinhood snapshots do not always carry the pair image URL.
+  // DexScreener also exposes a token-address image path, which gives those
+  // habitats a real provider logo without another API request or a
+  // CORS-sensitive WebGL texture load.
+  const tokenAddress = habitat.state.tokenAddress
+  if (tokenAddress && /^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+    const chain = habitat.state.chainId?.toLowerCase() === '4663'
+      ? 'robinhood'
+      : (habitat.state.chainId?.toLowerCase() || 'robinhood')
+    sources.push(`https://dd.dexscreener.com/ds-data/tokens/${chain}/${tokenAddress}.png`)
+  }
+
+  sources.push(fallbackSource)
+  return [...new Set(sources)]
 }
 
 function logoSymbolFromLabel(label: string) {
@@ -239,15 +253,27 @@ function renderAudioToggle() {
   audioToggle.setAttribute('aria-label', sceneAudio.isEnabled ? 'Mute scene audio' : 'Enable scene audio')
 }
 
+let audioToggleBusy = false
 audioToggle.addEventListener('click', async () => {
-  await sceneAudio.toggle()
-  renderAudioToggle()
+  if (audioToggleBusy) return
+  audioToggleBusy = true
+  audioToggle.disabled = true
+  try {
+    await sceneAudio.toggle()
+  } finally {
+    audioToggleBusy = false
+    audioToggle.disabled = false
+    renderAudioToggle()
+  }
 })
 
 // Web Audio is blocked until a user gesture. Start the ambient bed on the
 // first interaction anywhere in the scene, while keeping a visible mute
 // control for visitors who prefer a silent experience.
-const unlockSceneAudio = () => {
+const unlockSceneAudio = (event: Event) => {
+  // Let the sound button own its first click. Otherwise the global autoplay
+  // unlock can enable audio just before the button handler toggles it back.
+  if (event.target instanceof Element && event.target.closest('.audio-toggle')) return
   void sceneAudio.enable().then(renderAudioToggle)
   window.removeEventListener('pointerdown', unlockSceneAudio, true)
   window.removeEventListener('keydown', unlockSceneAudio, true)
@@ -265,7 +291,7 @@ const portfolioSummary = document.createElement('section')
 portfolioSummary.className = 'portfolio-summary'
 portfolioSummary.setAttribute('aria-label', 'Live portfolio summary')
 portfolioSummary.innerHTML = `
-  <div class="portfolio-summary-heading"><span>FRUITFLY CAPITAL · PORTFOLIO</span><a href="/portfolio/">OPEN FULL PORTFOLIO →</a></div>
+  <div class="portfolio-summary-heading"><span>FRUITFLY CAPITAL · PORTFOLIO</span><span class="portfolio-summary-actions"><a href="/portfolio/">OPEN FULL PORTFOLIO →</a><a data-portfolio-summary="wallet-link" href="https://robinhoodchain.blockscout.com/address/0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9" target="_blank" rel="noopener noreferrer">WATCH WALLET ↗</a></span></div>
   <div class="portfolio-summary-values"><div><small>WALLET</small><strong data-portfolio-summary="wallet">CONNECTING</strong></div><div><small>AVAILABLE</small><strong data-portfolio-summary="available">—</strong></div><div><small>POSITIONS</small><strong data-portfolio-summary="positions">—</strong></div><div><small>RETURN</small><strong data-portfolio-summary="return">—</strong></div></div>
   <div class="portfolio-summary-holdings" data-portfolio-summary="holdings">Waiting for live portfolio data…</div>
 `
@@ -276,6 +302,7 @@ const portfolioSummaryFields = {
   positions: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="positions"]')!,
   return: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="return"]')!,
   holdings: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="holdings"]')!,
+  walletLink: portfolioSummary.querySelector<HTMLAnchorElement>('[data-portfolio-summary="wallet-link"]')!,
 }
 
 const executionToast = document.createElement('aside')
@@ -311,20 +338,19 @@ function updateExecutionToast() {
 
 const intentLogPanel = document.createElement('section')
 intentLogPanel.className = 'intent-log-panel'
-intentLogPanel.setAttribute('aria-label', 'Fly buy and sell intent log')
+intentLogPanel.setAttribute('aria-label', 'Recorded fly buy and sell activity')
 intentLogPanel.innerHTML = `
   <div class="intent-log-header">
     <div>
       <div class="intent-log-kicker">FRUITFLY CAPITAL · TRADING LOG</div>
       <div class="intent-log-title">BUY / SELL ACTIVITY</div>
     </div>
-    <div class="intent-log-mode">RECORDED TRADES<br>BEHAVIOR TAB</div>
+    <div class="intent-log-mode">RECORDED TRADES<br>ON-CHAIN ACTIVITY</div>
   </div>
   <div class="intent-log-summary"><span class="intent-buy-count">BUY 0</span><span class="intent-sell-count">SELL 0</span><span class="intent-log-live">LIVE</span></div>
   <div class="intent-log-motion">FLIGHT · CRUISE 0 · DESCENDING 0 · LANDED 0 · CLOSEST —</div>
   <div class="intent-log-holdings"><div class="intent-log-holdings-heading"><span>FUND HOLDINGS</span><a href="/portfolio/">FULL PORTFOLIO →</a></div><div class="intent-log-holdings-list">Waiting for live portfolio data…</div></div>
-  <div class="intent-log-tabs" role="tablist" aria-label="Trading log view"><button type="button" class="intent-log-tab" data-log-view="trades" role="tab" aria-selected="false">BUY / SELL</button><button type="button" class="intent-log-tab is-active" data-log-view="behavior" role="tab" aria-selected="true">BEHAVIOR INTENTS</button></div>
-  <label class="intent-log-search"><span>SEARCH LOG</span><input type="search" placeholder="Token, fly, buy or sell…" aria-label="Search behavior log" /></label>
+  <label class="intent-log-search"><span>SEARCH LOG</span><input type="search" placeholder="Token, fly, buy or sell…" aria-label="Search recorded trades" /></label>
   <div class="intent-log-list"></div>
 `
 app.append(intentLogPanel)
@@ -335,28 +361,9 @@ const intentLogLive = intentLogPanel.querySelector<HTMLSpanElement>('.intent-log
 const intentLogMotion = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-motion')!
 const intentLogHoldingsList = intentLogPanel.querySelector<HTMLDivElement>('.intent-log-holdings-list')!
 const intentLogSearch = intentLogPanel.querySelector<HTMLInputElement>('.intent-log-search input')!
-const intentLogTabs = Array.from(intentLogPanel.querySelectorAll<HTMLButtonElement>('.intent-log-tab'))
-const intentHistory: BehaviorTradeIntent[] = []
 const seenIntentIds = new Set<string>()
-let buyIntentCount = 0
-let sellIntentCount = 0
 let intentSearchTerm = ''
-// Show the biological source of activity first. The BUY / SELL tab remains
-// available for completed, pending, and confirmed execution records.
-let intentLogView: 'trades' | 'behavior' = 'behavior'
 let focusCinematicOnIntent: ((intent: BehaviorTradeIntent) => void) | null = null
-
-intentLogTabs.forEach((button) => {
-  button.addEventListener('click', () => {
-    intentLogView = button.dataset.logView === 'behavior' ? 'behavior' : 'trades'
-    intentLogTabs.forEach((candidate) => {
-      const active = candidate === button
-      candidate.classList.toggle('is-active', active)
-      candidate.setAttribute('aria-selected', String(active))
-    })
-    renderIntentLog()
-  })
-})
 
 intentLogSearch.addEventListener('input', () => {
   intentSearchTerm = intentLogSearch.value.trim().toLowerCase()
@@ -366,11 +373,10 @@ intentLogSearch.addEventListener('input', () => {
 function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
   for (const intent of intents) {
     if (seenIntentIds.has(intent.intentId)) continue
-    const proposal = tradeExecutionBoundary.prepare(intent)
-    intentHistory.push(proposal.intent)
+    // A departure is only a SELL proposal when the fund actually holds the
+    // token. A queued/unfilled BUY must not create a phantom sale.
+    if (intent.side === 'sell' && !flyHasHeldPosition(intent.flyId)) continue
     seenIntentIds.add(intent.intentId)
-    if (intent.side === 'buy') buyIntentCount += 1
-    else sellIntentCount += 1
     const isFresh = Number.isFinite(intent.observedAtMs) && Date.now() - intent.observedAtMs < 1500
     if (isFresh) sceneAudio.playTradeCue(intent.side)
     // Replayed history should populate the log without making a page reload
@@ -379,9 +385,18 @@ function recordBehaviorIntents(intents: readonly BehaviorTradeIntent[]) {
     if (Date.now() - intent.observedAtMs < 12000) focusCinematicOnIntent?.(intent)
   }
   if (intents.length > 0) {
-    while (intentHistory.length > 200) intentHistory.shift()
+    // The raw proposals are sent with swarm telemetry and persisted by the
+    // server. The public panel intentionally renders only real transactions.
     renderIntentLog()
   }
+}
+
+function flyHasHeldPosition(flyId: string) {
+  const holding = currentFlyHolding(flyId)
+  if (!holding || typeof holding !== 'object') return false
+  const state = String((holding as Record<string, unknown>).state || '').toUpperCase()
+  const amount = Number((holding as Record<string, unknown>).heldAmount)
+  return (state === 'HOLDING' || state === 'DEPARTING') && Number.isFinite(amount) && amount > 0
 }
 
 function reconcileServerIntentHistory() {
@@ -421,8 +436,12 @@ function tradeActivityRecords() {
   const records: Array<Record<string, unknown> & { source: string; side: 'BUY' | 'SELL'; token: string; tokenAddress: string; flyLabel: string; timeMs: number }> = []
   const seen = new Set<string>()
   const add = (item: Record<string, unknown>, source: string) => {
-    const status = String(item.status || '').toLowerCase()
-    if (source !== 'MAINNET' && (status === 'blocked' || status === 'proposed')) return
+    const status = String(item.status || '').toUpperCase()
+    const txHash = String(item.txHash || item.tx_hash || '')
+    // This tab is intentionally on-chain-only. Biological proposals, queued
+    // intents, simulation fills, and blocked attempts belong elsewhere.
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) return
+    if (!['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(status)) return
     const rawSide = String(item.side || item.type || '').toLowerCase()
     const tokenIn = String(item.inputToken || item.token_in || '')
     const tokenOut = String(item.token_out || '')
@@ -433,7 +452,6 @@ function tradeActivityRecords() {
     const flyIds = Array.isArray(item.flyIds)
       ? item.flyIds.map(String)
       : String(item.neuroswarm_decision_id || '').split(',').map((value) => value.trim()).filter(Boolean)
-    const txHash = String(item.txHash || item.tx_hash || '')
     const executionId = String(item.executionId || item.execution_id || item.trade_id || '')
     const timeMs = Number(item.timestamp || item.timestampMs || item.timestamp_ms || item.createdMs || autonomous.observedAtMs || 0)
     const key = txHash || executionId || `${timeMs}:${side}:${tokenAddress}:${flyIds.join(',')}`
@@ -442,10 +460,9 @@ function tradeActivityRecords() {
     records.push({ ...item, source, side, token, tokenAddress, flyLabel: flyIds.length ? flyIds.join(' · ') : 'SWARM', timeMs })
   }
   const mainnet = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
-  const events = Array.isArray(autonomous.events) ? autonomous.events as Record<string, unknown>[] : []
   const trades = Array.isArray(fund?.recentTrades) ? fund.recentTrades as Record<string, unknown>[] : []
   mainnet.forEach((item) => add(item, 'MAINNET'))
-  events.forEach((item) => add(item, 'RUNTIME'))
+  // Runtime BUY/SELL events do not prove execution and are excluded here.
   trades.forEach((item) => add(item, 'LEDGER'))
   return records.sort((left, right) => right.timeMs - left.timeMs)
 }
@@ -468,8 +485,8 @@ function renderIntentLog() {
   const tradeRecords = tradeActivityRecords()
   const tradeBuyCount = tradeRecords.filter((item) => item.side === 'BUY').length
   const tradeSellCount = tradeRecords.filter((item) => item.side === 'SELL').length
-  intentBuyCount.textContent = `BUY ${intentLogView === 'trades' ? tradeBuyCount : buyIntentCount}`
-  intentSellCount.textContent = `SELL ${intentLogView === 'trades' ? tradeSellCount : sellIntentCount}`
+  intentBuyCount.textContent = `BUY ${tradeBuyCount}`
+  intentSellCount.textContent = `SELL ${tradeSellCount}`
   intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? 'LIVE' : 'WAITING'
   const fund = brainSocket.portfolio()
   const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
@@ -489,69 +506,40 @@ function renderIntentLog() {
     }
   }
   intentLogList.replaceChildren()
-  if (intentLogView === 'trades') {
-    const visibleTrades = tradeRecords.filter((item) => {
-      if (!intentSearchTerm) return true
-      return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status, item.source].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
-    })
-    if (visibleTrades.length === 0) {
-      const empty = document.createElement('div')
-      empty.className = 'intent-log-empty'
-      empty.textContent = tradeRecords.length === 0
-        ? `No completed or pending buys/sells yet · ${buyIntentCount} BUY / ${sellIntentCount} SELL proposals in Behavior Intents.`
-        : 'No matching buys or sells.'
-      intentLogList.append(empty)
-      return
-    }
-    for (const trade of visibleTrades.slice(0, 40)) {
-      const row = document.createElement('div')
-      row.className = `intent-log-row ${trade.side === 'SELL' ? 'sell' : 'buy'}`
-      const time = trade.timeMs > 0 ? new Date(trade.timeMs).toLocaleTimeString([], { hour12: false }) : '—'
-      const status = String(trade.status || (trade.source === 'MAINNET' ? 'BROADCAST' : 'RECORDED')).toUpperCase()
-      row.innerHTML = '<div class="intent-log-row-top"><strong></strong><span></span><em></em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>'
-      row.querySelector('strong')!.textContent = `${trade.side} ${trade.token}`
-      row.querySelector('span')!.textContent = `${time} · ${trade.flyLabel}`
-      row.querySelector('em')!.textContent = `${trade.source} · ${status}`
-      row.querySelector('.intent-log-token')!.textContent = `${formatTradeInput(trade)} → ${formatTradeOutput(trade)} ${trade.token}`
-      row.querySelector('.intent-log-holding')!.textContent = trade.tokenAddress ? `${trade.tokenAddress.slice(0, 10)}…${trade.tokenAddress.slice(-6)}` : 'TOKEN ADDRESS PENDING'
-      row.querySelector('.intent-log-details')!.textContent = trade.txHash || trade.tx_hash ? `TX ${String(trade.txHash || trade.tx_hash).slice(0, 14)}…` : 'No transaction hash · local ledger record'
-      intentLogList.append(row)
-    }
-    return
-  }
-  const visibleIntents = intentHistory.filter((intent) => {
+  const visibleTrades = tradeRecords.filter((item) => {
     if (!intentSearchTerm) return true
-    const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
-    return [intent.flyId, intent.side, intent.reason, intent.habitatId, habitat?.state.label].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+    return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status, item.source].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
   })
-  if (visibleIntents.length === 0) {
+  if (visibleTrades.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'intent-log-empty'
-    empty.textContent = intentHistory.length === 0 ? 'No intents yet · contact + dwell creates BUY · departure creates SELL' : 'No matching intents.'
+    empty.textContent = tradeRecords.length === 0 ? 'No on-chain buys or sells recorded yet.' : 'No matching buys or sells.'
     intentLogList.append(empty)
     return
   }
-  for (const intent of visibleIntents.slice(-40).reverse()) {
-    const habitat = environment.habitats.find((candidate) => candidate.state.id === intent.habitatId)
+  for (const trade of visibleTrades.slice(0, 40)) {
     const row = document.createElement('div')
-    row.className = `intent-log-row ${intent.side}`
-    const time = new Date(intent.observedAtMs).toLocaleTimeString([], { hour12: false })
-    const token = habitat?.state.label || intent.habitatId
-    const holding = currentFlyHolding(intent.flyId)
-    const heldAmount = Number(holding?.heldAmount)
-    const heldToken = String(holding?.tokenSymbol || token)
-    const holdingDetails = Number.isFinite(heldAmount) && heldAmount > 0
-      ? `HELD ${formatTokenAmount(heldAmount)} ${heldToken}`
-      : intent.side === 'buy'
-        ? `TARGET ${(intent.portfolioWeight * 100).toFixed(2)}% · AWAITING FILL`
-        : `HELD 0 ${heldToken}`
-    const details = `${intent.reason.toUpperCase()} · dwell ${intent.metrics.dwellSeconds.toFixed(2)}s · ${intent.metrics.distanceM.toFixed(3)}m · confidence ${Math.round(intent.confidence * 100)}%`
-    row.innerHTML = `<div class="intent-log-row-top"><strong></strong><span></span><em>PROPOSAL</em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>`
-    row.querySelector('strong')!.textContent = `${intent.side.toUpperCase()} INTENT`
-    row.querySelector('span')!.textContent = `${time} · ${intent.flyId}`
-    row.querySelector('.intent-log-token')!.textContent = token
-    row.querySelector('.intent-log-holding')!.textContent = holdingDetails
-    row.querySelector('.intent-log-details')!.textContent = details
+    row.className = `intent-log-row ${trade.side === 'SELL' ? 'sell' : 'buy'}`
+    const time = trade.timeMs > 0 ? new Date(trade.timeMs).toLocaleTimeString([], { hour12: false }) : '—'
+    const status = String(trade.status || (trade.source === 'MAINNET' ? 'BROADCAST' : 'RECORDED')).toUpperCase()
+    row.innerHTML = '<div class="intent-log-row-top"><strong></strong><span></span><em></em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>'
+    row.querySelector('strong')!.textContent = `${trade.side} ${trade.token}`
+    row.querySelector('span')!.textContent = `${time} · ${trade.flyLabel}`
+    row.querySelector('em')!.textContent = `${trade.source} · ${status}`
+    row.querySelector('.intent-log-token')!.textContent = `${formatTradeInput(trade)} → ${formatTradeOutput(trade)} ${trade.token}`
+    row.querySelector('.intent-log-holding')!.textContent = trade.tokenAddress ? `${trade.tokenAddress.slice(0, 10)}…${trade.tokenAddress.slice(-6)}` : 'TOKEN ADDRESS PENDING'
+    const details = row.querySelector('.intent-log-details')!
+    const hash = String(trade.txHash || trade.tx_hash || '')
+    if (/^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      const link = document.createElement('a')
+      link.href = `https://robinhoodchain.blockscout.com/tx/${hash}`
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      link.textContent = `VIEW ON BLOCKSCOUT ↗ · ${hash.slice(0, 14)}…`
+      details.replaceChildren(link)
+    } else {
+      details.textContent = 'On-chain hash unavailable'
+    }
     intentLogList.append(row)
   }
 }
@@ -588,7 +576,6 @@ app.append(populationStatus)
 const brainUrl = resolveBrainWebSocketUrl(import.meta.env.VITE_BRAIN_WS_URL)
 const brainSocket = new BrainSocket(brainUrl)
 const flightLog = new FlightLogger()
-const tradeExecutionBoundary = new TradeExecutionBoundary()
 renderIntentLog()
 const brainUpdateHz = Math.max(1, Number(import.meta.env.VITE_BRAIN_UPDATE_HZ ?? 2) || 2)
 let selectedIndex = 0
@@ -606,6 +593,10 @@ function updatePortfolioSummary() {
   portfolioSummaryFields.available.textContent = available
   portfolioSummaryFields.positions.textContent = `${positions.length}`
   portfolioSummaryFields.return.textContent = returnPct
+  const walletAddress = String(wallet.address || fund.treasuryAddress || '')
+  if (/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+    portfolioSummaryFields.walletLink.href = `https://robinhoodchain.blockscout.com/address/${walletAddress}`
+  }
   portfolioSummaryFields.holdings.textContent = positions.length
     ? positions.slice(0, 4).map((position) => String(position.symbol || position.token_address || 'TOKEN')).join(' · ')
     : 'No token positions yet · proposals remain visible in the behavior log'
@@ -1260,11 +1251,14 @@ window.addEventListener('resize', resize)
 
 brainSocket.onStatusChange((next) => {
   status.innerHTML = `<span class="status-dot ${next}"></span> brain socket ${next} <span class="socket-url">${brainUrl}</span>`
-  intentLogLive.textContent = next === 'connected' ? 'LIVE' : 'WAITING'
+  intentLogLive.textContent = next === 'connected' ? (brainSocket.telemetryRole() === 'producer' ? 'LIVE · PRODUCER' : 'LIVE · VIEW ONLY') : 'WAITING'
   if (next === 'connected') {
     brainSocket.requestEnvironment()
     brainSocket.requestPortfolio()
   }
+})
+brainSocket.onSwarmRoleChange((role) => {
+  intentLogLive.textContent = role === 'producer' ? 'LIVE · PRODUCER' : role === 'observer' ? 'LIVE · VIEW ONLY' : 'WAITING'
 })
 brainSocket.connect()
 window.setInterval(() => brainSocket.requestEnvironment(), 15000)
@@ -1307,19 +1301,23 @@ function animate(now: number) {
     nextPortfolioUiAt = world.elapsedSeconds + 1
   }
 
-  swarmObserver.observe(
-    Date.now(),
-    agents,
-    environment.habitats,
-    (position) => {
-      const contact = environment.habitatContactAt(position)
-      return { contact: contact.contact, habitatId: contact.habitatId }
-    },
-  )
+  const isTelemetryProducer = brainSocket.telemetryRole() === 'producer'
+  if (isTelemetryProducer) {
+    swarmObserver.observe(
+      Date.now(),
+      agents,
+      environment.habitats,
+      (position) => {
+        const contact = environment.habitatContactAt(position)
+        return { contact: contact.contact, habitatId: contact.habitatId }
+      },
+    )
+  }
 
-  if (world.elapsedSeconds >= nextSwarmTelemetryAt) {
-    const behaviorIntents = swarmObserver.drainIntents()
-    recordBehaviorIntents(behaviorIntents)
+  if (isTelemetryProducer && world.elapsedSeconds >= nextSwarmTelemetryAt) {
+    // The server derives the authoritative BUY/SELL stream from this one
+    // producer's observations. Never display a local second decision stream.
+    swarmObserver.drainIntents()
     brainSocket.sendSwarmTelemetry({
       type: 'swarm_telemetry',
       timestampMs: Date.now(),
@@ -1338,7 +1336,6 @@ function animate(now: number) {
           }
         }),
       })),
-      behaviorIntents,
     })
     nextSwarmTelemetryAt += 0.25
   }

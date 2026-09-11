@@ -31,7 +31,7 @@ from .universe import (
     MarketUniverse,
     SelectedMarket,
 )
-from .uniswap_client import TradeIntent, UniswapTradingClient
+from .uniswap_client import HostedRouteQuote, TradeIntent, UniswapTradingClient
 from .direct_uniswap import DirectRouteQuote, DirectUniswapClient, DirectUniswapError
 from .features import (
     FactorValue,
@@ -83,6 +83,7 @@ __all__ = [
     "TokenState",
     "TradeIntent",
     "UniswapTradingClient",
+    "HostedRouteQuote",
     "DirectRouteQuote",
     "DirectUniswapClient",
     "DirectUniswapError",
