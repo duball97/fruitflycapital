@@ -679,17 +679,10 @@ def _int_value(value: Any, fallback: int) -> int:
 async def serve_forever(host: str, port: int) -> None:
     from websockets.asyncio.server import serve
 
-    # Build the bounded live population before accepting browser connections.
     # Brian2 construction is intentionally kept on the main interpreter
-    # thread, and doing it after ``serve`` starts makes the socket look alive
-    # while the first page request is blocked for several seconds per fly.
-    # Prewarming makes startup honest and prevents the first producer from
-    # timing out while the runtimes are being created.
+    # thread. Bind the service before prewarming, otherwise Render's port
+    # scanner can time out while the first runtimes are being created.
     prewarm_count = RUNTIME_REGISTRY.max_live_runtimes or 0
-    if prewarm_count > 0:
-        print(f"Prewarming MaleCNS runtimes ({prewarm_count})...", flush=True)
-        for index in range(prewarm_count):
-            await RUNTIME_REGISTRY.get(f"fly-{index + 1:03d}")
 
     async with serve(
         handle_client,
@@ -706,10 +699,22 @@ async def serve_forever(host: str, port: int) -> None:
         logger=WEBSOCKET_LOGGER,
     ):
         print(f"MaleCNS WebSocket adapter listening on ws://{host}:{port}", flush=True)
+        prewarm_task = None
+        if prewarm_count > 0:
+            async def prewarm() -> None:
+                print(f"Prewarming MaleCNS runtimes ({prewarm_count})...", flush=True)
+                for index in range(prewarm_count):
+                    await RUNTIME_REGISTRY.get(f"fly-{index + 1:03d}")
+                print(f"MaleCNS prewarm complete ({prewarm_count})", flush=True)
+
+            prewarm_task = asyncio.create_task(prewarm())
         autonomy_task = asyncio.create_task(_run_server_autonomy()) if SERVER_AUTONOMY_ENABLED else None
         try:
             await asyncio.Future()
         finally:
+            if prewarm_task is not None:
+                prewarm_task.cancel()
+                await asyncio.gather(prewarm_task, return_exceptions=True)
             if autonomy_task is not None:
                 autonomy_task.cancel()
                 await asyncio.gather(autonomy_task, return_exceptions=True)
