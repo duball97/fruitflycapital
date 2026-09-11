@@ -581,6 +581,12 @@ class AutonomousTradingRuntime:
         ]
         observed_token_value_usd = sum(float(item["observedValueUsd"]) for item in observed_token_positions if item.get("observedValueUsd") is not None)
         mainnet_executions = [_execution_payload(row) for row in self.ledger.rows("mainnet_executions", limit=100)]
+        if self.wallet is not None:
+            chain_id = int(self.wallet.expected_chain_id or os.getenv("FUND_CHAIN_ID", "4663"))
+            mainnet_executions = _merge_wallet_history(
+                mainnet_executions,
+                self.blockscout.wallet_trade_history(self.wallet.wallet_address, chain_id=chain_id),
+            )
         pending_execution = [item for item in mainnet_executions if item["status"] in {ReceiptStatus.BROADCAST, ReceiptStatus.PENDING}]
         # Mark only confirmed biological holdings.  This deliberately uses
         # each fly's recorded entry price and the latest habitat price, so the
@@ -1059,6 +1065,23 @@ def _execution_payload(row: Mapping[str, Any]) -> dict[str, Any]:
         "blockscout": _json_object(row.get("blockscout_json")),
         "error": row.get("error"),
     }
+
+
+def _merge_wallet_history(recorded: list[dict[str, Any]], indexed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join indexed wallet legs without duplicating registered hashes."""
+
+    merged = list(recorded)
+    known = {
+        (str(item.get("txHash") or "").lower(), str(item.get("side") or "").lower(), str(item.get("tokenAddress") or "").lower())
+        for item in recorded
+    }
+    for item in indexed:
+        key = (str(item.get("txHash") or "").lower(), str(item.get("side") or "").lower(), str(item.get("tokenAddress") or "").lower())
+        if key not in known:
+            merged.append(item)
+            known.add(key)
+    merged.sort(key=lambda item: (int(item.get("timestamp") or item.get("timestampMs") or 0), str(item.get("txHash") or "")), reverse=True)
+    return merged
 
 
 def _json_object(value: Any) -> dict[str, Any] | None:

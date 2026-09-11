@@ -26,6 +26,17 @@ const mainnetExecutionCard = (item: Record<string, unknown>) => {
   const status = String(item.status || 'PENDING')
   return `<article class="execution-card execution-${status.toLowerCase()}"><div class="execution-card-top"><strong>${flyIds}</strong><span>${status}</span></div><h3>${side} ${String(item.tokenSymbol || 'TOKEN')}</h3><div class="execution-route">${input} → ${String(output)} ${String(item.tokenSymbol || '')}</div><div class="execution-meta"><span>ROBINHOOD CHAIN</span><span>${block}</span><span>Gas ${gas}</span></div><a class="execution-link" href="https://robinhoodchain.blockscout.com/tx/${txHash}" target="_blank" rel="noopener noreferrer">VIEW ON BLOCKSCOUT ↗</a></article>`
 }
+const walletTransactionRow = (item: Record<string, unknown>) => {
+  const txHash = isRealTxHash(item.txHash) ? item.txHash : ''
+  if (!txHash) return ''
+  const side = String(item.side || '').toUpperCase()
+  const status = String(item.status || '—').toUpperCase()
+  const input = String(item.actualInputAmount || item.inputAmount || '—')
+  const output = String(item.actualOutputAmount || item.expectedOutput || '—')
+  const token = String(item.tokenSymbol || item.tokenAddress || 'TOKEN')
+  const block = item.blockNumber ? `BLOCK ${String(item.blockNumber)}` : 'PENDING'
+  return `<div class="trade wallet-transaction-row"><b>${side}</b><span>${token}</span><span>${input} → ${output}</span><span>${status}</span><span>${block}</span><a href="https://robinhoodchain.blockscout.com/tx/${txHash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a></div>`
+}
 
 function render(data: Portfolio | null, status = 'CONNECTING') {
   const fund = data?.fund || {}
@@ -40,11 +51,12 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
   const target = Array.isArray(autonomous.biologicalTargetPortfolio) ? autonomous.biologicalTargetPortfolio as Record<string, unknown>[] : []
   const actual = Array.isArray(autonomous.actualWalletPortfolio) ? autonomous.actualWalletPortfolio as Record<string, unknown>[] : []
   const mainnetExecutions = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
-  const pendingExecution = Array.isArray(autonomous.pendingExecution) ? autonomous.pendingExecution as Record<string, unknown>[] : []
-  const confirmedExecutionEvents = mainnetExecutions.filter((item) => {
+  const walletTransactions = mainnetExecutions.filter((item) => {
     const status = String(item.status || '').toUpperCase()
     return isRealTxHash(item.txHash) && ['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(status)
   })
+  const walletBuys = walletTransactions.filter((item) => String(item.side || '').toLowerCase() === 'buy')
+  const walletSells = walletTransactions.filter((item) => String(item.side || '').toLowerCase() === 'sell')
   const native = (value: unknown) => typeof value === 'number' ? `${value.toFixed(6)} ETH` : '—'
   const observedTokenPositions = actual.filter((item) => {
     const address = String(item.tokenAddress || item.token_address || '')
@@ -93,7 +105,7 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
     <section class="panel"><h2>POSITIONS</h2><div class="table"><div class="thead"><span>ASSET</span><span>CHAIN</span><span>AMOUNT</span><span>VALUE</span><span>P&L</span></div>${positions.length ? positions.map(item => `<div class="tr"><span>${String(item.symbol || item.token_address || '—')}</span><span>${String(item.chain_id || '—')}</span><span>${String(item.amount ?? '—')}</span><span>${money(item.value_usd)}</span><span>${money(item.unrealized_pnl_usd)}</span></div>`).join('') : '<p class="muted">No positions recorded yet.</p>'}</div></section>
     <section class="panel"><h2>RECENT FRUITFLY CAPITAL TRADES</h2>${trades.filter(item => isRealTxHash(item.tx_hash) && ['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(String(item.status || '').toUpperCase())).length ? trades.filter(item => isRealTxHash(item.tx_hash) && ['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(String(item.status || '').toUpperCase())).map(item => `<div class="trade"><b>${String(item.status || '—').toUpperCase()}</b><span>chain ${String(item.chain_id || '—')}</span><span>${money(item.usd_value)}</span><a href="https://robinhoodchain.blockscout.com/tx/${item.tx_hash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a></div>`).join('') : '<p class="muted">No on-chain trades recorded yet.</p>'}</section>
     <section class="panel mainnet-executions"><h2>MAINNET EXECUTED · ROBINHOOD CHAIN</h2>${mainnetExecutions.length ? mainnetExecutions.map(mainnetExecutionCard).join('') : '<p class="muted">No real mainnet transaction hashes recorded.</p>'}</section>
-    <section class="grid"><article class="panel"><h2>BUY / HOLD / SELL EVENTS</h2>${confirmedExecutionEvents.length ? confirmedExecutionEvents.slice(0, 20).map(item => `<div class="trade"><b>${String(item.side || '—').toUpperCase()}</b><span>${Array.isArray(item.flyIds) ? item.flyIds.map(String).join(', ') : String(item.flyIds || '—')}</span><span>${String(item.status || '—')}</span><span>${String(item.tokenSymbol || item.tokenAddress || '—')}</span><span>${String(item.actualInputAmount || item.inputAmount || '—')} → ${String(item.actualOutputAmount || item.expectedOutput || '—')}</span><a href="https://robinhoodchain.blockscout.com/tx/${item.txHash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a></div>`).join('') : '<p class="muted">No confirmed or broadcast buys/sells yet.</p>'}</article><article class="panel"><h2>PENDING EXECUTION</h2>${pendingExecution.filter((item) => isRealTxHash(item.txHash)).length ? pendingExecution.filter((item) => isRealTxHash(item.txHash)).map(item => `<div class="trade"><b>${String(item.status || '—')}</b><span>${String(item.side || '—').toUpperCase()} ${String(item.tokenSymbol || 'TOKEN')}</span><span>${Array.isArray(item.flyIds) ? item.flyIds.map(String).join(', ') : String(item.flyIds || '—')}</span><a href="https://robinhoodchain.blockscout.com/tx/${item.txHash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a></div>`).join('') : '<p class="muted">No pending on-chain execution.</p>'}</article></section>
+    <section class="grid"><article class="panel"><h2>BUY TRANSACTIONS</h2>${walletBuys.length ? walletBuys.map(walletTransactionRow).join('') : '<p class="muted">No buy transactions recorded yet.</p>'}</article><article class="panel"><h2>SELL TRANSACTIONS</h2>${walletSells.length ? walletSells.map(walletTransactionRow).join('') : '<p class="muted">No sell transactions recorded yet.</p>'}</article></section>
     <footer><a href="./">FRUITFLY CAPITAL</a><button id="refresh">REFRESH</button><span>FruitFly Capital · MaleCNS · Flybody · The Graph</span></footer>`
   document.querySelector('#refresh')?.addEventListener('click', request)
 }

@@ -191,6 +191,48 @@ async def _broadcast(payload: Mapping[str, Any]) -> None:
             CONNECTED_CLIENTS.discard(client)
 
 
+async def _process_brain_input(message: Mapping[str, Any]) -> None:
+    """Complete one brain frame independently of the socket reader.
+
+    The producer sends brain frames more frequently than the market observer
+    needs telemetry. Keeping this work in a child task means a slow Brian2
+    step cannot hold the connection's receive loop hostage. ``BrainSocket``
+    already limits each fly to one in-flight frame, so this remains bounded to
+    one task per primary fly.
+    """
+
+    fly_id = message.get("flyId")
+    if not isinstance(fly_id, str):
+        return
+    try:
+        # Runtime construction stays on the main interpreter thread. The
+        # worker-thread boundary is only for stepping an existing runtime.
+        runtime = await RUNTIME_REGISTRY.get(fly_id)
+        commands, decoded, runtime_metadata = await asyncio.to_thread(
+            _step_sensor_frame,
+            message,
+            runtime,
+        )
+        output = {
+            "type": "brain_output",
+            "flyId": fly_id,
+            "commands": commands,
+            "timestampMs": int(asyncio.get_running_loop().time() * 1000),
+            "source": runtime_metadata["source"],
+            "stimulation": runtime_metadata["stimulation"],
+            **decoded,
+        }
+        if "spikeRates" in runtime_metadata:
+            output["spikeRates"] = runtime_metadata["spikeRates"]
+        await _broadcast(output)
+    except (ConnectionError, ConnectionClosed):
+        return
+    except Exception:
+        # A single malformed or failed neural frame must not terminate the
+        # authoritative telemetry connection. The next frame can recover.
+        WEBSOCKET_LOGGER.exception("brain input processing failed for %s", fly_id)
+
+
 def _stable_fly_seed(fly_id: str, base_seed: int = REALTIME_SEED) -> int:
     """Give each fly a deterministic but independent RNG stream."""
     offset = sum((index + 1) * ord(character) for index, character in enumerate(fly_id))
@@ -321,6 +363,12 @@ def _step_sensor_frame(
 async def handle_client(websocket: Any) -> None:
     global LATEST_SWARM_UPDATE
     CONNECTED_CLIENTS.add(websocket)
+    brain_tasks: set[asyncio.Task[Any]] = set()
+
+    def remember_brain_task(task: asyncio.Task[Any]) -> None:
+        brain_tasks.add(task)
+        task.add_done_callback(brain_tasks.discard)
+
     try:
         await websocket.send(json.dumps({"type": "hello", "protocol": "male-cns-fly-world", "version": 1}))
         async for raw in websocket:
@@ -406,32 +454,10 @@ async def handle_client(websocket: Any) -> None:
             fly_id = message.get("flyId")
             if not isinstance(fly_id, str):
                 continue
-            runtime = await RUNTIME_REGISTRY.get(fly_id)
-            # Keep construction on the main thread, but do not let the
-            # synchronous fixed-window step starve telemetry/health handling.
-            commands, decoded, runtime_metadata = await asyncio.to_thread(
-                _step_sensor_frame,
-                message,
-                runtime,
-            )
-            output = {
-                "type": "brain_output",
-                "flyId": fly_id,
-                "commands": commands,
-                "timestampMs": int(asyncio.get_running_loop().time() * 1000),
-                "source": runtime_metadata["source"],
-                "stimulation": runtime_metadata["stimulation"],
-                **decoded,
-            }
-            if "spikeRates" in runtime_metadata:
-                output["spikeRates"] = runtime_metadata["spikeRates"]
-            try:
-                # Brain commands are part of the same authoritative stream as
-                # swarm decisions. Viewers consume the producer's output and
-                # never submit a second sensory stream.
-                await _broadcast(output)
-            except (ConnectionError, ConnectionClosed):
-                break
+            # Do not await Brian2 here. The receive loop must remain free to
+            # accept the producer's higher-priority swarm telemetry and new
+            # viewer handshakes while brain frames are being stepped.
+            remember_brain_task(asyncio.create_task(_process_brain_input(message)))
     except (ConnectionError, ConnectionClosed):
         # Browsers and Render's proxy can drop an idle websocket without a
         # close frame. This is a normal client lifecycle event, not a server

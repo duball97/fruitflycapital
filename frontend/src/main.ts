@@ -477,9 +477,9 @@ const zeroAddress = '0x0000000000000000000000000000000000000000'
 function tradeActivityRecords() {
   const fund = brainSocket.portfolio()
   const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
-  const records: Array<Record<string, unknown> & { source: string; side: 'BUY' | 'SELL'; token: string; tokenAddress: string; flyLabel: string; timeMs: number }> = []
+  const records: Array<Record<string, unknown> & { side: 'BUY' | 'SELL'; token: string; tokenAddress: string; flyLabel: string; timeMs: number }> = []
   const seen = new Set<string>()
-  const add = (item: Record<string, unknown>, source: string) => {
+  const add = (item: Record<string, unknown>) => {
     const status = String(item.status || '').toUpperCase()
     const txHash = String(item.txHash || item.tx_hash || '')
     // This tab is intentionally on-chain-only. Biological proposals, queued
@@ -498,16 +498,18 @@ function tradeActivityRecords() {
       : String(item.neuroswarm_decision_id || '').split(',').map((value) => value.trim()).filter(Boolean)
     const executionId = String(item.executionId || item.execution_id || item.trade_id || '')
     const timeMs = Number(item.timestamp || item.timestampMs || item.timestamp_ms || item.createdMs || autonomous.observedAtMs || 0)
-    const key = txHash || executionId || `${timeMs}:${side}:${tokenAddress}:${flyIds.join(',')}`
+    const key = txHash
+      ? `${txHash.toLowerCase()}:${side}:${tokenAddress.toLowerCase()}`
+      : executionId || `${timeMs}:${side}:${tokenAddress}:${flyIds.join(',')}`
     if (seen.has(key)) return
     seen.add(key)
-    records.push({ ...item, source, side, token, tokenAddress, flyLabel: flyIds.length ? flyIds.join(' · ') : 'SWARM', timeMs })
+    records.push({ ...item, side, token, tokenAddress, flyLabel: flyIds.join(' · '), timeMs })
   }
   const mainnet = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
   const trades = Array.isArray(fund?.recentTrades) ? fund.recentTrades as Record<string, unknown>[] : []
-  mainnet.forEach((item) => add(item, 'MAINNET'))
+  mainnet.forEach((item) => add(item))
   // Runtime BUY/SELL events do not prove execution and are excluded here.
-  trades.forEach((item) => add(item, 'LEDGER'))
+  trades.forEach((item) => add(item))
   return records.sort((left, right) => right.timeMs - left.timeMs)
 }
 
@@ -515,7 +517,10 @@ function formatTradeInput(item: Record<string, unknown>) {
   const raw = item.inputAmount ?? item.amountIn ?? item.amount_in
   const inputToken = String(item.inputToken || item.token_in || '')
   if (inputToken.toLowerCase() === zeroAddress && raw !== undefined) {
-    const amount = Number(raw) / 1e18
+    // Indexed wallet history is already human-readable; ledger execution
+    // amounts are base-unit integers.
+    const numeric = Number(raw)
+    const amount = typeof raw === 'string' && raw.includes('.') ? numeric : numeric / 1e18
     return Number.isFinite(amount) ? `${amount.toLocaleString(undefined, { maximumSignificantDigits: 8 })} ETH` : '—'
   }
   return formatTokenAmount(raw)
@@ -594,7 +599,7 @@ function renderIntentLog() {
   }
   const visibleTrades = tradeRecords.filter((item) => {
     if (!intentSearchTerm) return true
-    return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status, item.source].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+      return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
   })
   if (visibleTrades.length === 0) {
     const empty = document.createElement('div')
@@ -607,11 +612,11 @@ function renderIntentLog() {
     const row = document.createElement('div')
     row.className = `intent-log-row ${trade.side === 'SELL' ? 'sell' : 'buy'}`
     const time = trade.timeMs > 0 ? new Date(trade.timeMs).toLocaleTimeString([], { hour12: false }) : '—'
-    const status = String(trade.status || (trade.source === 'MAINNET' ? 'BROADCAST' : 'RECORDED')).toUpperCase()
+    const status = String(trade.status || 'BROADCAST').toUpperCase()
     row.innerHTML = '<div class="intent-log-row-top"><strong></strong><span></span><em></em></div><div class="intent-log-token"></div><div class="intent-log-holding"></div><div class="intent-log-details"></div>'
     row.querySelector('strong')!.textContent = `${trade.side} ${trade.token}`
-    row.querySelector('span')!.textContent = `${time} · ${trade.flyLabel}`
-    row.querySelector('em')!.textContent = `${trade.source} · ${status}`
+    row.querySelector('span')!.textContent = trade.flyLabel ? `${time} · ${trade.flyLabel}` : time
+    row.querySelector('em')!.textContent = status
     row.querySelector('.intent-log-token')!.textContent = `${formatTradeInput(trade)} → ${formatTradeOutput(trade)} ${trade.token}`
     row.querySelector('.intent-log-holding')!.textContent = trade.tokenAddress ? `${trade.tokenAddress.slice(0, 10)}…${trade.tokenAddress.slice(-6)}` : 'TOKEN ADDRESS PENDING'
     const details = row.querySelector('.intent-log-details')!

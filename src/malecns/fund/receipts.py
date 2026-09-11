@@ -15,6 +15,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable, Mapping
+from urllib.parse import urlencode
 
 
 ROBINHOOD_CHAIN_ID = 4663
@@ -41,6 +42,7 @@ class BlockscoutClient:
     timeout_seconds: float = 8.0
     fetcher: JsonFetcher | None = None
     _cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    _wallet_history_cache: dict[str, tuple[float, list[dict[str, Any]]]] = field(default_factory=dict, init=False, repr=False)
 
     @classmethod
     def from_env(cls) -> "BlockscoutClient":
@@ -62,6 +64,136 @@ class BlockscoutClient:
             raise RuntimeError("Blockscout returned a non-object response")
         self._cache[tx_hash.lower()] = payload
         return payload
+
+    def wallet_trade_history(self, wallet_address: str, *, chain_id: int = ROBINHOOD_CHAIN_ID) -> list[dict[str, Any]]:
+        """Return buy/sell legs for every indexed transaction sent by a wallet.
+
+        The execution ledger only knows about transactions the fund runtime has
+        registered. The explorer address history is the authoritative view for
+        this screen because the same signing wallet can also send a transaction
+        through another client. Token transfers are joined to the wallet's
+        outgoing transactions and converted into the same normalized shape used
+        by the existing execution cards.
+        """
+
+        wallet = wallet_address.strip()
+        if not _is_address(wallet):
+            return []
+        cache_key = wallet.lower()
+        now = time.monotonic()
+        cached = self._wallet_history_cache.get(cache_key)
+        cache_seconds = max(0.0, float(os.getenv("BLOCKSCOUT_WALLET_HISTORY_CACHE_SECONDS", "30")))
+        if cached is not None and now - cached[0] < cache_seconds:
+            return [dict(item) for item in cached[1]]
+
+        try:
+            transactions = self._paged_items(f"/api/v2/addresses/{wallet}/transactions")
+            transfers = self._paged_items(f"/api/v2/addresses/{wallet}/token-transfers")
+        except Exception:
+            # The rest of the portfolio remains usable when the optional public
+            # indexer is unavailable. A later request retries after the cache
+            # window rather than turning the websocket request into an error.
+            return [dict(item) for item in cached[1]] if cached is not None else []
+
+        transfers_by_hash: dict[str, list[Mapping[str, Any]]] = {}
+        for transfer in transfers:
+            tx_hash = str(transfer.get("transaction_hash") or transfer.get("transactionHash") or "").lower()
+            if tx_hash:
+                transfers_by_hash.setdefault(tx_hash, []).append(transfer)
+
+        result: list[dict[str, Any]] = []
+        wallet_key = wallet.lower()
+        for transaction in transactions:
+            if not isinstance(transaction, Mapping):
+                continue
+            tx_hash = str(transaction.get("hash") or transaction.get("transaction_hash") or "")
+            if not _is_tx_hash(tx_hash):
+                continue
+            sender = _nested_hash(transaction.get("from"))
+            if sender.lower() != wallet_key:
+                continue
+            tx_transfers = transfers_by_hash.get(tx_hash.lower(), [])
+            sent = [item for item in tx_transfers if _nested_hash(item.get("from")).lower() == wallet_key]
+            received = [item for item in tx_transfers if _nested_hash(item.get("to")).lower() == wallet_key]
+            if not sent and not received:
+                continue
+            timestamp_ms = _timestamp_ms(transaction.get("timestamp"))
+            status = _explorer_status(transaction.get("status"))
+            base = {
+                "txHash": tx_hash,
+                "chainId": chain_id,
+                "status": status,
+                "explorerUrl": explorer_url(tx_hash),
+                "timestampMs": timestamp_ms,
+                "blockNumber": _as_int(transaction.get("block_number")),
+                "transactionIndex": _as_int(transaction.get("transaction_index")),
+                "sender": sender,
+                "recipient": _nested_hash(transaction.get("to")) or None,
+                "transactionFee": _nested_value(transaction.get("fee")),
+                "flyIds": [],
+            }
+
+            # One swap can have both legs. Emit one normalized row per leg so
+            # the buy list and sell list each contain that transaction.
+            for transfer in sent:
+                token = _token_details(transfer)
+                if token is None:
+                    continue
+                counterpart = _first_transfer_amount(received)
+                result.append({
+                    **base,
+                    "executionId": f"wallet:{tx_hash}:sell:{token['address'].lower()}",
+                    "biologicalEventId": f"wallet:{tx_hash}",
+                    "side": "sell",
+                    "tokenSymbol": token["symbol"],
+                    "tokenAddress": token["address"],
+                    "inputToken": token["address"],
+                    "inputAmount": token["amount"],
+                    "actualInputAmount": token["amount"],
+                    "expectedOutput": counterpart,
+                    "actualOutputAmount": counterpart,
+                })
+            for transfer in received:
+                token = _token_details(transfer)
+                if token is None:
+                    continue
+                input_transfer = _first_transfer_amount(sent)
+                native_value = _native_value(transaction.get("value"))
+                result.append({
+                    **base,
+                    "executionId": f"wallet:{tx_hash}:buy:{token['address'].lower()}",
+                    "biologicalEventId": f"wallet:{tx_hash}",
+                    "side": "buy",
+                    "tokenSymbol": token["symbol"],
+                    "tokenAddress": token["address"],
+                    "inputToken": input_transfer["address"] if input_transfer else _zero_address(),
+                    "inputAmount": input_transfer["amount"] if input_transfer else native_value,
+                    "actualInputAmount": input_transfer["amount"] if input_transfer else native_value,
+                    "expectedOutput": token["amount"],
+                    "actualOutputAmount": token["amount"],
+                })
+
+        # Newest first, stable across pages and across the two explorer feeds.
+        result.sort(key=lambda item: (int(item.get("timestampMs") or 0), str(item.get("txHash") or "")), reverse=True)
+        self._wallet_history_cache[cache_key] = (now, result)
+        return [dict(item) for item in result]
+
+    def _paged_items(self, path: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        next_params: Mapping[str, Any] | None = None
+        while True:
+            query = f"?{urlencode({str(key): str(value) for key, value in next_params.items()})}" if next_params else ""
+            url = f"{self.base_url.rstrip('/')}{path}{query}"
+            payload = self.fetcher(url, self.timeout_seconds) if self.fetcher else self._request(url)
+            if not isinstance(payload, Mapping):
+                raise RuntimeError("Blockscout returned a non-object page")
+            page_items = payload.get("items")
+            if isinstance(page_items, list):
+                items.extend(item for item in page_items if isinstance(item, dict))
+            raw_next = payload.get("next_page_params")
+            if not isinstance(raw_next, Mapping) or not raw_next:
+                return items
+            next_params = raw_next
 
     def _request(self, url: str) -> Any:
         request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "fruit-fly-capital/0.1"}, method="GET")
@@ -275,3 +407,87 @@ def _address_from_topic(value: Any) -> str | None:
 
 def _zero_address() -> str:
     return "0x0000000000000000000000000000000000000000"
+
+
+def _is_address(value: str) -> bool:
+    return bool(len(value) == 42 and value.startswith("0x") and all(character in "0123456789abcdefABCDEF" for character in value[2:]))
+
+
+def _is_tx_hash(value: str) -> bool:
+    return bool(len(value) == 66 and value.startswith("0x") and all(character in "0123456789abcdefABCDEF" for character in value[2:]))
+
+
+def _nested_hash(value: Any) -> str:
+    if isinstance(value, Mapping):
+        value = value.get("hash") or value.get("address_hash")
+    return str(value or "")
+
+
+def _nested_value(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        value = value.get("value")
+    return str(value) if value is not None else None
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _timestamp_ms(value: Any) -> int | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        from datetime import datetime
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return int(parsed.timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _explorer_status(value: Any) -> str:
+    normalized = str(value or "").lower()
+    if normalized in {"ok", "success", "confirmed"}:
+        return ReceiptStatus.CONFIRMED
+    if normalized in {"pending", "awaiting"}:
+        return ReceiptStatus.PENDING
+    return ReceiptStatus.REVERTED
+
+
+def _token_details(transfer: Mapping[str, Any]) -> dict[str, str] | None:
+    token = transfer.get("token")
+    total = transfer.get("total")
+    if not isinstance(token, Mapping) or not isinstance(total, Mapping):
+        return None
+    address = str(token.get("address_hash") or token.get("address") or "")
+    if not _is_address(address):
+        return None
+    raw = str(total.get("value") or "0")
+    try:
+        amount = _format_raw(int(raw), int(total.get("decimals") or token.get("decimals") or 0))
+    except (TypeError, ValueError):
+        amount = raw
+    symbol = str(token.get("symbol") or token.get("name") or f"{address[:8]}…")
+    return {"address": address, "symbol": symbol, "amount": amount}
+
+
+def _first_transfer_amount(transfers: list[Mapping[str, Any]]) -> dict[str, str] | None:
+    for transfer in transfers:
+        details = _token_details(transfer)
+        if details is not None:
+            return details
+    return None
+
+
+def _native_value(value: Any) -> str:
+    try:
+        if value is None:
+            return "0"
+        raw = int(str(value), 16) if str(value).startswith("0x") else int(str(value))
+        return _format_raw(raw, 18)
+    except (TypeError, ValueError):
+        return "0"

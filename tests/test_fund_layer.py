@@ -360,6 +360,62 @@ def test_mainnet_receipt_uses_rpc_as_canonical_and_enriches_with_blockscout():
     assert seen_urls == ["https://robinhoodchain.blockscout.com/api/v2/transactions/0x" + "a" * 64]
 
 
+def test_wallet_history_includes_indexed_transactions_not_registered_in_ledger():
+    wallet = "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9"
+    token = "0x1111111111111111111111111111111111111111"
+    tx_hash = "0x" + "d" * 64
+
+    def fetch(url, _timeout):
+        if "/token-transfers" in url:
+            return {
+                "items": [{
+                    "from": {"hash": "0x2222222222222222222222222222222222222222"},
+                    "to": {"hash": wallet},
+                    "token": {"address_hash": token, "symbol": "AERO", "decimals": "18"},
+                    "total": {"value": "2000000000000000000", "decimals": "18"},
+                    "transaction_hash": tx_hash,
+                }]
+            }
+        return {
+            "items": [{
+                "hash": tx_hash,
+                "timestamp": "2026-09-11T12:00:00.000000Z",
+                "block_number": 42,
+                "status": "ok",
+                "from": {"hash": wallet},
+                "to": {"hash": "0x3333333333333333333333333333333333333333"},
+                "value": "0x2386f26fc10000",
+                "fee": {"value": "1000"},
+            }]
+        }
+
+    history = BlockscoutClient(fetcher=fetch).wallet_trade_history(wallet)
+    assert len(history) == 1
+    assert history[0]["side"] == "buy"
+    assert history[0]["tokenSymbol"] == "AERO"
+    assert history[0]["inputAmount"] == "0.01"
+    assert history[0]["actualOutputAmount"] == "2"
+    assert history[0]["status"] == ReceiptStatus.CONFIRMED
+
+
+def test_wallet_history_emits_both_legs_for_a_token_to_token_swap():
+    wallet = "0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9"
+    sold = "0x1111111111111111111111111111111111111111"
+    bought = "0x2222222222222222222222222222222222222222"
+    tx_hash = "0x" + "e" * 64
+
+    def fetch(url, _timeout):
+        if "/token-transfers" in url:
+            return {"items": [
+                {"from": {"hash": wallet}, "to": {"hash": "0x3333333333333333333333333333333333333333"}, "token": {"address_hash": sold, "symbol": "OLD", "decimals": "18"}, "total": {"value": "1000000000000000000", "decimals": "18"}, "transaction_hash": tx_hash},
+                {"from": {"hash": "0x3333333333333333333333333333333333333333"}, "to": {"hash": wallet}, "token": {"address_hash": bought, "symbol": "NEW", "decimals": "6"}, "total": {"value": "2500000", "decimals": "6"}, "transaction_hash": tx_hash},
+            ]}
+        return {"items": [{"hash": tx_hash, "timestamp": "2026-09-11T12:00:00Z", "block_number": 43, "status": "ok", "from": {"hash": wallet}, "to": {"hash": "0x3333333333333333333333333333333333333333"}, "value": "0x0"}]}
+
+    history = BlockscoutClient(fetcher=fetch).wallet_trade_history(wallet)
+    assert {(item["side"], item["tokenSymbol"]) for item in history} == {("sell", "OLD"), ("buy", "NEW")}
+
+
 def test_external_broadcast_registration_keeps_simulation_hashes_out_of_mainnet():
     class PreparedAdapter:
         def execute(self, intent, token):
