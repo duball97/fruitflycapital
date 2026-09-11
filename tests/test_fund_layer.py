@@ -115,6 +115,21 @@ def test_autonomous_runtime_assigns_one_sixteenth_and_debounces_departure():
     assert ledger.rows("execution_attempts")[0]["status"] == "filled"
 
 
+def test_autonomous_return_uses_entry_cost_basis_and_latest_token_value():
+    ledger = FundLedger(":memory:")
+    runtime = AutonomousTradingRuntime(ledger, expected_agents=8, min_hold_seconds=0, adapter=SimulationExecutionAdapter())
+    token = "0x6666666666666666666666666666666666666666"
+    runtime.update_habitats([{"id": "market-return", "label": "RETURN", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 2.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
+    runtime.ingest([BehaviorTradeIntent("return-buy", "fly-001", "market-return", "buy", "dwell", .9, 1000, {"contact": True}, .0625)], observed_at_ms=1000)
+
+    runtime.update_habitats([{"id": "market-return", "label": "RETURN", "chainId": "4663", "tokenAddress": token, "signals": [{"name": "market.priceNative", "value": 1.0}, {"name": "market.priceUsd", "value": 3.0}, {"name": "liquidity.usd", "value": 100000.0}]}])
+    snapshot = runtime.snapshot(observed_at_ms=2000)
+
+    assert snapshot["portfolioCostBasisUsd"] > 0
+    assert snapshot["portfolioMarkedValueUsd"] > snapshot["portfolioCostBasisUsd"]
+    assert snapshot["portfolioReturnPct"] == 50.0
+
+
 def test_autonomous_runtime_enforces_two_minute_minimum_hold_before_sell():
     ledger = FundLedger(":memory:")
     runtime = AutonomousTradingRuntime(ledger, expected_agents=16, adapter=SimulationExecutionAdapter(), departure_debounce_ms=1_500)

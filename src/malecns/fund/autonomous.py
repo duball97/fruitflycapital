@@ -580,6 +580,26 @@ class AutonomousTradingRuntime:
         observed_token_value_usd = sum(float(item["observedValueUsd"]) for item in observed_token_positions if item.get("observedValueUsd") is not None)
         mainnet_executions = [_execution_payload(row) for row in self.ledger.rows("mainnet_executions", limit=100)]
         pending_execution = [item for item in mainnet_executions if item["status"] in {ReceiptStatus.BROADCAST, ReceiptStatus.PENDING}]
+        # Mark only confirmed biological holdings.  This deliberately uses
+        # each fly's recorded entry price and the latest habitat price, so the
+        # return is based on purchased position value versus current value;
+        # proposals, quotes, and failed attempts never affect it.
+        cost_basis_usd = 0.0
+        marked_value_usd = 0.0
+        realized_pnl_usd = 0.0
+        for position in self.positions.values():
+            realized_pnl_usd += position.realized_pnl_usd
+            if position.state != FlyBehaviorState.HOLDING.value or not position.token_address or position.held_amount <= 0:
+                continue
+            basis = (position.entry_price_usd or 0.0) * position.held_amount
+            token = self.tokens_by_address.get(_token_key(position.chain_id or 0, position.token_address))
+            current_price = token.price_usd if token is not None and token.price_usd is not None else position.entry_price_usd
+            current = (current_price or 0.0) * position.held_amount
+            if basis > 0:
+                cost_basis_usd += basis
+                marked_value_usd += current
+        unrealized_pnl_usd = marked_value_usd - cost_basis_usd
+        portfolio_return_pct = (((marked_value_usd + realized_pnl_usd) / cost_basis_usd) - 1.0) * 100.0 if cost_basis_usd > 0 else None
         return {
             "observedAtMs": timestamp,
             "flyCount": self.expected_agents,
@@ -597,6 +617,11 @@ class AutonomousTradingRuntime:
             "actualWalletPortfolio": actual,
             "observedPositionCount": len(observed_token_positions),
             "observedTokenValueUsd": observed_token_value_usd,
+            "portfolioCostBasisUsd": cost_basis_usd,
+            "portfolioMarkedValueUsd": marked_value_usd,
+            "portfolioRealizedPnlUsd": realized_pnl_usd,
+            "portfolioUnrealizedPnlUsd": unrealized_pnl_usd,
+            "portfolioReturnPct": portfolio_return_pct,
             "pendingRebalance": list(self.pending_rebalance[-100:]),
             "pendingExecution": pending_execution,
             "mainnetExecutions": mainnet_executions,
