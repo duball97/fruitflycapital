@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 from collections.abc import Mapping
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Callable
 
@@ -78,11 +79,13 @@ class RuntimeRegistry:
         *,
         base_seed: int = 0,
         window_ms: float = 50.0,
+        max_live_runtimes: int | None = None,
         runtime_factory: Callable[..., LiveMaleCNSRuntime] = LiveMaleCNSRuntime,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.base_seed = int(base_seed)
         self.window_ms = float(window_ms)
+        self.max_live_runtimes = None if max_live_runtimes is None else max(1, int(max_live_runtimes))
         self.runtime_factory = runtime_factory
         self._runtimes: dict[str, LiveMaleCNSRuntime | None] = {}
         self._lock: asyncio.Lock | None = None
@@ -99,6 +102,20 @@ class RuntimeRegistry:
         async with self._lock:
             if fly_id in self._runtimes:
                 return self._runtimes[fly_id]
+            live_count = sum(runtime is not None for runtime in self._runtimes.values())
+            if self.max_live_runtimes is not None and live_count >= self.max_live_runtimes:
+                # One cached Brian2 network costs roughly 120 MB for the
+                # current 3-hop MaleCNS graph. Render's 512 MB instances can't
+                # safely own sixteen copies. Preserve the independent fly IDs
+                # and return decoder output for overflow agents instead of
+                # letting the operating system kill the entire WebSocket.
+                self._runtimes[fly_id] = None
+                print(
+                    f"Live Brian2 capacity {self.max_live_runtimes} reached; "
+                    f"using decoder fallback for {fly_id}",
+                    flush=True,
+                )
+                return None
             try:
                 # Brian2's runtime and code-generation stack must be created
                 # on Python's main interpreter thread. Moving construction to
@@ -123,6 +140,12 @@ RUNTIME_REGISTRY = RuntimeRegistry(
     REALTIME_CACHE,
     base_seed=REALTIME_SEED,
     window_ms=REALTIME_WINDOW_MS,
+    max_live_runtimes=int(
+        os.getenv(
+            "MALECNS_MAX_LIVE_RUNTIMES",
+            "2" if os.getenv("RENDER") else str(SWARM_SIZE),
+        )
+    ),
 )
 
 
@@ -234,6 +257,32 @@ async def handle_client(websocket: Any) -> None:
         return
 
 
+def process_http_request(connection: Any, request: Any) -> Any | None:
+    """Serve Render health probes without consuming WebSocket upgrades.
+
+    Render routes a Web Service only while its HTTP endpoint is healthy.  A
+    bare ``websockets`` server accepts upgrades but doesn't provide a useful
+    response to an ordinary GET, which can leave the service listening inside
+    the container while the public hostname times out.  Keep ``/`` and
+    ``/healthz`` cheap and deterministic; real WebSocket requests continue to
+    the normal opening handshake.
+    """
+
+    if str(request.headers.get("Upgrade", "")).lower() == "websocket":
+        return None
+    path = str(request.path).split("?", 1)[0]
+    if path in {"/", "/healthz"}:
+        response = connection.respond(
+            HTTPStatus.OK,
+            json.dumps({"status": "ok", "service": "fruitfly-brain"}) + "\n",
+        )
+        del response.headers["Content-Type"]
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return connection.respond(HTTPStatus.NOT_FOUND, "Not found\n")
+
+
 def _parse_swarm_telemetry(message: Mapping[str, Any]) -> tuple[FlyObservation, ...]:
     """Parse browser telemetry without forwarding it to any CNS runtime."""
 
@@ -302,7 +351,15 @@ def _int_value(value: Any, fallback: int) -> int:
 async def serve_forever(host: str, port: int) -> None:
     from websockets.asyncio.server import serve
 
-    async with serve(handle_client, host, port, max_size=1_000_000):
+    async with serve(
+        handle_client,
+        host,
+        port,
+        max_size=1_000_000,
+        process_request=process_http_request,
+        ping_interval=20,
+        ping_timeout=20,
+    ):
         print(f"MaleCNS WebSocket adapter listening on ws://{host}:{port}", flush=True)
         await asyncio.Future()
 
