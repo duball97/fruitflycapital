@@ -5,7 +5,7 @@ const app = document.querySelector<HTMLElement>('#about-app')!
 app.innerHTML = `
   <header class="site-header">
     <a class="site-brand" href="/" aria-label="FruitFly Capital home"><img src="/fruitfly-logo.png" alt="" /><span>FRUITFLY CAPITAL</span></a>
-    <nav class="site-nav" aria-label="Primary navigation"><a href="/">Simulation</a><a class="is-active" href="/about/">About</a><a href="/portfolio/">Portfolio</a><a href="/#buy">Buy</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav>
+    <nav class="site-nav" aria-label="Primary navigation"><a href="/">Simulation</a><a class="is-active" href="/about/">About</a><a href="/portfolio/">Portfolio</a><a href="/#buy">Buy</a><a href="https://robinhoodchain.blockscout.com/address/0x80f961956721e5670248fdd65da083a421e630d2" target="_blank" rel="noopener noreferrer" title="0x80f961956721e5670248fdd65da083a421e630d2">CA 0x80f9…30d2</a><a href="https://x.com/fruitflycap" target="_blank" rel="noreferrer">Community</a></nav>
     <a class="header-social" href="https://x.com/fruitflycap" target="_blank" rel="noreferrer" aria-label="FruitFly Capital on X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.24-8.28L2.8 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.7h1.73L8.28 4.2H6.42L17.8 19.7Z" /></svg><span>@fruitflycap</span></a>
   </header>
   <main>
