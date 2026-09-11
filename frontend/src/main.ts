@@ -599,7 +599,7 @@ function renderIntentLog() {
   }
   const visibleTrades = tradeRecords.filter((item) => {
     if (!intentSearchTerm) return true
-      return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
+    return [item.side, item.token, item.tokenAddress, item.flyLabel, item.status].some((value) => String(value ?? '').toLowerCase().includes(intentSearchTerm))
   })
   if (visibleTrades.length === 0) {
     const empty = document.createElement('div')

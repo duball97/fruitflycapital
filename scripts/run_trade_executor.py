@@ -419,10 +419,10 @@ class TradeExecutor:
                     raise RuntimeError(f"approval transaction {approval_hash} ended {approval_status}")
         swap = client.build_swap(quote, recipient=wallet.wallet_address, slippage_tolerance=intent.slippage_tolerance)
         transaction = _transaction_from_swap(swap)
+        fee_cap = self._refresh_fee_fields(transaction)
         gas_hex = self.wallet.call("eth_estimateGas", [_rpc_transaction(transaction, wallet.wallet_address), "latest"])
         transaction["gas"] = _int_value(gas_hex)
-        gas_price_hex = self.wallet.call("eth_gasPrice", [])
-        gas_price = _int_value(gas_price_hex)
+        gas_price = fee_cap
         native_input = _int_value(intent.amount_in) if intent.token_in.lower() == ZERO_ADDRESS.lower() else 0
         required = native_input + transaction["gas"] * gas_price + wallet.gas_reserve_wei
         if required > wallet.native_balance_wei:
@@ -480,12 +480,13 @@ class TradeExecutor:
         transaction = _transaction_from_swap(swap)
         if not isinstance(transaction.get("data"), str) or transaction["data"] in {"", "0x"}:
             raise WalletRpcError("Uniswap API returned empty transaction calldata")
+        fee_cap = self._refresh_fee_fields(transaction)
         try:
             estimated_gas = self.wallet.call("eth_estimateGas", [_rpc_transaction(transaction, wallet.wallet_address), "latest"])
         except Exception as exc:
             raise WalletRpcError(f"gas estimation failed: {exc}") from exc
         transaction["gas"] = _int_value(estimated_gas)
-        gas_price = _int_value(self.wallet.call("eth_gasPrice", []))
+        gas_price = fee_cap
         native_input = amount_in if intent.token_in.lower() == ZERO_ADDRESS.lower() else 0
         required = native_input + transaction["gas"] * gas_price + wallet.gas_reserve_wei
         if required > wallet.native_balance_wei:
@@ -504,17 +505,55 @@ class TradeExecutor:
         account = Account.from_key(private_key)
         if account.address.lower() != wallet.wallet_address.lower():
             raise RuntimeError("PRIVATE_KEY does not control FUND_WALLET_ADDRESS")
-        tx = dict(transaction)
-        tx["chainId"] = wallet.chain_id
-        tx["nonce"] = _int_value(self.wallet.call("eth_getTransactionCount", [wallet.wallet_address, "pending"]))
-        if "maxFeePerGas" not in tx and "maxPriorityFeePerGas" not in tx:
-            tx.setdefault("gasPrice", _int_value(self.wallet.call("eth_gasPrice", [])))
-        tx.setdefault("gas", _int_value(self.wallet.call("eth_estimateGas", [_rpc_transaction(tx, wallet.wallet_address), "latest"])))
-        signed = Account.sign_transaction(tx, private_key)
-        raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
-        if raw is None:
-            raise RuntimeError("signer did not return raw transaction bytes")
-        return self.wallet.send_raw_transaction("0x" + bytes(raw).hex())
+        # A new block can arrive between fee refresh and eth_sendRawTransaction.
+        # Rebuild and re-sign once if the node reports that exact race; never
+        # retry other RPC failures because the transaction may already exist.
+        for attempt in range(2):
+            tx = dict(transaction)
+            tx["chainId"] = wallet.chain_id
+            tx["nonce"] = _int_value(self.wallet.call("eth_getTransactionCount", [wallet.wallet_address, "pending"]))
+            self._refresh_fee_fields(tx)
+            tx.setdefault("gas", _int_value(self.wallet.call("eth_estimateGas", [_rpc_transaction(tx, wallet.wallet_address), "latest"])))
+            signed = Account.sign_transaction(tx, private_key)
+            raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
+            if raw is None:
+                raise RuntimeError("signer did not return raw transaction bytes")
+            try:
+                return self.wallet.send_raw_transaction("0x" + bytes(raw).hex())
+            except WalletRpcError as error:
+                if attempt == 0 and "max fee per gas less than block base fee" in str(error).lower():
+                    continue
+                raise
+        raise RuntimeError("transaction broadcast retry exhausted")
+
+    def _refresh_fee_fields(self, transaction: dict[str, Any]) -> int:
+        """Apply a current, bounded fee policy and return its fee cap.
+
+        Hosted swap payloads frequently carry a fee quote from an earlier
+        block. Passing that stale EIP-1559 cap to ``eth_estimateGas`` causes
+        the node to reject the estimate before the signer is reached. Refresh
+        both estimation and final broadcast from the latest block instead.
+        """
+
+        latest_block = self.wallet.call("eth_getBlockByNumber", ["latest", False])
+        base_fee = _int_value(latest_block.get("baseFeePerGas", 0)) if isinstance(latest_block, Mapping) else 0
+        if base_fee > 0:
+            try:
+                priority_fee = _int_value(self.wallet.call("eth_maxPriorityFeePerGas", []))
+            except Exception:
+                priority_fee = 1_000_000_000
+            priority_fee = max(1, priority_fee)
+            fee_cap = (base_fee * 2) + priority_fee
+            transaction.pop("gasPrice", None)
+            transaction["maxPriorityFeePerGas"] = priority_fee
+            transaction["maxFeePerGas"] = fee_cap
+            return fee_cap
+
+        transaction.pop("maxFeePerGas", None)
+        transaction.pop("maxPriorityFeePerGas", None)
+        gas_price = _int_value(self.wallet.call("eth_gasPrice", []))
+        transaction["gasPrice"] = max(_int_value(transaction.get("gasPrice", 0)), gas_price)
+        return transaction["gasPrice"]
 
     def _wait_for_receipt(self, tx_hash: str) -> tuple[str, dict[str, Any] | None]:
         timeout = max(1.0, float(os.getenv("FUND_RUNNER_RECEIPT_TIMEOUT_SECONDS", "120")))

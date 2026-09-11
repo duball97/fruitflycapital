@@ -563,6 +563,18 @@ def _int_value(value: Any, fallback: int) -> int:
 async def serve_forever(host: str, port: int) -> None:
     from websockets.asyncio.server import serve
 
+    # Build the bounded live population before accepting browser connections.
+    # Brian2 construction is intentionally kept on the main interpreter
+    # thread, and doing it after ``serve`` starts makes the socket look alive
+    # while the first page request is blocked for several seconds per fly.
+    # Prewarming makes startup honest and prevents the first producer from
+    # timing out while the runtimes are being created.
+    prewarm_count = RUNTIME_REGISTRY.max_live_runtimes or 0
+    if prewarm_count > 0:
+        print(f"Prewarming MaleCNS runtimes ({prewarm_count})...", flush=True)
+        for index in range(prewarm_count):
+            await RUNTIME_REGISTRY.get(f"fly-{index + 1:03d}")
+
     async with serve(
         handle_client,
         host,
