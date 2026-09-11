@@ -313,7 +313,8 @@ portfolioSummary.className = 'portfolio-summary'
 portfolioSummary.setAttribute('aria-label', 'Live portfolio summary')
 portfolioSummary.innerHTML = `
   <div class="portfolio-summary-heading"><span>FRUITFLY CAPITAL · PORTFOLIO</span><span class="portfolio-summary-actions"><a href="/portfolio/">OPEN FULL PORTFOLIO →</a><a data-portfolio-summary="wallet-link" href="https://robinhoodchain.blockscout.com/address/0xB2B6710B85BfFF84b68aA4a91e78532f4FA726a9" target="_blank" rel="noopener noreferrer">WATCH WALLET ↗</a></span></div>
-  <div class="portfolio-summary-values"><div><small>WALLET</small><strong data-portfolio-summary="wallet">CONNECTING</strong></div><div><small>AVAILABLE</small><strong data-portfolio-summary="available">—</strong></div><div><small>POSITIONS</small><strong data-portfolio-summary="positions">—</strong></div><div><small>RETURN</small><strong data-portfolio-summary="return">—</strong></div></div>
+  <div class="portfolio-summary-values"><div><small>WALLET</small><strong data-portfolio-summary="wallet">CONNECTING</strong></div><div><small>AVAILABLE</small><strong data-portfolio-summary="available">—</strong></div><div><small>POSITIONS</small><strong data-portfolio-summary="positions">—</strong></div><div class="portfolio-summary-return" data-portfolio-summary="return-field" hidden><small>RETURN</small><strong data-portfolio-summary="return"></strong></div></div>
+  <div class="portfolio-summary-stats"><span>NAV <b data-portfolio-summary="nav">—</b></span><span>GAS <b data-portfolio-summary="gas">—</b></span><span>HELD FLIES <b data-portfolio-summary="held-flies">—</b></span><span>ON-CHAIN <b data-portfolio-summary="onchain">—</b></span></div>
   <div class="portfolio-summary-holdings" data-portfolio-summary="holdings">Waiting for live portfolio data…</div>
 `
 app.append(portfolioSummary)
@@ -321,7 +322,12 @@ const portfolioSummaryFields = {
   wallet: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="wallet"]')!,
   available: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="available"]')!,
   positions: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="positions"]')!,
+  returnField: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="return-field"]')!,
   return: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="return"]')!,
+  nav: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="nav"]')!,
+  gas: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="gas"]')!,
+  heldFlies: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="held-flies"]')!,
+  onchain: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="onchain"]')!,
   holdings: portfolioSummary.querySelector<HTMLElement>('[data-portfolio-summary="holdings"]')!,
   walletLink: portfolioSummary.querySelector<HTMLAnchorElement>('[data-portfolio-summary="wallet-link"]')!,
 }
@@ -679,13 +685,14 @@ function updatePortfolioSummary() {
   const positions = legacyPositions.length ? legacyPositions : observedTokenPositions
   const available = typeof wallet.availableToTrade === 'number' ? `${wallet.availableToTrade.toFixed(6)} ETH` : '—'
   const walletTotal = typeof wallet.nativeBalance === 'number' ? `${wallet.nativeBalance.toFixed(6)} ETH` : '—'
-  const returnPct = typeof fund.returnPct === 'number' && (legacyPositions.length > 0 || observedTokenPositions.length === 0)
-    ? `${fund.returnPct >= 0 ? '+' : ''}${fund.returnPct.toFixed(2)}%`
-    : observedTokenPositions.length > 0 ? '—' : 'AWAITING COST BASIS'
+  const returnPct = typeof autonomous.portfolioReturnPct === 'number'
+    ? `${autonomous.portfolioReturnPct >= 0 ? '+' : ''}${autonomous.portfolioReturnPct.toFixed(2)}%`
+    : null
   portfolioSummaryFields.wallet.textContent = walletTotal
   portfolioSummaryFields.available.textContent = available
   portfolioSummaryFields.positions.textContent = `${positions.length}`
-  portfolioSummaryFields.return.textContent = returnPct
+  portfolioSummaryFields.returnField.hidden = returnPct === null
+  if (returnPct !== null) portfolioSummaryFields.return.textContent = returnPct
   const walletAddress = String(wallet.address || fund.treasuryAddress || '')
   if (/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
     portfolioSummaryFields.walletLink.href = `https://robinhoodchain.blockscout.com/address/${walletAddress}`
