@@ -515,15 +515,20 @@ function formatTradeOutput(item: Record<string, unknown>) {
   return formatTokenAmount(item.actualOutputAmount ?? item.amountOut ?? item.amount_out ?? item.expectedOutput)
 }
 
+function telemetryStatusLabel() {
+  if (brainSocket.telemetryRole() === 'server') return 'LIVE · SERVER AUTONOMOUS'
+  if (brainSocket.telemetryRole() === 'producer') return 'LIVE · PRODUCER'
+  if (brainSocket.telemetryRole() === 'observer') return 'LIVE · VIEW ONLY'
+  return 'LIVE'
+}
+
 function renderIntentLog() {
   const tradeRecords = tradeActivityRecords()
   const tradeBuyCount = tradeRecords.filter((item) => item.side === 'BUY').length
   const tradeSellCount = tradeRecords.filter((item) => item.side === 'SELL').length
   intentBuyCount.textContent = `BUY ${tradeBuyCount}`
   intentSellCount.textContent = `SELL ${tradeSellCount}`
-  intentLogLive.textContent = brainSocket.getStatus() === 'connected'
-    ? brainSocket.telemetryRole() === 'producer' ? 'LIVE · PRODUCER' : brainSocket.telemetryRole() === 'observer' ? 'LIVE · VIEW ONLY' : 'LIVE'
-    : 'WAITING'
+  intentLogLive.textContent = brainSocket.getStatus() === 'connected' ? telemetryStatusLabel() : 'WAITING'
   const fund = brainSocket.portfolio()
   const positions = Array.isArray(fund?.positions) ? fund.positions as Record<string, unknown>[] : []
   const autonomous = (fund?.autonomous || {}) as Record<string, unknown>
@@ -1373,14 +1378,14 @@ window.addEventListener('resize', resize)
 
 brainSocket.onStatusChange((next) => {
   status.innerHTML = `<span class="status-dot ${next}"></span> brain socket ${next} <span class="socket-url">${brainUrl}</span>`
-  intentLogLive.textContent = next === 'connected' ? (brainSocket.telemetryRole() === 'producer' ? 'LIVE · PRODUCER' : 'LIVE · VIEW ONLY') : 'WAITING'
+  intentLogLive.textContent = next === 'connected' ? telemetryStatusLabel() : 'WAITING'
   if (next === 'connected') {
     brainSocket.requestEnvironment()
     brainSocket.requestPortfolio()
   }
 })
 brainSocket.onSwarmRoleChange((role) => {
-  intentLogLive.textContent = role === 'producer' ? 'LIVE · PRODUCER' : role === 'observer' ? 'LIVE · VIEW ONLY' : 'WAITING'
+  intentLogLive.textContent = role === 'server' ? 'LIVE · SERVER AUTONOMOUS' : role === 'producer' ? 'LIVE · PRODUCER' : role === 'observer' ? 'LIVE · VIEW ONLY' : 'WAITING'
 })
 brainSocket.connect()
 window.setInterval(() => brainSocket.requestEnvironment(), 15000)

@@ -1,4 +1,4 @@
-"""WebSocket adapter for the browser fly world.
+"""WebSocket adapter for the server-owned fly world.
 
 The adapter keeps transport, sensory encoding, Brian2 activity, and motor
 decoding separate. When the explicit official-data realtime cache exists, it
@@ -29,6 +29,7 @@ from .brain.sensory_encoding import default_encoder
 from .motor.flight_decoder import FlightMotorDecoder
 from .market.signal_engine import MarketSignalEngine
 from .swarm.observer import FlyObservation, HabitatObservation, SwarmObserver
+from .swarm.server_runtime import ServerSwarmRuntime
 from .fund.pipeline import SwarmDecisionPipeline
 from .fund.service import FundService
 from .fund.autonomous import AutonomousTradingRuntime
@@ -84,6 +85,11 @@ SWARM_DECISIONS = SwarmDecisionPipeline(
 )
 FUND_SERVICE = FundService.from_env()
 AUTONOMOUS_RUNTIME = AutonomousTradingRuntime.from_env(FUND_SERVICE.ledger, FUND_SERVICE.wallet)
+SERVER_AUTONOMY_ENABLED = os.getenv("NEUROSWARM_SERVER_AUTONOMY", "true").lower() not in {"0", "false", "no", "off"}
+SERVER_SWARM = ServerSwarmRuntime(SWARM_SIZE, min_hold_seconds=120.0)
+SERVER_MARKET_HABITATS: list[Mapping[str, Any]] = []
+SERVER_LAST_MARKET_REFRESH = 0.0
+SERVER_LAST_WALLET_RECONCILIATION = 0.0
 
 
 def _sync_restored_fly_commitments() -> None:
@@ -192,6 +198,68 @@ async def _broadcast(payload: Mapping[str, Any]) -> None:
     for client, result in zip(clients, results):
         if isinstance(result, BaseException):
             CONNECTED_CLIENTS.discard(client)
+
+
+async def _run_server_autonomy() -> None:
+    """Own the swarm clock and behavior feed independently of browser tabs."""
+
+    global SERVER_LAST_MARKET_REFRESH, SERVER_LAST_WALLET_RECONCILIATION, SERVER_MARKET_HABITATS, LATEST_SWARM_UPDATE
+    tick_seconds = max(0.25, min(5.0, float(os.getenv("NEUROSWARM_SERVER_TICK_SECONDS", "1.0"))))
+    market_poll_seconds = max(5.0, float(os.getenv("NEUROSWARM_MARKET_POLL_SECONDS", "15")))
+    reconcile_seconds = max(10.0, float(os.getenv("FUND_WALLET_RECONCILE_SECONDS", "30")))
+    while True:
+        now = time.monotonic()
+        if MARKET_ENGINE is not None and now - SERVER_LAST_MARKET_REFRESH >= market_poll_seconds:
+            SERVER_LAST_MARKET_REFRESH = now
+            try:
+                environment = await asyncio.to_thread(MARKET_ENGINE.snapshot_if_due)
+                habitats = environment.get("habitats") if isinstance(environment, Mapping) else None
+                if isinstance(habitats, list) and habitats:
+                    SERVER_MARKET_HABITATS = [item for item in habitats if isinstance(item, Mapping)]
+                    await asyncio.to_thread(AUTONOMOUS_RUNTIME.update_habitats, SERVER_MARKET_HABITATS)
+                    _sync_restored_fly_commitments()
+            except Exception as exc:
+                # Market refresh failures must not stop the autonomous clock;
+                # the last valid habitat snapshot remains usable.
+                AUTONOMOUS_RUNTIME.events.append({"type": "MARKET_REFRESH_ERROR", "status": "error", "reason": str(exc)[:240]})
+
+        if now - SERVER_LAST_WALLET_RECONCILIATION >= reconcile_seconds:
+            SERVER_LAST_WALLET_RECONCILIATION = now
+            try:
+                released = await asyncio.to_thread(AUTONOMOUS_RUNTIME.reconcile_wallet_positions)
+                for fly_id in released:
+                    SWARM_DECISIONS.observer.reset_fly(fly_id)
+                    SERVER_SWARM.reset_fly(fly_id)
+            except Exception as exc:
+                AUTONOMOUS_RUNTIME.events.append({"type": "WALLET_RECONCILE_ERROR", "status": "error", "reason": str(exc)[:240]})
+
+        if SERVER_MARKET_HABITATS:
+            positions = {fly_id: position.as_dict() for fly_id, position in AUTONOMOUS_RUNTIME.positions.items()}
+            # A released slot can still have an observer commitment from the
+            # previous visit. Clear that state before the next server sample.
+            for fly_id, position in positions.items():
+                if str(position.get("state") or "").upper() == "EXPLORING" and SERVER_SWARM.needs_recovery(fly_id):
+                    SWARM_DECISIONS.observer.reset_fly(fly_id)
+                    SERVER_SWARM.reset_fly(fly_id)
+            timestamp_ms = int(time.time() * 1000)
+            observations = SERVER_SWARM.step(timestamp_ms, SERVER_MARKET_HABITATS, positions)
+            if observations:
+                try:
+                    decision = await asyncio.to_thread(SWARM_DECISIONS.ingest, observations)
+                    autonomous = await asyncio.to_thread(
+                        AUTONOMOUS_RUNTIME.ingest,
+                        decision.behavior_intents,
+                        observed_at_ms=decision.observed_at_ms,
+                    )
+                    _sync_restored_fly_commitments()
+                    decision_payload = decision.as_dict()
+                    decision_payload["autonomousTrading"] = autonomous
+                    decision_payload["telemetrySource"] = "server"
+                    LATEST_SWARM_UPDATE = {"type": "swarm_update", "decision": decision_payload}
+                    await _broadcast(LATEST_SWARM_UPDATE)
+                except Exception as exc:
+                    AUTONOMOUS_RUNTIME.events.append({"type": "SERVER_AUTONOMY_ERROR", "status": "error", "reason": str(exc)[:240]})
+        await asyncio.sleep(tick_seconds)
 
 
 async def _fund_response(request_type: str) -> dict[str, Any]:
@@ -420,18 +488,30 @@ async def handle_client(websocket: Any) -> None:
             except (TypeError, json.JSONDecodeError):
                 continue
             if isinstance(message, dict) and message.get("type") == "swarm_claim":
-                role = await TELEMETRY_PRODUCER.claim(
-                    websocket,
-                    prefer=bool(message.get("preferredProducer")),
-                )
+                if SERVER_AUTONOMY_ENABLED:
+                    role = "server"
+                else:
+                    role = await TELEMETRY_PRODUCER.claim(
+                        websocket,
+                        prefer=bool(message.get("preferredProducer")),
+                    )
                 try:
                     await websocket.send(json.dumps({"type": "swarm_role", "role": role}))
-                    if role == "observer" and LATEST_SWARM_UPDATE is not None:
+                    if role in {"observer", "server"} and LATEST_SWARM_UPDATE is not None:
                         await websocket.send(json.dumps(LATEST_SWARM_UPDATE))
                 except (ConnectionError, ConnectionClosed):
                     break
                 continue
             if isinstance(message, dict) and message.get("type") == "swarm_telemetry":
+                if SERVER_AUTONOMY_ENABLED and os.getenv("NEUROSWARM_ALLOW_CLIENT_TELEMETRY", "false").lower() not in {"1", "true", "yes", "on"}:
+                    # The server loop is the single source of biological
+                    # truth. A browser can render it, but cannot stop or
+                    # replace it by disappearing or losing its lease.
+                    try:
+                        await websocket.send(json.dumps({"type": "swarm_role", "role": "server"}))
+                    except (ConnectionError, ConnectionClosed):
+                        break
+                    continue
                 # Backward-compatible implicit claim for an older frontend,
                 # but never accept telemetry from a second connection.
                 if not await TELEMETRY_PRODUCER.is_producer(websocket):
@@ -522,7 +602,7 @@ def process_http_request(connection: Any, request: Any) -> Any | None:
     if path in {"/", "/healthz"}:
         response = connection.respond(
             HTTPStatus.OK,
-            json.dumps({"status": "ok", "service": "fruitfly-brain"}) + "\n",
+            json.dumps({"status": "ok", "service": "fruitfly-brain", "telemetrySource": "server" if SERVER_AUTONOMY_ENABLED else "client", "serverAutonomy": SERVER_AUTONOMY_ENABLED}) + "\n",
         )
         del response.headers["Content-Type"]
         response.headers["Content-Type"] = "application/json; charset=utf-8"
@@ -626,7 +706,13 @@ async def serve_forever(host: str, port: int) -> None:
         logger=WEBSOCKET_LOGGER,
     ):
         print(f"MaleCNS WebSocket adapter listening on ws://{host}:{port}", flush=True)
-        await asyncio.Future()
+        autonomy_task = asyncio.create_task(_run_server_autonomy()) if SERVER_AUTONOMY_ENABLED else None
+        try:
+            await asyncio.Future()
+        finally:
+            if autonomy_task is not None:
+                autonomy_task.cancel()
+                await asyncio.gather(autonomy_task, return_exceptions=True)
 
 
 def main() -> None:

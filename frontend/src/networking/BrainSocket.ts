@@ -79,7 +79,10 @@ export class BrainSocket {
   }
 
   send(frame: BrainInputMessage) {
-    if (this.socket?.readyState !== WebSocket.OPEN || this.role !== 'producer') return false
+    // Brain requests are independent of swarm ownership. The server owns
+    // behavior telemetry now, while the browser may still ask for CNS motor
+    // output to render the fly bodies.
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
     // The Brian2 adapter is deliberately slower than the render loop. Never
     // let one fly build an unbounded queue of stale sensory frames while its
     // previous fixed window is still running.

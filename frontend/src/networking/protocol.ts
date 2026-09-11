@@ -191,7 +191,7 @@ export interface SwarmUpdateMessage {
 
 export interface SwarmRoleMessage {
   type: 'swarm_role'
-  role: 'producer' | 'observer' | 'available'
+  role: 'producer' | 'observer' | 'server' | 'available'
 }
 
 export interface FundStatusUpdateMessage { type: 'fund_status_update'; fund: Record<string, unknown>; demoData: boolean }
@@ -314,5 +314,5 @@ export function isSwarmUpdateMessage(value: unknown): value is SwarmUpdateMessag
 export function isSwarmRoleMessage(value: unknown): value is SwarmRoleMessage {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<SwarmRoleMessage>
-  return candidate.type === 'swarm_role' && ['producer', 'observer', 'available'].includes(candidate.role ?? '')
+  return candidate.type === 'swarm_role' && ['producer', 'observer', 'server', 'available'].includes(candidate.role ?? '')
 }

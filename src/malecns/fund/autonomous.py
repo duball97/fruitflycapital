@@ -510,8 +510,61 @@ class AutonomousTradingRuntime:
                 wait_seconds = max(0.0, (due - timestamp) / 1000.0)
                 self._event(behavior, "DEPARTING", f"debounce started; minimum hold remaining {wait_seconds:.1f}s")
                 self.processed_events.add(behavior.intent_id)
+            elif behavior.side == "sell":
+                # Keep the proposal auditable, but never silently drop it.
+                # A behavior SELL can refer to a stale habitat commitment or
+                # to a token whose fill was never reconciled into this fly.
+                # Treating that as a successful departure strands the fly;
+                # emitting the reason lets the server recovery loop repair it.
+                reason = "position token mismatch" if position.token_address else "fly has no reconciled holding"
+                self._event(behavior, "SELL_IGNORED", reason)
+                self.processed_events.add(behavior.intent_id)
         self._execute_netted(actions, timestamp)
         return self.snapshot(timestamp)
+
+    def reconcile_wallet_positions(self) -> list[str]:
+        """Release internal holdings that no longer exist in the wallet.
+
+        Manual trades and indexed wallet history do not carry fly IDs. A
+        wallet refresh is therefore required to prevent a stale HOLDING row
+        from consuming a fly slot forever. RPC errors are non-destructive:
+        only a confirmed zero balance releases a position.
+        """
+
+        if self.wallet is None:
+            return []
+        balances: dict[str, float] = {}
+        released: list[str] = []
+        for position in tuple(self.positions.values()):
+            if position.state not in {FlyBehaviorState.HOLDING.value, FlyBehaviorState.DEPARTING.value}:
+                continue
+            if not position.token_address or position.held_amount <= 0:
+                continue
+            key = _token_key(int(position.chain_id or os.getenv("FUND_CHAIN_ID", "4663")), position.token_address)
+            if key not in balances:
+                try:
+                    decimals = self.wallet.erc20_decimals(position.token_address)
+                    raw = self.wallet.erc20_balance_raw(position.token_address)
+                    balances[key] = raw / (10**decimals)
+                except Exception:
+                    # A failed RPC read is not evidence that the asset is gone.
+                    continue
+            if balances[key] > 0:
+                continue
+            self._save(replace(
+                position,
+                state=FlyBehaviorState.EXPLORING.value,
+                token_address=None,
+                token_symbol=None,
+                held_amount=0.0,
+                current_value_usd=0.0,
+                unrealized_pnl_usd=0.0,
+                departure_reason="wallet reconciliation: balance absent",
+                updated_ms=int(time.time() * 1000),
+            ))
+            self.events.append({"type": "WALLET_POSITION_RELEASED", "status": "reconciled", "flyId": position.fly_id, "tokenAddress": position.token_address, "reason": "confirmed zero wallet balance"})
+            released.append(position.fly_id)
+        return released
 
     def snapshot(self, observed_at_ms: int | None = None) -> dict[str, Any]:
         timestamp = int(observed_at_ms or time.time() * 1000)
@@ -740,8 +793,12 @@ class AutonomousTradingRuntime:
             result = row.get("result")
             tx_hash = result.get("txHash") if isinstance(result, Mapping) else None
             if _is_real_tx_hash(str(tx_hash or "")) or "broadcast succeeded" in error.lower():
-                # Never automatically retry an ambiguous post-broadcast row.
-                self.reconciled_failed_execution_ids.add(execution_id)
+                # An ambiguous broadcast used to leave QUALIFYING forever.
+                # Resolve it from the wallet when possible; release only
+                # after a confirmed zero balance, otherwise keep the slot
+                # reserved to avoid a duplicate spend.
+                if self._recover_ambiguous_buy(row):
+                    self.reconciled_failed_execution_ids.add(execution_id)
                 continue
             side = str(row.get("side") or "").lower()
             for fly_id in (row.get("fly_ids") or []):
@@ -756,6 +813,45 @@ class AutonomousTradingRuntime:
                     self._save(replace(position, state=FlyBehaviorState.HOLDING.value, departure_reason=None, updated_ms=int(time.time() * 1000)))
                     self.events.append({"type": "SELL_RETRY_READY", "status": "reconciled", "flyId": position.fly_id, "executionId": execution_id, "reason": error[:240]})
             self.reconciled_failed_execution_ids.add(execution_id)
+
+    def _recover_ambiguous_buy(self, row: Mapping[str, Any]) -> bool:
+        """Resolve a BUY whose broadcast/result handoff was interrupted."""
+
+        if self.wallet is None or str(row.get("side") or "").lower() != "buy":
+            return False
+        fly_ids = [str(item) for item in (row.get("fly_ids") or [])]
+        if len(fly_ids) != 1:
+            return False
+        position = self.positions.get(fly_ids[0])
+        if position is None or position.state != FlyBehaviorState.QUALIFYING.value or position.held_amount > 0:
+            return False
+        payload = row.get("payload") if isinstance(row.get("payload"), Mapping) else {}
+        raw_token = payload.get("token") if isinstance(payload.get("token"), Mapping) else {}
+        address = str(raw_token.get("address") or "")
+        if not ADDRESS_RE.fullmatch(address):
+            return False
+        try:
+            decimals = self.wallet.erc20_decimals(address)
+            raw_balance = self.wallet.erc20_balance_raw(address)
+        except Exception:
+            return False
+        if raw_balance <= 0:
+            self._save(replace(position, state=FlyBehaviorState.EXPLORING.value, departure_reason="ambiguous BUY reconciled: token balance absent", updated_ms=int(time.time() * 1000)))
+            self.events.append({"type": "BUY_RETRY_READY", "status": "reconciled", "flyId": position.fly_id, "executionId": row.get("idempotency_key"), "reason": "ambiguous broadcast has no wallet balance"})
+            return True
+        token = TokenRef(
+            int(raw_token.get("chainId") or row.get("chain_id") or os.getenv("FUND_CHAIN_ID", "4663")),
+            address,
+            str(raw_token.get("symbol") or address[:8]),
+            _number(raw_token.get("liquidityUsd")),
+            _number(raw_token.get("priceUsd")),
+            _number(raw_token.get("priceNative")),
+        )
+        amount = raw_balance / (10**decimals)
+        created_ms = _int_from_mapping(payload.get("executionIntent"), "createdAtMs", int(time.time() * 1000))
+        self._save(replace(position, state=FlyBehaviorState.HOLDING.value, chain_id=token.chain_id, token_address=token.address, token_symbol=token.symbol, entry_timestamp_ms=created_ms, entry_price_usd=token.price_usd, held_amount=amount, current_value_usd=(token.price_usd or 0.0) * amount, unrealized_pnl_usd=0.0, departure_reason="ambiguous BUY recovered from wallet", updated_ms=int(time.time() * 1000)))
+        self.events.append({"type": "BUY_RECOVERED", "status": "reconciled", "flyId": position.fly_id, "executionId": row.get("idempotency_key"), "tokenAddress": token.address, "heldAmount": amount})
+        return True
 
     def _flush_departures(self, timestamp: int, actions: list[AllocationIntent]) -> None:
         for fly_id, (due, target, reason, biological_event_id) in list(self.pending_rotations.items()):
@@ -990,6 +1086,15 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _int_from_mapping(value: Any, key: str, fallback: int) -> int:
+    if not isinstance(value, Mapping):
+        return fallback
+    try:
+        return int(value.get(key) or fallback)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _is_real_tx_hash(value: str) -> bool:

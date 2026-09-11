@@ -245,6 +245,22 @@ class SwarmObserver:
                 track.buy_issued_for_visit = True
                 track.buy_issued_at_ms = int(entry_timestamp_ms)
 
+    def reset_fly(self, fly_id: str) -> None:
+        """Forget transient visits for one fly after runtime reconciliation.
+
+        A failed or externally reconciled allocation is not a physical holding.
+        Without clearing the in-memory commitment, the next visit can be
+        treated as a continuation forever and never emit a replacement BUY.
+        """
+
+        normalized = str(fly_id)
+        self._active_commitments.pop(normalized, None)
+        self._commitment_entry_ms.pop(normalized, None)
+        self._last_intent_at_ms.pop(normalized, None)
+        for key in tuple(self._tracks):
+            if key[0] == normalized:
+                self._tracks.pop(key, None)
+
     def ingest(self, observations: Iterable[FlyObservation]) -> SwarmSnapshot:
         frame = tuple(observations)
         if not frame:
@@ -285,6 +301,13 @@ class SwarmObserver:
         timestamp_ms = observation.timestamp_ms
         distance_m = max(0.0, float(habitat.distance_m))
         inside = distance_m <= max(0.0, float(habitat.radius_m))
+        seeded_commitment = self._active_commitments.get(track.fly_id)
+        # A restored holding is assumed to have been inside before the first
+        # post-restart sample. Otherwise a fly that restarts while already
+        # outside can never create the inside -> outside transition required
+        # for SELL.
+        if track.first_timestamp_ms is None and seeded_commitment == track.habitat_id:
+            track.inside = True
         previous_inside = track.inside
         dt_s = 0.0
         if track.last_timestamp_ms is not None:
@@ -294,7 +317,6 @@ class SwarmObserver:
 
         if track.first_timestamp_ms is None:
             track.first_timestamp_ms = timestamp_ms
-        seeded_commitment = self._active_commitments.get(track.fly_id)
         if seeded_commitment == track.habitat_id and not track.buy_issued_for_visit:
             track.buy_issued_for_visit = True
             track.buy_issued_at_ms = self._commitment_entry_ms.get(track.fly_id, timestamp_ms)

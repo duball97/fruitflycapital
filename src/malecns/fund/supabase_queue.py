@@ -142,7 +142,7 @@ class SupabaseIntentQueue:
         rows = self._request(
             "GET",
             self.table,
-            query=f"?select=idempotency_key,side,fly_ids,biological_event_id,status,error,result,created_at,updated_at&status=eq.failed&order=updated_at.desc&limit={max(1, min(int(limit), 500))}",
+            query=f"?select=idempotency_key,side,fly_ids,biological_event_id,status,error,result,payload,created_at,updated_at&status=eq.failed&order=updated_at.desc&limit={max(1, min(int(limit), 500))}",
         )
         return [dict(row) for row in rows] if isinstance(rows, list) else []
 
