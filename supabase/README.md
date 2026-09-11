@@ -33,10 +33,20 @@ netted execution payload, fly IDs, token identity, processing status, retries,
 worker lease, result, and error for every intent. The queue is server-only;
 keep `SUPABASE_SERVICE_ROLE_KEY` on Render and never in the frontend.
 
+Run [`migrations/005_behavior_proposals.sql`](migrations/005_behavior_proposals.sql)
+after migration 004. The brain service writes every biological BUY/SELL
+proposal immediately to the same table with `status = 'observed'` and
+`execution_eligible = false`, so the behavior log is durable and shared across
+viewers. The runtime separately writes the netted, amount-bearing execution
+row with `status = 'pending'`; only those rows are claimed by the trade worker.
+This keeps an audit of every fly signal without allowing a zero-amount display
+record to become a swap.
+
 On the Render brain service, set:
 
 ```env
 FUND_ADAPTER=supabase
+FUND_INTENT_QUEUE_BACKEND=supabase
 SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<server-only-key>
 ```

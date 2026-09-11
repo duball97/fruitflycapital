@@ -121,6 +121,12 @@ autonomous wallet runtime supports simulation fills or a separate queued
 execution service. See
 [docs/FUND_ARCHITECTURE.md](docs/FUND_ARCHITECTURE.md).
 
+For the shared Supabase path, run migrations 004 and 005 from
+[`supabase/migrations`](supabase/migrations) in the Supabase SQL editor, then
+set `FUND_ADAPTER=supabase` and `FUND_INTENT_QUEUE_BACKEND=supabase` on the
+brain service. Every fly BUY/SELL proposal is recorded as an `observed` row;
+the amount-bearing netted order is recorded as `pending` for the executor.
+
 ### Standalone fly trade runner
 
 To let the flies publish BUY/SELL decisions to a separately run process, set
