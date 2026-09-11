@@ -11,15 +11,17 @@ export type HabitatContactSampler = (position: Vector3) => boolean
 // These are local sensory thresholds, not token-specific navigation commands.
 // The former onset was high enough that a fly could pass through the readable
 // part of the field without ever entering the approach state.
-// Background plumes overlap across the large scene, but the live habitats
-// currently peak around 0.39-0.40 at approach distance. The previous 0.48
-// threshold was therefore unreachable: flies stayed in CRUISE forever and
-// could never produce contact, dwell, BUY, or departure SELL events.
-const LANDING_ODOR_ONSET = 0.34
+// Background plumes overlap across the large scene, but live market feeds can
+// produce much quieter normalized odor values (the observed peak was ~0.16).
+// Keep the threshold below that range so sensory approaches can actually
+// enter descent and create a real contact/dwell window.
+const LANDING_ODOR_ONSET = 0.14
 // A habitat is not a permanent parking spot. A fly leaves when its local
 // sensory signal fades or turns aversive, then resumes the same bounded
 // search loop. This is driven by odor, not by an arbitrary departure timer.
-const RELEASE_ODOR_THRESHOLD = 0.27
+// Keep release below the landing threshold. Otherwise a fly that lands on a
+// quiet-but-valid plume would be told to depart on its very next frame.
+const RELEASE_ODOR_THRESHOLD = 0.08
 
 export class FlyAgent {
   readonly body = new FlyBody()
