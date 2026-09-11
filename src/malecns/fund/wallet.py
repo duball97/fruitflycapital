@@ -146,3 +146,21 @@ class RpcWalletClient:
     def erc20_decimals(self, token_address: str) -> int:
         result = self.call("eth_call", [{"to": _address(token_address), "data": "0x313ce567"}, "latest"])
         return _int_hex(result)
+
+    def erc20_symbol(self, token_address: str) -> str | None:
+        """Read an ERC-20 symbol returned as ABI string or bytes32."""
+        result = self.call("eth_call", [{"to": _address(token_address), "data": "0x95d89b41"}, "latest"])
+        if not isinstance(result, str) or not result.startswith("0x"):
+            return None
+        raw = bytes.fromhex(result[2:])
+        if len(raw) >= 64:
+            offset = int.from_bytes(raw[:32], "big")
+            if offset + 32 <= len(raw):
+                length = int.from_bytes(raw[offset:offset + 32], "big")
+                end = offset + 32 + length
+                if end <= len(raw):
+                    value = raw[offset + 32:end].decode("utf-8", "replace").strip("\x00 \t\r\n")
+                    if value:
+                        return value[:32]
+        value = raw[:32].decode("utf-8", "replace").strip("\x00 \t\r\n")
+        return value[:32] or None

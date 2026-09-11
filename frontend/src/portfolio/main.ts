@@ -11,6 +11,23 @@ let reconnectAttempt = 0
 const money = (value: unknown) => typeof value === 'number' ? `$${value.toFixed(2)}` : '—'
 const percent = (value: unknown) => typeof value === 'number' ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—'
 const isRealTxHash = (value: unknown): value is string => typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value)
+const TOKEN_LABELS: Record<string, string> = {
+  '0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea': 'SPCX',
+  '0x6431d4a9e0566339bcf1bcd0f2723a531d64b788': 'LAMBO',
+  '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec': 'NVDA',
+  '0x3b4a0048a00787a644932cd648faa043410c163e': 'SIRIUS',
+  '0x9aa0c0ca88e6ae43a3d229afc373c0b9f2b53521': 'PONIE',
+  '0xc6132fdc41433b46cdf0374a7fb9a105752bb148': 'STONKFLY',
+  '0xb6a906d2d95e862cf4fd43b9e30162aee19eed8d': 'ZFORGE',
+  '0xc26e815246b767ba4ea238d625a9ba936efa7796': 'UNIFRONG',
+}
+const tokenLabel = (item: Record<string, unknown>) => {
+  const symbol = String(item.tokenSymbol || item.symbol || '').trim()
+  const address = String(item.tokenAddress || item.token_address || '').toLowerCase()
+  return symbol && !/^0x[a-f0-9]{6,}$/i.test(symbol)
+    ? symbol
+    : TOKEN_LABELS[address] || (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'TOKEN')
+}
 const nativeRaw = (value: unknown) => {
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return '—'
   const whole = value.padStart(19, '0')
@@ -52,7 +69,6 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
   const allocation = (fund.allocation || {}) as Record<string, unknown>
   const autonomous = (fund.autonomous || {}) as Record<string, unknown>
   const flies = Array.isArray(autonomous.flies) ? autonomous.flies as Record<string, unknown>[] : []
-  const target = Array.isArray(autonomous.biologicalTargetPortfolio) ? autonomous.biologicalTargetPortfolio as Record<string, unknown>[] : []
   const actual = Array.isArray(autonomous.actualWalletPortfolio) ? autonomous.actualWalletPortfolio as Record<string, unknown>[] : []
   const mainnetExecutions = Array.isArray(autonomous.mainnetExecutions) ? autonomous.mainnetExecutions as Record<string, unknown>[] : []
   const walletTransactions = mainnetExecutions.filter((item) => {
@@ -105,11 +121,10 @@ function render(data: Portfolio | null, status = 'CONNECTING') {
     <section class="notice">${connectionNotice}</section>
     <section class="metrics">${[['WALLET TOTAL', native(wallet.nativeBalance)], ['AVAILABLE TO TRADE', native(wallet.availableToTrade)], ['GAS RESERVE', native(wallet.gasReserve)], ['PER FLY BUDGET', native(allocation.perFlyBudget)], ['TOTAL FUND NAV', displayedNav], ...(displayedReturn !== null ? [['FUND RETURN', displayedReturn]] : [])].map(([label, value]) => `<article><small>${label}</small><strong>${value}</strong></article>`).join('')}</section>
     <section class="panel wallet-summary"><div><small>ROBINHOOD WALLET</small><code>${walletAddress}</code></div><div><small>NATIVE BALANCE</small><strong>${native(wallet.nativeBalance)}</strong></div><div><small>AVAILABLE AFTER GAS RESERVE</small><strong>${native(wallet.availableToTrade)}</strong></div><div><small>CHAIN</small><strong>Robinhood · ${walletChain}</strong></div><div><small>RPC STATUS</small><strong class="wallet-status ${wallet.status === 'error' ? 'is-error' : ''}">${walletStatus}</strong></div>${walletExplorerLink}</section>
-    <section class="panel"><h2>FLY ALLOCATION STATE</h2><div class="table"><div class="thead"><span>FLY</span><span>STATE</span><span>TOKEN</span><span>VALUE</span><span>REALIZED</span><span>UNREALIZED</span></div>${flies.map(item => `<div class="tr"><span>${String(item.flyId || '—')}</span><span>${String(item.state || '—')}</span><span>${String(item.tokenSymbol || item.tokenAddress || 'EXPLORING')}</span><span>${money(item.currentValueUsd)}</span><span>${money(item.realizedPnlUsd)}</span><span>${money(item.unrealizedPnlUsd)}</span></div>`).join('') || '<p class="muted">No fly state received yet.</p>'}</div></section>
-    <section class="grid"><article class="panel"><h2>BIOLOGICAL TARGET PORTFOLIO</h2>${target.length ? target.map(item => `<div class="row"><span>${String(item.tokenAddress || '—')}</span><b>${typeof item.allocationPercent === 'number' ? item.allocationPercent.toFixed(2) : '0.00'}%</b></div>`).join('') : '<p class="muted">No fly is holding a token.</p>'}</article><article class="panel"><h2>ACTUAL WALLET PORTFOLIO</h2>${actual.length ? actual.map(item => `<div class="trade"><b>${String(item.tokenSymbol || item.tokenAddress || '—')}</b><span>planned ${String(item.intendedAmount ?? '—')}</span><span>observed ${String(item.observedAmount ?? '—')}</span><span>${String(item.reconciliation || item.observationError || 'pending')}</span></div>`).join('') : '<p class="muted">No token balances observed yet.</p>'}</article></section>
+    <section class="panel"><h2>ACTUAL WALLET PORTFOLIO</h2>${actual.length ? actual.map(item => `<div class="trade"><b>${tokenLabel(item)}</b><span>planned ${String(item.intendedAmount ?? '—')}</span><span>observed ${String(item.observedAmount ?? '—')}</span><span>${String(item.reconciliation || item.observationError || 'pending')}</span></div>`).join('') : '<p class="muted">No token balances observed yet.</p>'}</section>
     <section class="grid"><article class="panel"><h2>PORTFOLIO ALLOCATION BY CHAIN</h2>${chains.length ? chains.map(item => `<div class="row"><span>CHAIN ${item.chainId}</span><b>${typeof item.weight === 'number' ? (item.weight * 100).toFixed(1) : '—'}%</b></div>`).join('') : '<p class="muted">No priced positions recorded.</p>'}</article>
       <article class="panel"><h2>WALLET &amp; EXECUTION</h2><div class="kv"><span>Wallet</span><code>${walletAddress}</code><span>Chain</span><b>Robinhood · ${walletChain}</b><span>Fly allocation</span><b>${typeof allocation.perFlyPercent === 'number' ? allocation.perFlyPercent.toFixed(2) : '—'}% · ${String(allocation.flyCount || '—')} flies</b><span>Execution</span><b>${String(fund.executionBoundary || '—').toUpperCase()}</b><span>Trade limit</span><b>${money(security.autonomousTradeLimitUsd)}</b></div></article></section>
-    <section class="panel"><h2>POSITIONS</h2><div class="table"><div class="thead"><span>ASSET</span><span>CHAIN</span><span>AMOUNT</span><span>VALUE</span><span>P&L</span></div>${positions.length ? positions.map(item => `<div class="tr"><span>${String(item.symbol || item.token_address || '—')}</span><span>${String(item.chain_id || '—')}</span><span>${String(item.amount ?? '—')}</span><span>${money(item.value_usd)}</span><span>${money(item.unrealized_pnl_usd)}</span></div>`).join('') : '<p class="muted">No positions recorded yet.</p>'}</div></section>
+    <section class="panel"><h2>POSITIONS</h2><div class="table"><div class="thead"><span>ASSET</span><span>CHAIN</span><span>AMOUNT</span><span>VALUE</span><span>P&L</span></div>${positions.length ? positions.map(item => `<div class="tr"><span>${tokenLabel(item)}</span><span>${String(item.chain_id || '—')}</span><span>${String(item.amount ?? '—')}</span><span>${money(item.value_usd)}</span><span>${money(item.unrealized_pnl_usd)}</span></div>`).join('') : '<p class="muted">No positions recorded yet.</p>'}</div></section>
     <section class="panel"><h2>RECENT FRUITFLY CAPITAL TRADES</h2>${trades.filter(item => isRealTxHash(item.tx_hash) && ['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(String(item.status || '').toUpperCase())).length ? trades.filter(item => isRealTxHash(item.tx_hash) && ['BROADCAST', 'PENDING', 'CONFIRMED', 'REVERTED'].includes(String(item.status || '').toUpperCase())).map(item => `<div class="trade"><b>${String(item.status || '—').toUpperCase()}</b><span>chain ${String(item.chain_id || '—')}</span><span>${money(item.usd_value)}</span><a href="https://robinhoodchain.blockscout.com/tx/${item.tx_hash}" target="_blank" rel="noopener noreferrer">VIEW TX ↗</a></div>`).join('') : '<p class="muted">No on-chain trades recorded yet.</p>'}</section>
     <section class="panel mainnet-executions"><h2>MAINNET EXECUTED · ROBINHOOD CHAIN</h2>${mainnetExecutions.length ? mainnetExecutions.map(mainnetExecutionCard).join('') : '<p class="muted">No real mainnet transaction hashes recorded.</p>'}</section>
     <section class="grid"><article class="panel"><h2>BUY TRANSACTIONS</h2>${walletBuys.length ? walletBuys.map(walletTransactionRow).join('') : '<p class="muted">No buy transactions recorded yet.</p>'}</article><article class="panel"><h2>SELL TRANSACTIONS</h2>${walletSells.length ? walletSells.map(walletTransactionRow).join('') : '<p class="muted">No sell transactions recorded yet.</p>'}</article></section>
