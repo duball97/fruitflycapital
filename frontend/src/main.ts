@@ -765,10 +765,10 @@ app.append(bodyStatus)
 let canonicalBodiesReady = false
 let canonicalReadyCount = 0
 let canonicalFinishedCount = 0
-// Do not make the product view wait for 80 independent scene-graph clones.
-// The loader shares the expensive template, but cloning every visual follower
-// can still take several frames on a browser. One canonical body is enough to
-// release the scene; the rest can become visible as they finish.
+// Do not make the product view wait for the full visual cohort. The loader
+// shares the expensive template, but cloning every render-only follower can
+// still take several frames on a browser. One canonical body is enough to
+// release the scene; the rest become visible as they finish.
 visualRenderers.forEach((flyRenderer) => {
   void flyRenderer.ready.then(() => {
     canonicalFinishedCount += 1

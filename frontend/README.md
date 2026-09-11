@@ -69,9 +69,9 @@ unavailable or the selected MaleCNS output populations are quiet, the command
 remains neutral and the UI reports that state. There is no manual or synthetic
 preview driver in the product surface.
 
-The current default is eight independent brains and eight visible bodies:
-each brain owns one primary body. Set `VITE_BODIES_PER_BRAIN` above 1 to add
-render-only followers. Followers do
+The current default is eight independent brains and 80 visible bodies:
+each brain owns one primary body plus render-only followers. Set
+`VITE_BODIES_PER_BRAIN` to change that presentation count. Followers do
 not create brain runtimes, sense the world, or add consensus votes. To stage a
 larger brain population experiment, set `VITE_SWARM_SIZE` to a value from 1 to
 100. This changes the number of browser agents and brain IDs requested; it does

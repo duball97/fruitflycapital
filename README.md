@@ -21,8 +21,8 @@ then sensed through the embodied loop.
 ## Current reality
 
 The current interactive default is an **8-brain pilot**, not 100 completed
-full-CNS simulations. The browser renders one canonical Flybody view per
-brain by default, so 8 brains produce 8 visible flies. Each numbered primary
+full-CNS simulations. The browser renders ten visible Flybody bodies per
+brain by default, so 8 brains produce 80 visible flies. Each numbered primary
 agent (`fly-001` through `fly-008`) has its
 own Flybody pose, sensor frame, actuator state, and server-side Brian2 runtime
 identity/seed. The connectome topology and model parameters are shared as
@@ -45,11 +45,11 @@ independent Brian2 runtime, decoded, and sent through the shared
 issue a hidden “go to coin” command. If the validated pathway is quiet, the
 command remains neutral and the UI reports that state.
 
-The product strategy uses eight independent brains by default:
+The product strategy uses eight independent brains and 80 visible bodies by default:
 
 ```env
 VITE_SWARM_SIZE=8
-VITE_BODIES_PER_BRAIN=1
+VITE_BODIES_PER_BRAIN=10
 ```
 
 `VITE_BODIES_PER_BRAIN` controls render-only followers. Followers never sense,

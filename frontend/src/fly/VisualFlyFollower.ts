@@ -49,14 +49,19 @@ export class VisualFlyFollower {
     // primary instead of letting them occupy nearly the same screen-space
     // footprint. The spacing is visual only; it does not change the primary's
     // physics, sensing, or trading decisions.
-    const layouts = [
-      [-0.11, 0.024, 0.075],
-      [0.11, 0.030, 0.065],
-      [-0.12, -0.018, -0.085],
-      [0.12, -0.012, -0.095],
-    ] as const
-    const layout = layouts[slot % layouts.length]!
-    this.localOffset = new Vector3(layout[0], layout[1], layout[2])
+    // Spread larger cohorts over two shallow rings around the primary. The
+    // slot is visual-only: every follower still mirrors the same primary
+    // actuator command and can never create a sensor or trading event.
+    const ring = slot < 4 ? 0 : 1
+    const ringSlot = ring === 0 ? slot : slot - 4
+    const ringSize = ring === 0 ? 4 : 6
+    const angle = (ringSlot / ringSize) * Math.PI * 2 + (ring === 0 ? Math.PI / 4 : 0)
+    const radius = ring === 0 ? 0.105 : 0.175
+    this.localOffset = new Vector3(
+      Math.cos(angle) * radius,
+      0.018 + (slot % 3) * 0.009,
+      Math.sin(angle) * radius,
+    )
     this.orientationOffset = new Quaternion().setFromEuler(new Euler(
       Math.sin(this.phase) * 0.035,
       Math.cos(this.phase * 0.7) * 0.075,

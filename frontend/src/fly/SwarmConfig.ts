@@ -11,9 +11,12 @@ export const SWARM_SIZE = Number.isInteger(configuredSwarmSize) && configuredSwa
 // votes. This makes the demo visually read as a swarm without claiming that
 // the browser is running 80 independent MaleCNS copies.
 const configuredBodiesPerBrain = Number(import.meta.env.VITE_BODIES_PER_BRAIN)
-export const BODIES_PER_BRAIN = Number.isInteger(configuredBodiesPerBrain) && configuredBodiesPerBrain >= 1 && configuredBodiesPerBrain <= 8
+// Keep the visual swarm dense by default: eight authoritative brains drive
+// ten visible bodies each. The extra nine bodies are presentation followers,
+// not additional strategy agents.
+export const BODIES_PER_BRAIN = Number.isInteger(configuredBodiesPerBrain) && configuredBodiesPerBrain >= 1 && configuredBodiesPerBrain <= 12
   ? configuredBodiesPerBrain
-  : 1
+  : 10
 export const VISUAL_FLY_COUNT = SWARM_SIZE * BODIES_PER_BRAIN
 
 /**
